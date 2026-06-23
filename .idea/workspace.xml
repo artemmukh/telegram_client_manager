@@ -4,26 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="">
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="First steps of TG Bot for client handling and client usage (handlers and keyboard created)">
       <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/Client Manager.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/config/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/config/config.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/create_bot.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/db_handler/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/db_handler/data_base.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/handler.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/states/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/states/client_states.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -40,9 +25,24 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "artemmukh"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/artemmukh/telegram_client_manager.git",
+    "accountId": "37dea2c2-8fa1-4452-9232-3c4e4ad3e405"
+  }
+}]]></component>
   <component name="HighlightingSettingsPerFile">
     <setting file="file://$PROJECT_DIR$/.venv/Lib/site-packages/aiogram/client/bot.py" root0="SKIP_INSPECTION" />
     <setting file="file://$PROJECT_DIR$/.venv/Lib/site-packages/aiogram/utils/token.py" root0="SKIP_INSPECTION" />
+  </component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="ProjectErrors" />
   </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
@@ -114,6 +114,19 @@
       <option name="presentableId" value="Default" />
       <updated>1781943197006</updated>
     </task>
+    <task id="LOCAL-00001" summary="First steps of TG Bot for client handling and client usage (handlers and keyboard created)">
+      <option name="closed" value="true" />
+      <created>1782222036057</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1782222036057</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="First steps of TG Bot for client handling and client usage (handlers and keyboard created)" />
+    <option name="LAST_COMMIT_MESSAGE" value="First steps of TG Bot for client handling and client usage (handlers and keyboard created)" />
   </component>
 </project>
