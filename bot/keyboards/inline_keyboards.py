@@ -1,4 +1,5 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def start_keyboard() -> ReplyKeyboardMarkup:
@@ -21,22 +22,75 @@ def contact_keyboard():
 
 
 
-def client_keyboard() -> InlineKeyboardMarkup:
-    client_builder = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='1. Добавить клиента', callback_data='create_client'),
-         InlineKeyboardButton(text='2. Удалить клиента', callback_data='delete_client')],
-        [InlineKeyboardButton(text='3. Поиск клиента', callback_data='search_client'),
-         InlineKeyboardButton(text='4. Изменить клиента', callback_data='update_client')
-         ]
-    ], resize_keyboard=True)
-    return client_builder
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+def client_keyboard():
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="1. Добавить клиента",
+        callback_data="create_client"
+    )
+
+    builder.button(
+        text="2. Удалить клиента",
+        callback_data="delete_client"
+    )
+
+    builder.button(
+        text="3. Поиск клиента",
+        callback_data="search_client"
+    )
+
+    builder.button(
+        text="4. Изменить клиента",
+        callback_data="update_client"
+    )
+
+    builder.button(
+        text="⬅ Назад",
+        callback_data="back_to_main_clients"
+    )
+
+    builder.adjust(2, 2, 1)
+
+    return builder.as_markup()
+
+
+
+from aiogram.types import InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 
 def record_keyboard() -> InlineKeyboardMarkup:
-    record_builder = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='1. Создать запись', callback_data='create_record'),
-         InlineKeyboardButton(text='2. Удалить запись', callback_data='delete_record')],
-        [InlineKeyboardButton(text='3. Поиск записи', callback_data='search_record'),
-         InlineKeyboardButton(text='4. Изменить запись', callback_data='update_record')
-         ]
-    ], resize_keyboard=True)
-    return record_builder
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="1. Создать запись",
+        callback_data="create_record"
+    )
+
+    builder.button(
+        text="2. Удалить запись",
+        callback_data="delete_record"
+    )
+
+    builder.button(
+        text="3. Поиск записи",
+        callback_data="search_record"
+    )
+
+    builder.button(
+        text="4. Изменить запись",
+        callback_data="update_record"
+    )
+
+    builder.button(
+        text="⬅ Назад",
+        callback_data="back_to_main_records"
+    )
+
+    builder.adjust(2, 2, 1)
+
+    return builder.as_markup()

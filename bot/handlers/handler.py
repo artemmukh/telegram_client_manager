@@ -1,22 +1,67 @@
 from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, CallbackQuery
+from bot.config.config import admin_ids
+from bot.db_handler import user_data_base
 from bot.keyboards.inline_keyboards import start_keyboard, client_keyboard, record_keyboard, contact_keyboard
+from bot.states.client_states import RegisterStates
 
 
 def create_router() -> Router:
     router = Router()
 
 
+    @router.message(RegisterStates.user_full_name)
+    async def get_user_name(message: Message, state: FSMContext):
+
+        await state.update_data(user_full_name=message.text)
+
+        await state.set_state(RegisterStates.user_phone)
+
+        await message.answer("Отправьте ваш контакт: ",
+                             reply_markup=contact_keyboard())
+
+
+
+    @router.message(RegisterStates.user_phone, F.contact)
+    async def get_user_phone(message: Message, state: FSMContext):
+        await state.update_data(user_phone=message.contact.phone_number)
+        data = await state.get_data()
+
+        role = None
+
+        if message.from_user.id in admin_ids:
+            role = "admin"
+        else:
+            role = "client"
+
+        await data_base.create_user(
+            telegram_id=message.from_user.id,
+            full_name=data["full_name"],
+            phone=data["phone"],
+            role=role
+        )
+
+        await state.clear()
+
+        await message.answer("Регистрация прошла успешно!")
+
+
+
+
     @router.message(F.text == "/start")
-    async def start(message: Message):
-        # await message.answer(
-        #     "Отправь номер телефона для регистрации:",
-        #     reply_markup=contact_keyboard())
-        await message.answer(f"Здравствуйте {message.from_user.first_name}.\n\n"
-                             "Это бот для учета клиентов. С помощью ручного или голосового ввода с ИИ расшифровкой ведется учет клиентской базы.\n\n"
-                             'Для ознакомления с функционалом нажмите "Справка".')
-        await message.answer(text='Выберите вариант: ', reply_markup=start_keyboard())
+    async def start(message: Message, state: FSMContext):
+        user = await data_base.get_user_by_telegram_id(
+            message.from_user.id
+        )
+        if user:
+            await message.answer(f"Здравствуйте, {message.from_user.first_name}. Регистрация прошла успешна!")
+            await message.answer(f"Здравствуйте {message.from_user.first_name}.\n\n"
+                                 "Это бот для учета клиентов. С помощью ручного или голосового ввода с ИИ расшифровкой ведется учет клиентской базы.\n\n"
+                                 'Для ознакомления с функционалом нажмите "Справка".')
+            await message.answer(text='Выберите вариант: ', reply_markup=start_keyboard())
+        else:
+            await message.answer("Пройдите регистрацию сперва!")
 
 
 #displaying identical help for both command and button
@@ -42,28 +87,28 @@ def create_router() -> Router:
 
     @router.message(F.text.in_({"/client_managing", "👤 Управление клиентами"}))
     async def client_managing(message: Message):
-        await message.answer(text="Выберите действие:" , reply_markup=client_keyboard())
+        await message.answer(text="Выберите действие над клиентом:" , reply_markup=client_keyboard())
 
-    @router.message(Command("create_client"))
-    async def create_client(message: Message):
-        pass
-
-    @router.message(Command("delete_client"))
-    async def delete_client(message: Message):
-        pass
-
-    @router.message(Command("search_client"))
-    async def search_client(message: Message):
-        pass
-
-    @router.message(Command("update_client"))
-    async def update_client(message: Message):
-        pass
+    # @router.message(Command("create_client"))
+    # async def create_client(message: Message):
+    #     pass
+    #
+    # @router.message(Command("delete_client"))
+    # async def delete_client(message: Message):
+    #     pass
+    #
+    # @router.message(Command("search_client"))
+    # async def search_client(message: Message):
+    #     pass
+    #
+    # @router.message(Command("update_client"))
+    # async def update_client(message: Message):
+    #     pass
 
 
     @router.message(F.text.in_({"/record_managing", "📒 Управление записями"}))
     async def record_managing(message: Message):
-        await message.answer(text="Выберите действие:", reply_markup=record_keyboard())
+        await message.answer(text="Выберите действие над записью:", reply_markup=record_keyboard())
 
     # @router.message(Command("create_record"))
     # async def create_record(message: Message):
@@ -81,6 +126,21 @@ def create_router() -> Router:
     # async def update_record(message: Message):
     #    pass
 
+    @router.callback_query(F.data.in_({"back_to_main_clients", "back_to_main_records"}))
+    async def back_to_main(callback_query: CallbackQuery):
+
+        match callback_query.data:
+            case "back_to_main_clients":
+                await callback_query.message.edit_text(
+                    "Выберите действие над клиентом:",
+                    reply_markup=client_keyboard()
+                )
+
+            case "back_to_main_records":
+                await callback_query.message.edit_text(
+                    "Выберите действие над записью:",
+                    reply_markup=record_keyboard()
+                )
 
     @router.message(F.text.in_({"/profile", "⚙️ Мой профиль"}))
     async def profile(message: Message):
@@ -88,7 +148,8 @@ def create_router() -> Router:
         await message.answer(f"Профиль\n\n"
                              f"Имя: {message.from_user.first_name}\n"
                              f"ID: {message.from_user.id}\n"
-                             f"Username: @{message.from_user.username}"
+                             f"Username: @{message.from_user.username}\n"
+                             f"Номер телефона: {message.contact.phone_number}\n"
                              f"Тип пользователя:")
     return router
 

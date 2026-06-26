@@ -4,11 +4,20 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="First steps of TG Bot for client handling and client usage (handlers and keyboard created)">
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="added disconnected keyboard and handlers for them">
       <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/db_handler/records_data_base.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/db_handler/user_data_base.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/models/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/models/record.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/models/user.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/config/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/config/config.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/db_handler/data_base.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/handler.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/client_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/client_states.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -71,21 +80,24 @@
 }]]></component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\models" />
+      <recent name="C:\Users\user\PycharmProjects3\bot\models" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\.venv" />
     </key>
   </component>
   <component name="RunManager">
     <configuration name="run" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="Client Manager" />
-      <option name="ENV_FILES" value="" />
+      <option name="ENV_FILES" value="$PROJECT_DIR$/.env" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <envs>
-        <env name="PYTHONUNBUFFERED" value="1" />
+        <env name="BOT_TOKEN" value="8676244808:AAHbWGa1tmoDOte-N9Cq_OD6J7eCL8rG6zM" />
+        <env name="DATA_BASE" value="clients.db" />
       </envs>
       <option name="SDK_HOME" value="" />
       <option name="SDK_NAME" value="Python 3.13 (PythonProject3)" />
-      <option name="WORKING_DIRECTORY" value="" />
+      <option name="WORKING_DIRECTORY" value="C:\Users\user\PycharmProjects\PythonProject3" />
       <option name="IS_MODULE_SDK" value="false" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
@@ -122,11 +134,20 @@
       <option name="project" value="LOCAL" />
       <updated>1782222036057</updated>
     </task>
-    <option name="localTasksCounter" value="2" />
+    <task id="LOCAL-00002" summary="added disconnected keyboard and handlers for them">
+      <option name="closed" value="true" />
+      <created>1782229613086</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1782229613086</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="First steps of TG Bot for client handling and client usage (handlers and keyboard created)" />
-    <option name="LAST_COMMIT_MESSAGE" value="First steps of TG Bot for client handling and client usage (handlers and keyboard created)" />
+    <MESSAGE value="added disconnected keyboard and handlers for them" />
+    <option name="LAST_COMMIT_MESSAGE" value="added disconnected keyboard and handlers for them" />
   </component>
 </project>
