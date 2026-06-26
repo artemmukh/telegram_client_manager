@@ -8,10 +8,13 @@ class Config:
     bot_token: str
     database_path: str
 
+
 def load_config() -> Config:
     load_dotenv()
 
     bot_token = os.getenv("BOT_TOKEN")
+
+
     if not bot_token:
         raise RuntimeError(
             "BOT_TOKEN is missing. Create .env from .env.example and paste your BotFather token."
@@ -20,6 +23,10 @@ def load_config() -> Config:
     return Config(
 
         bot_token=bot_token,
-        database_path=os.getenv("DATABASE")
-
+        database_path=os.getenv("DATA_BASE"),
     )
+
+admin_ids = list(
+    map(int, os.getenv("ADMIN_IDS").split(","))
+)
+
