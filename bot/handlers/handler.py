@@ -1,70 +1,78 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
-from bot.config.config import admin_ids
-from bot.db_handler import user_data_base
+
+from bot.exceptions.user_exceptions import InvalidFullNameError
 from bot.keyboards.inline_keyboards import start_keyboard, client_keyboard, record_keyboard, contact_keyboard
+from bot.models.user import User
+from bot.models.record import Record
+from bot.services.registration import validate_full_name, RegistrationService
 from bot.states.client_states import RegisterStates
 
 
-def create_router() -> Router:
+
+
+
+async def show_main_menu(message: Message):
+    await message.answer(f"Здравствуйте {message.from_user.first_name}.\n\n"
+                         "Это бот для учета клиентов. С помощью ручного или голосового ввода с ИИ расшифровкой ведется учет клиентской базы.\n\n"
+                         'Для ознакомления с функционалом нажмите "Справка".')
+
+    await message.answer(text='Выберите вариант: ', reply_markup=start_keyboard())
+
+def create_router(user_repo, record_repo) -> Router:
     router = Router()
 
 
     @router.message(RegisterStates.user_full_name)
-    async def get_user_name(message: Message, state: FSMContext):
+    async def first_reg(message: Message, state: FSMContext):
+        user_full_name = message.text.strip()
 
-        await state.update_data(user_full_name=message.text)
+        try:
+            validate_full_name(user_full_name)
+        except InvalidFullNameError as e:
+            await message.answer(str(e))
+            return  # stay in RegisterStates.user_full_name, wait for the next input
 
+        await state.update_data(user_full_name=user_full_name)
         await state.set_state(RegisterStates.user_phone)
-
-        await message.answer("Отправьте ваш контакт: ",
-                             reply_markup=contact_keyboard())
-
-
+        await message.answer(
+            "Отправьте ваш контакт: ",
+            reply_markup=contact_keyboard()
+        )
 
     @router.message(RegisterStates.user_phone, F.contact)
-    async def get_user_phone(message: Message, state: FSMContext):
+    async def final_reg(message: Message, state: FSMContext):
         await state.update_data(user_phone=message.contact.phone_number)
         data = await state.get_data()
 
-        role = None
+        reg = RegistrationService(user_repo)
 
-        if message.from_user.id in admin_ids:
-            role = "admin"
-        else:
-            role = "client"
+        await reg.register(telegram_user_id=message.from_user.id,
+                full_name=data["user_full_name"],
+                phone=data["user_phone"])
 
-        await data_base.create_user(
-            telegram_id=message.from_user.id,
-            full_name=data["full_name"],
-            phone=data["phone"],
-            role=role
-        )
-
+        await message.answer("Регистрация прошла успешна!")
+        await show_main_menu(message)
         await state.clear()
-
-        await message.answer("Регистрация прошла успешно!")
-
-
 
 
     @router.message(F.text == "/start")
     async def start(message: Message, state: FSMContext):
-        user = await data_base.get_user_by_telegram_id(
-            message.from_user.id
-        )
-        if user:
-            await message.answer(f"Здравствуйте, {message.from_user.first_name}. Регистрация прошла успешна!")
-            await message.answer(f"Здравствуйте {message.from_user.first_name}.\n\n"
-                                 "Это бот для учета клиентов. С помощью ручного или голосового ввода с ИИ расшифровкой ведется учет клиентской базы.\n\n"
-                                 'Для ознакомления с функционалом нажмите "Справка".')
-            await message.answer(text='Выберите вариант: ', reply_markup=start_keyboard())
+
+        if await user_repo.user_exists(message.from_user.id):
+            await state.clear()
+            await show_main_menu(message)
+
         else:
-            await message.answer("Пройдите регистрацию сперва!")
+            await message.answer("Пройдите регистрацию для дальнейшего взаимодействия.")
+            await state.set_state(RegisterStates.user_full_name)
+            await message.answer("Отправьте ФИО: ")
 
 
-#displaying identical help for both command and button
+
+
+    #displaying identical help for both command and button
     @router.message(F.text.in_({"/help", "❓ Справка"}))
     async def get_help(message: Message):
         text = ("Справочное меню.\n\n\n"
@@ -83,11 +91,9 @@ def create_router() -> Router:
                 "/profile - личные данные.")
         await message.answer(text=text, reply_markup=start_keyboard())
 
-
-
     @router.message(F.text.in_({"/client_managing", "👤 Управление клиентами"}))
     async def client_managing(message: Message):
-        await message.answer(text="Выберите действие над клиентом:" , reply_markup=client_keyboard())
+        await message.answer(text="Выберите действие над клиентом:", reply_markup=client_keyboard())
 
     # @router.message(Command("create_client"))
     # async def create_client(message: Message):
@@ -104,7 +110,6 @@ def create_router() -> Router:
     # @router.message(Command("update_client"))
     # async def update_client(message: Message):
     #     pass
-
 
     @router.message(F.text.in_({"/record_managing", "📒 Управление записями"}))
     async def record_managing(message: Message):
@@ -145,11 +150,16 @@ def create_router() -> Router:
     @router.message(F.text.in_({"/profile", "⚙️ Мой профиль"}))
     async def profile(message: Message):
 
-        await message.answer(f"Профиль\n\n"
-                             f"Имя: {message.from_user.first_name}\n"
-                             f"ID: {message.from_user.id}\n"
-                             f"Username: @{message.from_user.username}\n"
-                             f"Номер телефона: {message.contact.phone_number}\n"
-                             f"Тип пользователя:")
-    return router
+        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
+        name = user.full_name
+        phone = user.phone
+        role = user.role
+        ID = user.primary_id
 
+        await message.answer(f"Профиль\n\n"
+                             f"ФИО: {name}\n"
+                             f"ID клиента: {ID}\n"
+                             f"Номер телефона: {phone}\n"
+                             f"Тип пользователя: {role}")
+
+    return router
