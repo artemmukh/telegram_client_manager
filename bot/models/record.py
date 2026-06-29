@@ -1,8 +1,12 @@
+from dataclasses import dataclass
 
+
+@dataclass
 class Record:
-    def __init__(self, ID: int, user_telegram_id: int, date: str, status: str, description: str):
-        self.ID = ID
-        self.user_telegram_id = user_telegram_id
-        self.date = date
-        self.status = status
-        self.description = description
+    user_id: int
+    date_time: str
+    description: str
+    recommendation: str
+    price: float
+    status: str
+    primary_id: int | None = None

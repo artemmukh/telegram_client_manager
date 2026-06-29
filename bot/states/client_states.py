@@ -4,6 +4,8 @@ from aiogram.fsm.state import StatesGroup, State
 class RegisterStates(StatesGroup):
     user_full_name = State()
     user_phone = State()
+    not_registered = State()
+    is_registered = State()
 
 class ClientStates(StatesGroup):
     client_name = State()
