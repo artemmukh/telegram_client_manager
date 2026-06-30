@@ -1,5 +1,5 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 
 def start_admin_keyboard() -> ReplyKeyboardMarkup:
@@ -29,39 +29,82 @@ def client_keyboard():
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="1. Добавить клиента",
+        text="➕ Добавить клиента",
         callback_data="create_client"
     )
 
     builder.button(
-        text="2. Удалить клиента",
+        text="❌ Удалить клиента",
         callback_data="delete_client"
     )
 
     builder.button(
-        text="3. Поиск клиента",
+        text="🔍 Поиск клиента",
         callback_data="search_client"
     )
 
     builder.button(
-        text="4. Изменить клиента",
+        text="📝 Изменить клиента",
         callback_data="update_client"
     )
 
+    builder.adjust(2, 2)
+
+    return builder.as_markup()
+
+def client_creation_kb():
+
+    builder = InlineKeyboardBuilder()
+
     builder.button(
-        text="⬅ Назад",
-        callback_data="back_to_main_clients"
+        text="Завершить", callback_data="client_creation_finish"
     )
 
-    builder.adjust(2, 2, 1)
+    builder.button(text="📝 Изменить ФИО", callback_data="client_creation_edit_full_name")
+
+    builder.button(text="📲 Изменить номер", callback_data="client_creation_edit_phone")
+
+    builder.button(text="❌ Отменить", callback_data="cancel")
+
+    builder.adjust(1, 2, 1)
 
     return builder.as_markup()
 
 
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from aiogram.types import InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+def cancel_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="❌ Отменить",
+                    callback_data="cancel"
+                )
+            ]
+        ]
+    )
 
+def client_deletion_kb():
+
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="Поиск по имени", callback_data="client_deletion_name"
+    )
+
+    builder.button(text="Поиск по номеру телефона", callback_data="client_deletion_phone")
+
+    builder.button(text="Отменить удаление", callback_data="back_to_main_clients")
+
+    builder.adjust(2, 1)
+
+    return builder.as_markup()
+
+def client_search_kb():
+    builder = InlineKeyboardBuilder()
+
+    return builder.as_markup()
 
 def record_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
