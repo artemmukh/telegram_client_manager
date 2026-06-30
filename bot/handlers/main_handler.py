@@ -2,9 +2,10 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from bot.exceptions.user_exceptions import InvalidFullNameError
-from bot.keyboards.inline_reply_admin_keyboards import contact_keyboard
+from bot.keyboards.utils.utils_kb import contact_keyboard
 from bot.services.auth import AuthService
-from bot.services.registration import validate_full_name, RegistrationService
+from bot.services.registration import RegistrationService
+from bot.validators.validators import validate_full_name
 from bot.states.user_states import RegisterStates
 from bot.utils.info import (
     display_admin_help_msg,
@@ -14,10 +15,9 @@ from bot.utils.info import (
 )
 from bot.utils.role import RoleFilter
 from bot.utils.tools import normalize_phone
-import bot.services.auth
 
 
-def create_router(user_repo) -> Router:
+def create_main_router(user_repo) -> Router:
     router = Router()
     reg = RegistrationService(user_repo)
 
@@ -60,7 +60,7 @@ def create_router(user_repo) -> Router:
             await message.answer(str(e))
             return
 
-        await state.update_data(user_full_name=full_name)
+        await state.update_data(full_name=full_name)
         await state.set_state(RegisterStates.phone)
         await message.answer("Отправьте ваш контакт: ", reply_markup=contact_keyboard())
 

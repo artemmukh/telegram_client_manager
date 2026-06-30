@@ -9,3 +9,8 @@ class ClientStates(StatesGroup):
     client_full_name = State()
     client_phone = State()
 
+    confirm_create = State()
+
+    client_edit_full_name = State()
+    client_edit_phone = State()
+
