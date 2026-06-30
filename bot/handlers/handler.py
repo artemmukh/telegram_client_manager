@@ -1,11 +1,11 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 from bot.exceptions.user_exceptions import InvalidFullNameError
 from bot.keyboards.inline_reply_admin_keyboards import contact_keyboard
 from bot.services.auth import AuthService
 from bot.services.registration import validate_full_name, RegistrationService
-from bot.states.client_states import RegisterStates
+from bot.states.user_states import RegisterStates
 from bot.utils.info import (
     display_admin_help_msg,
     display_client_help_msg,
@@ -19,6 +19,7 @@ import bot.services.auth
 
 def create_router(user_repo) -> Router:
     router = Router()
+    reg = RegistrationService(user_repo)
 
     # ---------- /start ----------
 
@@ -35,50 +36,48 @@ def create_router(user_repo) -> Router:
     @router.message(F.text == "/start", RoleFilter(None))  # not registered
     async def start_guest(message: Message, state: FSMContext):
         await message.answer("Пройдите регистрацию для дальнейшего взаимодействия.")
-        await state.set_state(RegisterStates.user_full_name)
+        await state.set_state(RegisterStates.full_name)
         await message.answer("Отправьте ФИО: ")
 
     # ---------- /help split by role ----------
 
     @router.message(F.text.in_({"/help", "❓ Справка"}), RoleFilter("admin"))
-    async def help_admin(message: Message, role: str):
+    async def help_admin(message: Message):
         await display_admin_help_msg(message)
 
     @router.message(F.text.in_({"/help", "❓ Справка"}), RoleFilter("client"))
-    async def help_client(message: Message, role: str):
+    async def help_client(message: Message):
         await display_client_help_msg(message)
 
     # ---------- registration ----------
 
-    @router.message(RegisterStates.user_full_name)
+    @router.message(RegisterStates.full_name)
     async def first_reg(message: Message, state: FSMContext):
-        user_full_name = message.text.strip()
+        full_name = message.text.strip()
         try:
-            validate_full_name(user_full_name)
+            validate_full_name(full_name)
         except InvalidFullNameError as e:
             await message.answer(str(e))
             return
 
-        await state.update_data(user_full_name=user_full_name)
-        await state.set_state(RegisterStates.user_phone)
+        await state.update_data(user_full_name=full_name)
+        await state.set_state(RegisterStates.phone)
         await message.answer("Отправьте ваш контакт: ", reply_markup=contact_keyboard())
 
-    @router.message(RegisterStates.user_phone, F.contact)
+    @router.message(RegisterStates.phone, F.contact)
     async def final_reg(message: Message, state: FSMContext):
 
-        await state.update_data(user_phone=normalize_phone(phone = message.contact.phone_number))
+        await state.update_data(phone=normalize_phone(phone = message.contact.phone_number))
 
         data = await state.get_data()
 
         role = AuthService.detect_role(message.from_user.id)
 
-        print(role)
 
-        reg = RegistrationService(user_repo)
 
         await reg.register(
-            full_name=data["user_full_name"],
-            phone=data["user_phone"],
+            full_name=data["full_name"],
+            phone=data["phone"],
             role=role,
             telegram_user_id=message.from_user.id
         )
@@ -110,5 +109,16 @@ def create_router(user_repo) -> Router:
             f"Номер телефона: {user.phone}\n"
             f"Тип пользователя: {role}"
         )
+
+    @router.callback_query(F.data == "cancel")
+    async def cancel(callback: CallbackQuery, state: FSMContext):
+        await state.clear()
+
+        await callback.message.edit_text(
+            "Действие отменено.",
+            reply_markup=None
+        )
+
+        await callback.answer()
 
     return router

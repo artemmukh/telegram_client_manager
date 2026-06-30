@@ -4,22 +4,15 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="created services logic and exceptions implemented">
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="-">
       <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/client_handlers.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/inline_reply_client_keyboard.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/services/auth.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/services/client_management.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/utils/info.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/utils/tools.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/record_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/models/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/models/user.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/repositories/records_repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/repositories/records_repository.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/services/registration.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/registration.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/utils/role.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/role.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/client_management.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/client_management.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/client_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/user_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/utils/tools.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/tools.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/validators/validators.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/validators/validators.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -158,7 +151,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782740677206</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="-">
+      <option name="closed" value="true" />
+      <created>1782808780942</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1782808780942</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -177,6 +178,7 @@
     <MESSAGE value="added disconnected keyboard and handlers for them" />
     <MESSAGE value="keyboard further development and database classes created with SQL queries" />
     <MESSAGE value="created services logic and exceptions implemented" />
-    <option name="LAST_COMMIT_MESSAGE" value="created services logic and exceptions implemented" />
+    <MESSAGE value="-" />
+    <option name="LAST_COMMIT_MESSAGE" value="-" />
   </component>
 </project>

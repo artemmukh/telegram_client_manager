@@ -1,7 +1,6 @@
 def normalize_phone(phone: str) -> str:
-    phone = phone.strip().replace(" ", "")
-
+    if phone.startswith("+998"):
+        return phone
     if phone.startswith("998"):
-        phone = "+" + phone
-
-    return phone
+        return "+" + phone
+    return "+998" + phone

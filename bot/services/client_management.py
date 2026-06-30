@@ -1,6 +1,7 @@
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
+from bot.utils.role import Role
 from bot.validators.validators import validate_full_name, validate_phone
 
 
@@ -12,7 +13,7 @@ class ClientManagement:
 
         full_name = data['full_name']
         phone = data['phone']
-        role = 'client'
+        role = Role.CLIENT
 
         full_name = full_name.strip()
         validate_full_name(full_name)
@@ -26,6 +27,9 @@ class ClientManagement:
 
             full_name=full_name,
             phone=phone,
-            role=role,
-            is_registered=True,
+            role=role
         )
+
+        await self.user_repository.create_user(user)
+
+        return user
