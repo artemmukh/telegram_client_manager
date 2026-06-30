@@ -5,14 +5,34 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="-">
-      <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/states/record_states.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/services/client_management.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/client_management.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/states/client_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/user_states.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/utils/tools.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/tools.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_creation.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_delete.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_search.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_update.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/utils/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/utils/utils.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/record_management/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/record_management/record_menu.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/client/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/admin_main_menu_kb.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/client_creation_kb.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/client_deletion_kb.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/client_main_menu_kb.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/record_management_kb/record_main_menu_kb.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/client/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/utils/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_menu.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/client_handlers.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/client/client_handlers.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/main_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/utils/utils_kb.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_reply_client_keyboard.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/client/client_main_keyboard.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/user_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/user_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/utils/info.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/info.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/validators/validators.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/validators/validators.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -30,18 +50,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "artemmukh"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;artemmukh&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/artemmukh/telegram_client_manager.git",
-    "accountId": "37dea2c2-8fa1-4452-9232-3c4e4ad3e405"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/artemmukh/telegram_client_manager.git&quot;,
+    &quot;accountId&quot;: &quot;37dea2c2-8fa1-4452-9232-3c4e4ad3e405&quot;
   }
-}]]></component>
+}</component>
   <component name="HighlightingSettingsPerFile">
     <setting file="file://$PROJECT_DIR$/.venv/Lib/site-packages/aiogram/client/bot.py" root0="SKIP_INSPECTION" />
     <setting file="file://$PROJECT_DIR$/.venv/Lib/site-packages/aiogram/utils/token.py" root0="SKIP_INSPECTION" />
@@ -57,29 +77,31 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "Python.create_bot.executor": "Run",
-    "Python.handler.executor": "Run",
-    "Python.logging.executor": "Run",
-    "Python.main.executor": "Run",
-    "Python.run.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
-    "git-widget-placeholder": "master",
-    "junie.onboarding.icon.badge.shown": "true",
-    "settings.editor.selected.configurable": "ml.llm.LLMThirdPartyAiProvidersConfigurable",
-    "to.speed.mode.migration.done": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Python.create_bot.executor&quot;: &quot;Run&quot;,
+    &quot;Python.handler.executor&quot;: &quot;Run&quot;,
+    &quot;Python.logging.executor&quot;: &quot;Run&quot;,
+    &quot;Python.main.executor&quot;: &quot;Run&quot;,
+    &quot;Python.run.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMThirdPartyAiProvidersConfigurable&quot;,
+    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\models" />
-      <recent name="C:\Users\user\PycharmProjects3\bot\models" />
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\.venv" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin\client_management_kb" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\utils" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\client" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\handlers\admin\record_management" />
     </key>
   </component>
   <component name="RunManager">
@@ -88,6 +110,9 @@
       <option name="ENV_FILES" value="$PROJECT_DIR$/.env" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
       <option name="SDK_HOME" value="" />
       <option name="SDK_NAME" value="Python 3.13 (PythonProject3)" />
       <option name="WORKING_DIRECTORY" value="C:\Users\user\PycharmProjects\PythonProject3" />

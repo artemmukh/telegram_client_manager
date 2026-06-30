@@ -24,7 +24,7 @@ def validate_phone(phone: str) -> None:
 
     if not PHONE_PATTERN.fullmatch(phone):
 
-        raise InvalidPhoneError("Введите номер корректно. Формат телефона: 901234567.")
+        raise InvalidPhoneError("Введите номер корректно.\n Формат телефона: 901234567 или 998901234567.")
 
 
 

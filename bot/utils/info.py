@@ -1,7 +1,7 @@
 from aiogram.types import Message
 
-from bot.keyboards.inline_reply_admin_keyboards import  start_admin_keyboard
-from bot.keyboards.inline_reply_client_keyboard import start_client_keyboard
+from bot.keyboards.admin.admin_main_menu_kb import start_admin_keyboard
+from bot.keyboards.client.client_main_keyboard import start_client_keyboard
 
 
 async def show_main_admin_menu(message: Message):
