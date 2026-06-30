@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError
 from bot.handlers.admin.client_management.utils.utils import show_creation_confirmation, show_creation_success
 from bot.keyboards.utils.utils_kb import cancel_kb
-from bot.services.client_management import ClientManagement
+from bot.services.admin.client_management import ClientManagement
 from bot.states.user_states import ClientStates
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_phone, validate_full_name, validate_fields_filled
@@ -48,7 +48,7 @@ def create_admin_client_creation_router(user_repo):
             await message.answer(str(e))
             return
 
-        normalize_phone(client_phone)
+        client_phone = normalize_phone(client_phone)
 
         await state.update_data(phone=client_phone)
 
@@ -125,7 +125,7 @@ def create_admin_client_creation_router(user_repo):
             await message.answer(str(e))
             return
 
-        normalize_phone(client_phone)
+        client_phone = normalize_phone(client_phone)
 
         await state.update_data(phone=client_phone)
 

@@ -2,6 +2,7 @@
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
 from bot.models.user import User
 from bot.utils.role import Role
+from bot.utils.tools import normalize_phone
 from bot.repositories.user_repository import UserRepository
 from bot.validators.validators import validate_full_name, validate_phone
 
@@ -20,6 +21,7 @@ class RegistrationService:
     ) -> User:
 
         full_name = full_name.strip()
+        phone = normalize_phone(phone.strip())
         validate_full_name(full_name)
         validate_phone(phone)
 

@@ -2,6 +2,7 @@ from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyE
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.utils.role import Role
+from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_full_name, validate_phone
 
 
@@ -11,8 +12,8 @@ class ClientManagement:
 
     async def create_client(self, data):
 
-        full_name = data['full_name']
-        phone = data['phone']
+        full_name = data['full_name'].strip()
+        phone = normalize_phone(data['phone'].strip())
         role = Role.CLIENT
 
         full_name = full_name.strip()
