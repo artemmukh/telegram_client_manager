@@ -73,6 +73,7 @@ def create_admin_router(user_repo, record_repo):
 
 
 
+
     @router.callback_query(F.data == "client_creation_finish")
     async def client_creation_finish(callback_query: CallbackQuery, state: FSMContext):
 
