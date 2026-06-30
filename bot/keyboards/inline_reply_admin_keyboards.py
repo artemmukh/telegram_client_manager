@@ -2,7 +2,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def start_keyboard() -> ReplyKeyboardMarkup:
+def start_admin_keyboard() -> ReplyKeyboardMarkup:
     start_builder = ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text="👤 Управление клиентами"),
     KeyboardButton(text="📒 Управление записями")],
