@@ -4,29 +4,23 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="keyboard further development and database classes created with SQL queries">
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="created services logic and exceptions implemented">
       <change afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/exceptions/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/exceptions/exceptions.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/exceptions/record_exceptions.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/exceptions/user_exceptions.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/repositories/records_repository.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/services/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/services/registration.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/utils/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/utils/role.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/validators/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/validators/validators.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/handlers/client_handlers.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/keyboards/inline_reply_client_keyboard.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/services/auth.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/services/client_management.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/utils/info.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/utils/tools.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/config/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/config/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/create_bot.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/create_bot.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/db_handler/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/repositories/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/db_handler/records_data_base.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/db_handler/user_data_base.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/models/record.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/models/record.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/models/user.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/models/user.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/states/client_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/client_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/repositories/records_repository.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/repositories/records_repository.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/registration.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/registration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/utils/role.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/role.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/validators/validators.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/validators/validators.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -156,7 +150,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782500071745</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="created services logic and exceptions implemented">
+      <option name="closed" value="true" />
+      <created>1782740677206</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1782740677206</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -174,6 +176,7 @@
     <MESSAGE value="First steps of TG Bot for client handling and client usage (handlers and keyboard created)" />
     <MESSAGE value="added disconnected keyboard and handlers for them" />
     <MESSAGE value="keyboard further development and database classes created with SQL queries" />
-    <option name="LAST_COMMIT_MESSAGE" value="keyboard further development and database classes created with SQL queries" />
+    <MESSAGE value="created services logic and exceptions implemented" />
+    <option name="LAST_COMMIT_MESSAGE" value="created services logic and exceptions implemented" />
   </component>
 </project>

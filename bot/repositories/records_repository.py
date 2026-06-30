@@ -22,7 +22,7 @@ class RecordRepository:
                     date_time TIMESTAMP NOT NULL,
                     description TEXT,
                     recommendation TEXT,
-                    price REAL,
+                       price REAL,
                     status TEXT,
 
                     FOREIGN KEY(user_id)
