@@ -4,36 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="-">
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_creation.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_delete.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_search.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_update.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/utils/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/utils/utils.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/record_management/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/admin/record_management/record_menu.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/handlers/client/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/admin_main_menu_kb.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/client_creation_kb.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/client_deletion_kb.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/client_main_menu_kb.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/admin/record_management_kb/record_main_menu_kb.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/client/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/bot/keyboards/utils/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/handlers/admin_handlers.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_menu.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/handlers/client_handlers.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/client/client_handlers.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/handlers/handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/main_handler.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_reply_admin_keyboards.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/utils/utils_kb.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/keyboards/inline_reply_client_keyboard.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/client/client_main_keyboard.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/states/user_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/user_states.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/utils/info.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/info.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/validators/validators.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/validators/validators.py" afterDir="false" />
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)">
+      <change afterPath="$PROJECT_DIR$/bot/services/admin/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_creation.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_creation.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/client_management.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/admin/client_management.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/registration.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/registration.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -97,11 +72,11 @@
 }</component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\services\admin" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin\client_management_kb" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\utils" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\client" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin" />
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\handlers\admin\record_management" />
     </key>
   </component>
   <component name="RunManager">
@@ -184,7 +159,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782808780942</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)">
+      <option name="closed" value="true" />
+      <created>1782834062810</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1782834062810</updated>
+    </task>
+    <option name="localTasksCounter" value="7" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -204,6 +187,7 @@
     <MESSAGE value="keyboard further development and database classes created with SQL queries" />
     <MESSAGE value="created services logic and exceptions implemented" />
     <MESSAGE value="-" />
-    <option name="LAST_COMMIT_MESSAGE" value="-" />
+    <MESSAGE value="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)" />
+    <option name="LAST_COMMIT_MESSAGE" value="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)" />
   </component>
 </project>
