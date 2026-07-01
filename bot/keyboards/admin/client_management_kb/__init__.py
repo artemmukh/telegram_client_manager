@@ -1,1 +1,1 @@
-"""client management keyboards"""
+"""record management keyboards"""

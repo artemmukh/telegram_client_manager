@@ -1,1 +1,1 @@
-"""user, client and records state class"""
+"""user, record and records state class"""

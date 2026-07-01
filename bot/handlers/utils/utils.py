@@ -1,19 +1,19 @@
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
-from bot.keyboards.admin.client_management_kb.client_creation_kb import client_creation_kb
 
 
-async def show_creation_confirmation(message: Message, state: FSMContext):
+async def show_confirmation(message: Message, state: FSMContext, reply_markup=None):
     data = await state.get_data()
+
 
     await message.answer(
         text=(
-            "Проверьте данные клиента:\n\n"
+            "Проверьте данные:\n\n"
             f"ФИО: {data['full_name']}\n"
             f"Телефон: {data['phone']}"
         ),
-        reply_markup=client_creation_kb()
+        reply_markup=reply_markup
     )
 
 

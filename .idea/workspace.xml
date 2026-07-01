@@ -4,11 +4,41 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)">
-      <change afterPath="$PROJECT_DIR$/bot/services/admin/__init__.py" afterDir="false" />
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="minor fixes">
+      <change afterPath="$PROJECT_DIR$/bot/handlers/utils/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/services/client/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/services/utils/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/admin/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/admin/client_management/client_delition_states.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/admin/record_management/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/register_states.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/utils/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/bot/states/utils/client_edit_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/exceptions/exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/exceptions/exceptions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/exceptions/record_exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/exceptions/record_exceptions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/exceptions/user_exceptions.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/exceptions/user_exceptions.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_creation.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_creation.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/services/client_management.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/admin/client_management.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/bot/services/registration.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/registration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_delete.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/admin/client_management/client_delete.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin/client_management/utils/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/admin/client_management/utils/utils.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/utils/utils.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/handlers/main_handler.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/handlers/main_handler.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/admin/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/admin/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/admin/client_management_kb/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/client/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/client/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/keyboards/utils/utils_kb.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/keyboards/utils/utils_kb.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/admin/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/admin/client_management.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/client/client_management.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/utils/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/services/registration.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/services/utils/registration.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/record_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/admin/record_management/record_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/states/user_states.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/states/admin/client_management/client_creation_states.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/utils/role.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/role.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/utils/tools.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/utils/tools.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/bot/validators/validators.py" beforeDir="false" afterPath="$PROJECT_DIR$/bot/validators/validators.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -52,31 +82,36 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;Python.create_bot.executor&quot;: &quot;Run&quot;,
-    &quot;Python.handler.executor&quot;: &quot;Run&quot;,
-    &quot;Python.logging.executor&quot;: &quot;Run&quot;,
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;Python.run.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMThirdPartyAiProvidersConfigurable&quot;,
-    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python.create_bot.executor": "Run",
+    "Python.handler.executor": "Run",
+    "Python.logging.executor": "Run",
+    "Python.main.executor": "Run",
+    "Python.run.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "master",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "C:/Users/user/PycharmProjects/PythonProject3/bot/keyboards/admin/client_management_kb",
+    "settings.editor.selected.configurable": "ml.llm.LLMThirdPartyAiProvidersConfigurable",
+    "to.speed.mode.migration.done": "true"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
-    <key name="MoveFile.RECENT_KEYS">
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\services\admin" />
+    <key name="CopyFile.RECENT_KEYS">
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin\client_management_kb" />
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\utils" />
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\client" />
-      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\states\admin\client_management" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\states" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\handlers" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\states\admin\record_management" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\services\utils" />
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\services\admin" />
     </key>
   </component>
   <component name="RunManager">
@@ -167,7 +202,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782834062810</updated>
     </task>
-    <option name="localTasksCounter" value="7" />
+    <task id="LOCAL-00007" summary="minor fixes">
+      <option name="closed" value="true" />
+      <created>1782834438320</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1782834438320</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -188,6 +231,7 @@
     <MESSAGE value="created services logic and exceptions implemented" />
     <MESSAGE value="-" />
     <MESSAGE value="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)" />
-    <option name="LAST_COMMIT_MESSAGE" value="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)" />
+    <MESSAGE value="minor fixes" />
+    <option name="LAST_COMMIT_MESSAGE" value="minor fixes" />
   </component>
 </project>

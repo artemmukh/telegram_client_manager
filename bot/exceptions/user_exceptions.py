@@ -1,26 +1,34 @@
 from bot.exceptions.exceptions import BotException
 
+class ValidationError(BotException):
+    """Некорректный ввод."""
+    pass
 
-class UserAlreadyExistsError(BotException):
+
+class UserAlreadyExistsError(ValidationError):
     """Пользователь уже зарегистрирован."""
     pass
 
 
-class UserNotFoundError(BotException):
+class UserNotFoundError(ValidationError):
     """Пользователь не найден."""
     pass
 
 
-class PhoneAlreadyExistsError(BotException):
+class PhoneAlreadyExistsError(ValidationError):
     """Телефон уже используется."""
     pass
 
 
-class InvalidFullNameError(BotException):
+
+class InvalidFullNameError(ValidationError):
     """Некорректное ФИО."""
     pass
 
 
-class InvalidPhoneError(BotException):
+class InvalidPhoneError(ValidationError):
     """Некорректный номер телефона."""
     pass
+
+
+

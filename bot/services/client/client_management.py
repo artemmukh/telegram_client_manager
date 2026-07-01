@@ -1,4 +1,4 @@
-from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
+from bot.exceptions.user_exceptions import PhoneAlreadyExistsError
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.utils.role import Role
@@ -13,12 +13,15 @@ class ClientManagement:
     async def create_client(self, data):
 
         full_name = data['full_name'].strip()
-        phone = normalize_phone(data['phone'].strip())
-        role = Role.CLIENT
+        # Phone is already normalized and validated by the handler layer,
+        # but we re-validate to keep the service safe when called from elsewhere.
+        phone = data['phone'].strip()
 
-        full_name = full_name.strip()
         validate_full_name(full_name)
         validate_phone(phone)
+
+        phone = normalize_phone(phone)
+        role = Role.CLIENT
 
         if await self.user_repository.phone_exists(phone):
             raise PhoneAlreadyExistsError()
