@@ -1,1 +1,0 @@
-"""exceptions class for validations"""

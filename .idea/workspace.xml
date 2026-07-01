@@ -4,9 +4,73 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="register edit name ability added, structure improved,deletion of client implementation started">
+    <list default="true" id="e2c3f6ea-2571-43b8-9ac2-0be3c7d91119" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/config/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/config/config.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/create_bot.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/exceptions/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/exceptions/exceptions.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/exceptions/record_exceptions.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/exceptions/user_exceptions.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/client_creation.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/client_delete.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/client_menu.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/client_search.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/client_update.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/utils/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/client_management/utils/utils.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/record_management/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/admin/record_management/record_menu.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/client/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/client/client_handlers.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/handlers/main_handler.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/admin_main_menu_kb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/client_management_kb/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/client_management_kb/client_creation_kb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/client_management_kb/client_deletion_kb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/client_management_kb/client_main_menu_kb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/admin/record_management_kb/record_main_menu_kb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/client/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/client/client_main_keyboard.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/utils/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/keyboards/utils/utils_kb.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/models/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/models/record.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/models/user.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/repositories/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/repositories/records_repository.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/repositories/user_repository.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/run.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/services/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/services/admin/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/services/admin/client_management.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/services/utils/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/services/utils/auth.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/services/utils/registration.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/admin/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/admin/client_management/client_creation_states.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/admin/client_management/client_delition_states.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/admin/record_management/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/admin/record_management/record_states.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/admin/utils/client_edit_states.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/states/register_states.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/utils/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/utils/info.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/utils/role.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/utils/tools.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/validators/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/bot/validators/validators.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/data/data_base.db" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/Новая папка/requirements.txt" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -65,13 +129,14 @@
     "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
     "git-widget-placeholder": "master",
     "junie.onboarding.icon.badge.shown": "true",
-    "last_opened_file_path": "C:/Users/user/PycharmProjects/PythonProject3/bot/keyboards/admin/client_management_kb",
-    "settings.editor.selected.configurable": "ml.llm.LLMThirdPartyAiProvidersConfigurable",
+    "last_opened_file_path": "C:/Users/user/PycharmProjects/PythonProject3",
+    "settings.editor.selected.configurable": "Errors",
     "to.speed.mode.migration.done": "true"
   }
 }]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\user\PycharmProjects\PythonProject3" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\keyboards\admin\client_management_kb" />
       <recent name="C:\Users\user\PycharmProjects\PythonProject3\bot\states\admin\client_management" />
     </key>
@@ -187,7 +252,15 @@
       <option name="project" value="LOCAL" />
       <updated>1782918742276</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="tests">
+      <option name="closed" value="true" />
+      <created>1782919778341</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1782919778341</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -210,6 +283,7 @@
     <MESSAGE value="client addition logic is fully functionable and further project structure refactored (handlers and keyboard based on the roles)" />
     <MESSAGE value="minor fixes" />
     <MESSAGE value="register edit name ability added, structure improved,deletion of client implementation started" />
-    <option name="LAST_COMMIT_MESSAGE" value="register edit name ability added, structure improved,deletion of client implementation started" />
+    <MESSAGE value="tests" />
+    <option name="LAST_COMMIT_MESSAGE" value="tests" />
   </component>
 </project>
