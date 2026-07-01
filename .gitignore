@@ -1,0 +1,36 @@
+# Environment
+.env
+.env.*
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Distribution
+build/
+dist/
+*.egg-info/
+
+# Database
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# AI
+AGENTS.md
+.agents/
