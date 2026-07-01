@@ -1,1 +1,1 @@
-"""admin keyboards"""
+"""client keyboards"""

@@ -17,10 +17,10 @@ class RoleFilter(BaseFilter):
     Resolves the user's role and passes it to the handler.
 
     Usage:
-        @router.message(F.text == "/start", RoleFilter("admin"))
+        @router.message(F.text == "/start", RoleFilter("client"))
         async def start_admin(message: Message, role: str): ...
 
-        @router.message(F.text == "/start", RoleFilter("client"))
+        @router.message(F.text == "/start", RoleFilter("record"))
         async def start_client(message: Message, role: str): ...
 
         @router.message(F.text == "/start", RoleFilter())  # any registered user

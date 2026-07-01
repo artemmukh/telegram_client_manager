@@ -1,7 +1,5 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 
 def contact_keyboard():
@@ -13,6 +11,13 @@ def contact_keyboard():
         one_time_keyboard=True
     )
 
+def reg_confirm_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтверждаю", callback_data="reg_confirm")],
+        [InlineKeyboardButton(text="📝 Изменить", callback_data="reg_edit")]
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=True)
 
 
 

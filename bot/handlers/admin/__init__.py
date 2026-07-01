@@ -1,1 +1,1 @@
-"""admin handlers"""
+"""client handlers"""

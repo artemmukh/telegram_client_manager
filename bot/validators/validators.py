@@ -1,6 +1,8 @@
 import re
 
-from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError
+from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError, PhoneAlreadyExistsError, ValidationError
+from bot.repositories.user_repository import UserRepository
+from bot.utils.tools import normalize_phone
 
 FULL_NAME_PATTERN = re.compile(
     r"^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?"
@@ -20,16 +22,36 @@ def validate_full_name(full_name: str) -> None:
         )
 
 
-def validate_phone(phone: str) -> None:
+def validate_phone(phone: str) -> str:
+    phone = normalize_phone(phone)
 
     if not PHONE_PATTERN.fullmatch(phone):
+        raise InvalidPhoneError(
+            "Введите номер корректно.\n"
+            "Форматы:\n"
+            "901234567\n"
+            "998901234567\n"
+            "+998901234567"
+        )
 
-        raise InvalidPhoneError("Введите номер корректно.\n Формат телефона: 901234567 или 998901234567.")
+    return phone
+
+async def validate_phone_available(
+    user_repo: UserRepository,
+    phone: str
+):
+    if await user_repo.phone_exists(phone):
+        raise PhoneAlreadyExistsError(
+            "Номер уже зарегистрирован. Пожалуйста, введите другой:"
+        )
+
+def validate_fields_filled(data):
+    if "full_name" not in data:
+        raise ValidationError("ФИО отсутствует.")
+
+    if "phone" not in data:
+        raise ValidationError("Телефон отсутствует.")
 
 
 
-async def validate_fields_filled(data, callback_query):
-    if "full_name" not in data or "phone" not in data:
-        await callback_query.answer("Сначала введите ФИО и номер телефона.", show_alert=True)
-        return
 

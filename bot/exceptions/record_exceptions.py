@@ -6,6 +6,7 @@ class RecordAlreadyExistsError(BotException):
     pass
 
 
+
 class RecordNotFoundError(BotException):
     """Запись не найдена."""
     pass
