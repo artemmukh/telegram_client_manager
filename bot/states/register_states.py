@@ -5,4 +5,5 @@ class RegisterStates(StatesGroup):
     full_name = State()
     phone = State()
     confirm_register = State()
+    edit_full_name = State()
 

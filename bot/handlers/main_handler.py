@@ -1,14 +1,17 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
+from bot.handlers.utils.admin_utils.input_helpers import (
+    edit_full_name,
+    process_edit_full_name
 
+)
 from bot.exceptions.user_exceptions import InvalidFullNameError
-from bot.handlers.utils.utils import show_confirmation
+from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.keyboards.utils.utils_kb import contact_keyboard, reg_confirm_kb
 from bot.services.utils.auth import AuthService
 from bot.services.utils.registration import RegistrationService
 from bot.states.register_states import RegisterStates
-from bot.states.utils.client_edit_states import EditStates
 from bot.utils.info import (
     display_admin_help_msg,
     display_client_help_msg,
@@ -29,12 +32,14 @@ def create_main_router(user_repo) -> Router:
     @router.message(F.text == "/start", RoleFilter("admin"))
     async def start_admin(message: Message, state: FSMContext):
         await state.clear()
-        await show_main_admin_menu(message)
+        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
+        await show_main_admin_menu(message, user.full_name)
 
     @router.message(F.text == "/start", RoleFilter("client"))
     async def start_client(message: Message, state: FSMContext):
         await state.clear()
-        await show_main_client_menu(message)
+        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
+        await show_main_client_menu(message, user.full_name)
 
     @router.message(F.text == "/start", RoleFilter(None))  # not registered
     async def start_guest(message: Message, state: FSMContext):
@@ -73,32 +78,14 @@ def create_main_router(user_repo) -> Router:
         F.data == "reg_edit"
     )
     async def edit_name(callback: CallbackQuery, state: FSMContext):
+        await edit_full_name(callback, state, RegisterStates.edit_full_name)
 
-        await state.set_state(EditStates.edit_full_name)
+    @router.message(
+    RegisterStates.edit_full_name, F.text)
+    async def process_full_name_edition(message: Message, state: FSMContext):
+        await process_edit_full_name(
+            message, state, final_state=RegisterStates.confirm_register, reply_markup=reg_confirm_kb())
 
-        await callback.answer('')
-
-        await callback.message.edit_text(
-            "Введите новое ФИО:",
-            reply_markup=None
-        )
-
-    @router.message(EditStates.edit_full_name)
-    async def process_edit_full_name(message: Message, state: FSMContext):
-
-        full_name = message.text.strip()
-
-        try:
-            validate_full_name(full_name)
-        except InvalidFullNameError as e:
-            await message.answer(str(e))
-            return
-
-        await state.update_data(full_name=full_name)
-
-        await state.set_state(RegisterStates.confirm_register)
-
-        await show_confirmation(message, state, reg_confirm_kb())
 
     @router.callback_query(RegisterStates.confirm_register, F.data == "reg_confirm")
     async def final_reg(callback: CallbackQuery, state: FSMContext):
@@ -117,9 +104,9 @@ def create_main_router(user_repo) -> Router:
         await callback.message.answer("Регистрация прошла успешно!")
 
         if role == Role.ADMIN:
-            await show_main_admin_menu(callback.message)
+            await show_main_admin_menu(callback.message, full_name=data["full_name"])
         else:
-            await show_main_client_menu(callback.message)
+            await show_main_client_menu(callback.message, full_name=data["full_name"])
 
         await callback.answer()
         await state.clear()

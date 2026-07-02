@@ -76,7 +76,7 @@ class UserRepository:
             except aiosqlite.IntegrityError:
                 raise UserAlreadyExistsError()
 
-    async def get_user_by_name(self, full_name: str) -> list[User]:
+    async def get_user_by_name(self, full_name: str) -> User | None:
 
         async with aiosqlite.connect(self.path) as connection:
 
@@ -96,7 +96,7 @@ class UserRepository:
             )
 
             rows = await cursor.fetchall()
-            return [self._row_to_user(row) for row in rows]
+            return self._row_to_user(await cursor.fetchone())
 
 
 
@@ -168,6 +168,10 @@ class UserRepository:
                 """, (telegram_user_id,))
 
             return await cursor.fetchone() is not None
+
+
+    async def get_users(self) -> dict[User]:
+        pass
 
 
 

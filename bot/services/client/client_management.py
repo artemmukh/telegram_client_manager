@@ -1,4 +1,4 @@
-from bot.exceptions.user_exceptions import PhoneAlreadyExistsError
+from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.utils.role import Role
@@ -26,7 +26,6 @@ class ClientManagement:
         if await self.user_repository.phone_exists(phone):
             raise PhoneAlreadyExistsError()
 
-
         user = User(
 
             full_name=full_name,
@@ -37,3 +36,18 @@ class ClientManagement:
         await self.user_repository.create_user(user)
 
         return user
+
+    async def search_client(self, data) -> User | str:
+
+        phone = data.get('phone')
+        full_name = data.get('full_name')
+
+        if phone:
+            phone = normalize_phone(phone.strip())
+            return await self.user_repository.get_user_by_phone(phone)
+
+        elif full_name:
+            full_name = full_name.strip()
+            return await self.user_repository.get_user_by_name(full_name)
+
+        raise UserNotFoundError("Клиент не был найден.")

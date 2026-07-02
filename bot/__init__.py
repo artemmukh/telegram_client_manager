@@ -1,1 +1,1 @@
-"""Telegram bot for record management"""
+"""Telegram bot for client/record management"""

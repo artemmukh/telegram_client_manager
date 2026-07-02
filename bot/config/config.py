@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 class Config:
     bot_token: str
     database_path: str
+    admin_ids: list[int]
 
 
 def load_config() -> Config:
@@ -14,6 +15,10 @@ def load_config() -> Config:
 
     bot_token = os.getenv("BOT_TOKEN")
     database_path = os.getenv("DATA_BASE")
+
+    admin_ids = list(
+        map(int, os.getenv("ADMIN_IDS").split(","))
+    )
 
     if not bot_token or not database_path:
         raise RuntimeError(
@@ -23,11 +28,10 @@ def load_config() -> Config:
     return Config(
 
         bot_token=bot_token,
-        database_path=os.getenv("DATA_BASE"),
+        database_path=database_path,
+        admin_ids=admin_ids
     )
 
 
-admin_ids = list(
-    map(int, os.getenv("ADMIN_IDS").split(","))
-)
+
 

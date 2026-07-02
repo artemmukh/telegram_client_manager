@@ -23,9 +23,6 @@ def reg_confirm_kb():
 
 
 
-
-
-
 def cancel_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

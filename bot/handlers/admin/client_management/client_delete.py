@@ -22,7 +22,7 @@ def create_admin_client_delete_router(user_repo):
         await callback_query.message.edit_text(text="Выберите метод поиска для удаления:", reply_markup=client_deletion_kb())
 
 
-    @router.message(ClientDeletionStates.client_search_variant, F.text)
+    @router.message(ClientDeletionStates.client_search_variant, F.data=="client_search_by_phone")
     async def delete_client_by_phone(message: F.Message, state: FSMContext):
         pass
 
