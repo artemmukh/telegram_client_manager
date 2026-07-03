@@ -2,10 +2,14 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 
 from bot.keyboards.admin.client_management_kb.client_main_menu_kb import client_keyboard
+from bot.utils.role import RoleFilter
 
 
 def create_admin_client_menu_router():
     router = Router()
+
+    router.message.filter(RoleFilter("admin"))
+    router.callback_query.filter(RoleFilter("admin"))
 
     @router.message(F.text.in_({"/client_managing", "👤 Управление клиентами"}))
     async def client_managing(message: Message):

@@ -12,11 +12,13 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     process_edit_full_name,
     process_edit_phone, ask_full_name, full_name_processing, phone_processing
 )
+from bot.utils.role import RoleFilter
+from bot.validators.validators import FULL_NAME_PATTERN
 from bot.keyboards.admin.client_management_kb.client_creation_kb import client_creation_kb
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_creation_states import ClientCreationStates
-from bot.validators.validators import validate_fields_filled
+from bot.validators.validators import validate_fields_filled, validate_phone_available
 
 
 def create_admin_client_creation_router(user_repo):
@@ -25,19 +27,28 @@ def create_admin_client_creation_router(user_repo):
 
     cl_mng = ClientManagement(user_repo)
 
+
+    router.message.filter(RoleFilter("admin"))
+    router.callback_query.filter(RoleFilter("admin"))
+
+
     @router.callback_query(F.data == "create_client")
     async def create_client_name(callback_query: CallbackQuery, state: FSMContext):
         await ask_full_name(callback_query, state, next_state=ClientCreationStates.client_full_name)
 
     @router.message(ClientCreationStates.client_full_name, F.text)
     async def create_client_phone(message: Message, state: FSMContext):
-       if not await full_name_processing(message, state, next_state=ClientCreationStates.client_phone):
+       if not await full_name_processing(message, state, next_state=ClientCreationStates.client_phone, re_pattern=FULL_NAME_PATTERN):
            return
        await message.answer(text="Введите номер телефона:", reply_markup=cancel_kb())
 
     @router.message(ClientCreationStates.client_phone, F.text)
     async def confirm(message: Message, state: FSMContext):
-        if not await phone_processing(message, state, next_state=ClientCreationStates.confirm_create):
+        if not await phone_processing(
+                message,
+                state,
+                validator=lambda phone: validate_phone_available(user_repo, phone),final_state=ClientCreationStates.confirm_create
+        ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb())
 
@@ -52,10 +63,10 @@ def create_admin_client_creation_router(user_repo):
     async def process_full_name_edition(message: Message, state: FSMContext):
         if not await process_edit_full_name(
             message, state,
-            final_state=ClientCreationStates.confirm_create,
-            reply_markup=client_creation_kb(),
+            final_state=ClientCreationStates.confirm_create, re_pattern=FULL_NAME_PATTERN
         ):
             return
+        await show_confirmation(message, state, reply_markup=client_creation_kb())
 
     @router.callback_query(
         ClientCreationStates.confirm_create,
@@ -66,12 +77,12 @@ def create_admin_client_creation_router(user_repo):
 
     @router.message(ClientCreationStates.edit_phone, F.text)
     async def process_phone_edition(message: Message, state: FSMContext):
-        if not await process_edit_phone(
-            message, state,
-            final_state=ClientCreationStates.confirm_create,
-            reply_markup=client_creation_kb(),
+        if not await process_edit_phone(message,
+                state,
+                validator=lambda phone: validate_phone_available(user_repo, phone),final_state=ClientCreationStates.confirm_create
         ):
             return
+        await show_confirmation(message, state, reply_markup=client_creation_kb())
 
 
     @router.callback_query(F.data == "client_creation_finish")

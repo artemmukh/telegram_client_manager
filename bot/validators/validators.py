@@ -11,14 +11,19 @@ FULL_NAME_PATTERN = re.compile(
 
 PHONE_PATTERN = re.compile(r"^(?:\+998|998)?\d{9}$")
 
+SEARCH_NAME_PATTERN = re.compile(
+    r"^[А-ЯЁа-яё]{2,}(?:[- ][А-ЯЁа-яё]{2,})*$"
+)
 
 
 
-
-def validate_full_name(full_name: str) -> None:
-    if not FULL_NAME_PATTERN.fullmatch(full_name.strip()):
+def validate_full_name(full_name: str, pattern) -> None:
+    if not pattern.fullmatch(full_name.strip()):
         raise InvalidFullNameError(
-            "Введите ФИО корректно.\nНапример: Иванов Иван Иванович"
+            "Введите ФИО корректно.\n\n"
+            "Например:\n"
+            "Для создания и регистрации: Иванов Иван Иванович.\n"
+            "Для поиска: Иван, Иван Иванов, Иван Иванов Иванович."
         )
 
 

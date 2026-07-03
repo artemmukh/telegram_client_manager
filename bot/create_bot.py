@@ -5,11 +5,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.config.config import load_config
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 bot = Bot(token=load_config().bot_token)
 db_path = load_config().database_path
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+
 
 
 dp = Dispatcher()

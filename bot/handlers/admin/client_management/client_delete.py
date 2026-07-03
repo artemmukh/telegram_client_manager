@@ -5,6 +5,7 @@ from bot.keyboards.admin.client_management_kb.client_deletion_kb import client_d
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_delition_states import ClientDeletionStates
+from bot.utils.role import RoleFilter
 
 
 def create_admin_client_delete_router(user_repo):
@@ -13,6 +14,9 @@ def create_admin_client_delete_router(user_repo):
     router = Router()
 
     cl_mng = ClientManagement(user_repo)
+
+    router.message.filter(RoleFilter("admin"))
+    router.callback_query.filter(RoleFilter("admin"))
 
 
     @router.callback_query(F.data == "delete_client")

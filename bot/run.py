@@ -4,7 +4,12 @@ from bot.handlers.admin.client_management.client_creation import create_admin_cl
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
 from bot.handlers.admin.record_management.record_menu import create_admin_record_router
-from bot.handlers.main_handler import create_main_router
+from bot.handlers.common.cancel import create_cancel_router
+from bot.handlers.common.help import create_help_router
+from bot.handlers.common.profile import create_profile_router
+from bot.handlers.common.start import create_start_router
+from bot.handlers.registration import create_reg_router
+from bot.middlewares.user import UserContextMiddleware
 from bot.repositories.records_repository import RecordRepository
 from bot.repositories.user_repository import UserRepository
 
@@ -22,7 +27,19 @@ async def main():
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["record_repo"] = record_repo
 
-    dp.include_router(create_main_router(user_repo))
+
+    dp.message.middleware(UserContextMiddleware(user_repo))
+    dp.callback_query.middleware(UserContextMiddleware(user_repo))
+
+
+
+
+    # Routers
+    dp.include_router(create_reg_router(user_repo))
+    dp.include_router(create_start_router())
+    dp.include_router(create_help_router())
+    dp.include_router(create_cancel_router())
+    dp.include_router(create_profile_router())
     dp.include_router(create_admin_client_menu_router())
     dp.include_router(create_admin_client_creation_router(user_repo))
     dp.include_router(create_admin_client_search_router(user_repo))

@@ -4,7 +4,7 @@ from bot.models.user import User
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.repositories.user_repository import UserRepository
-from bot.validators.validators import validate_full_name, validate_phone
+from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 
 class RegistrationService:
@@ -22,7 +22,7 @@ class RegistrationService:
 
         full_name = full_name.strip()
         phone = normalize_phone(phone.strip())
-        validate_full_name(full_name)
+        validate_full_name(full_name, FULL_NAME_PATTERN)
         validate_phone(phone)
 
         if await self.user_repository.phone_exists(phone):

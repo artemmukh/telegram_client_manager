@@ -1,45 +1,31 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
+
+from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name,
-    process_edit_full_name
+    process_edit_full_name, full_name_processing
 
 )
-from bot.exceptions.user_exceptions import InvalidFullNameError
-from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.keyboards.utils.utils_kb import contact_keyboard, reg_confirm_kb
 from bot.services.utils.auth import AuthService
 from bot.services.utils.registration import RegistrationService
 from bot.states.register_states import RegisterStates
 from bot.utils.info import (
-    display_admin_help_msg,
-    display_client_help_msg,
     show_main_admin_menu,
     show_main_client_menu,
 )
 from bot.utils.role import RoleFilter, Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_full_name
+from bot.validators.validators import FULL_NAME_PATTERN
 
 
-def create_main_router(user_repo) -> Router:
+def create_reg_router(user_repo) -> Router:
     router = Router()
     reg = RegistrationService(user_repo)
 
     # ---------- /start ----------
-
-    @router.message(F.text == "/start", RoleFilter("admin"))
-    async def start_admin(message: Message, state: FSMContext):
-        await state.clear()
-        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
-        await show_main_admin_menu(message, user.full_name)
-
-    @router.message(F.text == "/start", RoleFilter("client"))
-    async def start_client(message: Message, state: FSMContext):
-        await state.clear()
-        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
-        await show_main_client_menu(message, user.full_name)
 
     @router.message(F.text == "/start", RoleFilter(None))  # not registered
     async def start_guest(message: Message, state: FSMContext):
@@ -51,16 +37,10 @@ def create_main_router(user_repo) -> Router:
 
     @router.message(RegisterStates.full_name)
     async def get_full_name(message: Message, state: FSMContext):
-        full_name = message.text.strip()
-        try:
-            validate_full_name(full_name)
-        except InvalidFullNameError as e:
-            await message.answer(str(e))
+
+
+        if not await full_name_processing(message, state, next_state=RegisterStates.phone, re_pattern=FULL_NAME_PATTERN):
             return
-
-        await state.update_data(full_name=full_name)
-
-        await state.set_state(RegisterStates.phone)
 
         await message.answer("Отправьте ваш контакт: ", reply_markup=contact_keyboard())
 
@@ -81,11 +61,13 @@ def create_main_router(user_repo) -> Router:
         await edit_full_name(callback, state, RegisterStates.edit_full_name)
 
     @router.message(
-    RegisterStates.edit_full_name, F.text)
+        RegisterStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
-        await process_edit_full_name(
-            message, state, final_state=RegisterStates.confirm_register, reply_markup=reg_confirm_kb())
+        if not await process_edit_full_name(
 
+                message, state, final_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
+            return
+        await show_confirmation(message, state, reg_confirm_kb())
 
     @router.callback_query(RegisterStates.confirm_register, F.data == "reg_confirm")
     async def final_reg(callback: CallbackQuery, state: FSMContext):
@@ -93,7 +75,6 @@ def create_main_router(user_repo) -> Router:
         data = await state.get_data()
 
         role = AuthService.detect_role(callback.from_user.id)
-
 
         await reg.register(
             full_name=data["full_name"],
@@ -110,45 +91,5 @@ def create_main_router(user_repo) -> Router:
 
         await callback.answer()
         await state.clear()
-
-    # ---------- /help split by role ----------
-
-    @router.message(F.text.in_({"/help", "❓ Справка"}), RoleFilter("admin"))
-    async def help_admin(message: Message):
-        await display_admin_help_msg(message)
-
-    @router.message(F.text.in_({"/help", "❓ Справка"}), RoleFilter("client"))
-    async def help_client(message: Message):
-        await display_client_help_msg(message)
-
-    # ---------- /profile ----------
-
-    @router.message(F.text.in_({"/profile", "⚙️ Мой профиль"}))
-    async def profile(message: Message):
-        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
-
-        if user.role == "admin":
-            role = "администратор"
-        else:
-            role = "клиент"
-
-        await message.answer(
-            "Профиль\n\n"
-            f"ФИО: {user.full_name}\n"
-            f"ID клиента: {user.ID}\n"
-            f"Номер телефона: {user.phone}\n"
-            f"Тип пользователя: {role}"
-        )
-
-    @router.callback_query(F.data == "cancel")
-    async def cancel(callback: CallbackQuery, state: FSMContext):
-        await state.clear()
-
-        await callback.message.edit_text(
-            "Действие отменено.",
-            reply_markup=None
-        )
-
-        await callback.answer('')
 
     return router

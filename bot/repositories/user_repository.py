@@ -76,11 +76,9 @@ class UserRepository:
             except aiosqlite.IntegrityError:
                 raise UserAlreadyExistsError()
 
-    async def get_user_by_name(self, full_name: str) -> User | None:
-
+    async def get_users_by_name(self, full_name: str) -> list[User]:
+        query = f"%{full_name.strip()}%"
         async with aiosqlite.connect(self.path) as connection:
-
-
             cursor = await connection.execute(
                 """
                 SELECT
@@ -90,13 +88,14 @@ class UserRepository:
                     phone,
                     role
                 FROM users
-                WHERE full_name = ?
+                WHERE full_name LIKE ?
                 """,
-                (full_name,)
+                (query,),
             )
 
             rows = await cursor.fetchall()
-            return self._row_to_user(await cursor.fetchone())
+
+        return [self._row_to_user(row) for row in rows]
 
 
 

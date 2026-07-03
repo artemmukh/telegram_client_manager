@@ -92,9 +92,11 @@ async def test_user_repository_searches_users_by_name(user_repo):
         User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, telegram_user_id=1002)
     )
 
-    users = await user_repo.get_user_by_name(full_name)
+    users = await user_repo.get_users_by_name(full_name)
 
+    assert len(users) == 2
     assert [user.phone for user in users] == ["+998901234567", "+998901234568"]
+    assert await user_repo.get_users_by_name("\u041f\u0435\u0442\u0440\u043e\u0432 \u041f\u0435\u0442\u0440") == []
 
 
 @pytest.mark.asyncio
