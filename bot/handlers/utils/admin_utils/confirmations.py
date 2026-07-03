@@ -65,10 +65,37 @@ async def show_success(
     )
 
 
-async def show_users(callback: CallbackQuery, title: str, users: list[User]):
-    await callback.message.edit_text(
+async def show_users(callback_query: CallbackQuery, title: str, users: list[User]):
+    await callback_query.message.edit_text(
         text=build_users_list_text(title, users),
     )
+
+async def show_user(
+    callback: CallbackQuery,
+    users: list[User],
+    keyboard_factory=None,
+):
+    for user in users:
+        markup = None
+
+
+        if keyboard_factory:
+            markup = keyboard_factory(user)
+
+        await callback.message.answer(
+            text=build_client_text(
+                "Клиент",
+                {
+                    "user_id": user.ID,
+                    "full_name": user.full_name,
+                    "phone": user.phone,
+                },
+            ),
+            reply_markup=markup,
+        )
+
+
+
 
 
 

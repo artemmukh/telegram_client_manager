@@ -31,7 +31,6 @@ def create_admin_client_search_router(user_repo):
 
     @router.callback_query(F.data == "client_full_name_search")
     async def client_full_name_search(callback_query: CallbackQuery, state: FSMContext):
-        await state.clear()
         await ask_full_name(callback_query, state, next_state=ClientSearchStates.client_search_name)
 
     @router.message(ClientSearchStates.client_search_name, F.text)
@@ -42,7 +41,6 @@ def create_admin_client_search_router(user_repo):
 
     @router.callback_query(F.data == "client_phone_search")
     async def client_phone_search(callback_query: CallbackQuery, state: FSMContext):
-        await state.clear()
         await ask_phone(callback_query, state, ClientSearchStates.client_search_phone)
 
     @router.message(ClientSearchStates.client_search_phone, F.text)
@@ -86,12 +84,13 @@ def create_admin_client_search_router(user_repo):
         await show_confirmation(message, state, reply_markup=client_search_phone_kb())
 
     @router.callback_query(F.data == "get_all_clients")
-    async def get_all_clients(message: Message, state: FSMContext):
-        async def get_all_clients(callback: CallbackQuery, state: FSMContext):
-            pass
+    async def get_all_clients(callback_query: CallbackQuery, state: FSMContext):
+        found_clients = await user_repo.get_all_clients()
+        await show_users(callback_query, f"Список всех клиентов (всего: {len(found_clients)}): "
+                         , users=found_clients)
 
     @router.callback_query(F.data == "approve_client_search")
-    async def client_creation_finish(callback_query: CallbackQuery, state: FSMContext):
+    async def client_search_finish(callback_query: CallbackQuery, state: FSMContext):
 
         data = await state.get_data()
 
@@ -104,7 +103,6 @@ def create_admin_client_search_router(user_repo):
             await callback_query.answer(f"Ошибка поиска клиента: {e}", show_alert=True)
             return
 
-        found = await cl_mng.search_client(data)
 
         if isinstance(found, list):
             await show_users(
@@ -112,12 +110,7 @@ def create_admin_client_search_router(user_repo):
                 f"Клиентов найдено: {len(found)}",
                 users=found,
             )
-        else:
-            await show_users(
-                callback_query,
-                "Клиент найден",
-                users=[found],
-            )
+
 
         await state.clear()
 

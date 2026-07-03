@@ -76,7 +76,7 @@ class UserRepository:
             except aiosqlite.IntegrityError:
                 raise UserAlreadyExistsError()
 
-    async def get_users_by_name(self, full_name: str) -> list[User]:
+    async def get_users_by_name(self, full_name: str) -> list[User] | None:
         query = f"%{full_name.strip()}%"
         async with aiosqlite.connect(self.path) as connection:
             cursor = await connection.execute(
@@ -96,6 +96,22 @@ class UserRepository:
             rows = await cursor.fetchall()
 
         return [self._row_to_user(row) for row in rows]
+
+
+    async def get_all_clients(self) -> list[User] | None:
+
+        async with aiosqlite.connect(self.path) as connection:
+
+            cursor = await connection.execute(
+                """
+                SELECT * FROM users WHERE role = 'client' ORDER BY full_name
+                """
+            )
+
+            rows = await cursor.fetchall()
+            return [self._row_to_user(row) for row in rows]
+
+
 
 
 
@@ -119,11 +135,11 @@ class UserRepository:
             )
             return self._row_to_user(await cursor.fetchone())
 
-    async def update_user(self, telegram_user_id: int, user: User) -> None:
+    async def update_user(self, telegram_user_id: int, user: User) -> User | None:
 
         async with aiosqlite.connect(self.path) as connection:
 
-            await connection.execute(
+            cursor = await connection.execute(
                 """
                 UPDATE users
                 SET
@@ -142,16 +158,20 @@ class UserRepository:
 
             await connection.commit()
 
-    async def delete_user(self, telegram_user_id: int) -> None:
+            return self._row_to_user(await cursor.fetchone())
+
+
+
+    async def delete_user(self, user_id: int) -> None:
 
         async with aiosqlite.connect(self.path) as connection:
 
             await connection.execute(
                 """
                 DELETE FROM users
-                WHERE telegram_user_id = ?
+                WHERE id = ? AND role != 'admin'
                 """,
-                (telegram_user_id,)
+                (user_id,)
             )
 
             await connection.commit()
@@ -168,9 +188,6 @@ class UserRepository:
 
             return await cursor.fetchone() is not None
 
-
-    async def get_users(self) -> dict[User]:
-        pass
 
 
 

@@ -4,6 +4,8 @@ class ValidationError(BotException):
     """Некорректный ввод."""
     pass
 
+class RoleError(BotException):
+    pass
 
 class UserAlreadyExistsError(ValidationError):
     """Пользователь уже зарегистрирован."""

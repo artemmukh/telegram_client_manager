@@ -1,3 +1,4 @@
+from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
@@ -49,7 +50,7 @@ class ClientManagement:
             if user is None:
                 raise UserNotFoundError("Клиент не был найден.")
 
-            return user
+            return [user]
 
         if full_name:
             full_name = full_name.strip()
@@ -62,3 +63,12 @@ class ClientManagement:
             return users
 
         raise UserNotFoundError("Клиент не был найден.")
+
+    async def delete_client(self, user_id: int)-> bool:
+
+
+        if user_id:
+            await self.user_repository.delete_user(user_id)
+            return True
+
+        raise BotException("Ошибка удаления клиента")

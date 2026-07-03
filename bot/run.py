@@ -3,6 +3,7 @@ from bot.create_bot import bot, dp, db_path
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
+from bot.handlers.admin.client_management.client_delete import create_admin_client_deletion_router
 from bot.handlers.admin.record_management.record_menu import create_admin_record_router
 from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
@@ -35,14 +36,32 @@ async def main():
 
 
     # Routers
+
+    #registration
     dp.include_router(create_reg_router(user_repo))
+
+    #common handlers
     dp.include_router(create_start_router())
     dp.include_router(create_help_router())
     dp.include_router(create_cancel_router())
     dp.include_router(create_profile_router())
+
+    #admin handlers
+
+    #main admin menu
     dp.include_router(create_admin_client_menu_router())
+
+    #create
     dp.include_router(create_admin_client_creation_router(user_repo))
+
+    #search
     dp.include_router(create_admin_client_search_router(user_repo))
+
+    #delete
+    dp.include_router(create_admin_client_deletion_router(user_repo))
+
+
+    #record handlers
     dp.include_router(create_admin_record_router(record_repo))
 
 
