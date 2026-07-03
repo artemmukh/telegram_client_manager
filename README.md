@@ -1,98 +1,202 @@
-# Medical Appointment Telegram Bot
+# 🏥 Medical Appointment Telegram Bot
 
-Telegram bot for managing patients and appointments. The project is designed for small clinics and private practices where administrators need a simple way to manage patient records and appointment schedules directly from Telegram.
+A modern Telegram bot for managing **patients** and **medical appointments**.
 
-## Features
+Designed for **private clinics**, **medical offices**, and **small healthcare businesses**, allowing administrators to manage patients and schedules directly from Telegram while giving patients convenient access to their appointments.
 
-### Administrator
+---
 
-Administrators can manage the entire patient database:
+# ✨ Features
 
-* Create patient records
-* View patient information
-* Update patient information
-* Delete patient records
+## 👨‍⚕️ Administrator
 
-The bot also provides full appointment management:
+Complete patient management:
 
-* Create appointments
-* View upcoming appointments
-* Update appointment details
-* Cancel appointments
+- ➕ Create patients
+- 🔍 Search patients
+- ✏️ Edit patient information
+- 🗑️ Delete patients
 
-In other words, administrators have full CRUD functionality for both patients and appointments.
+Appointment management:
 
-### Patient
+- 📅 Create appointments
+- 👀 View appointments
+- ✏️ Edit appointments
+- ❌ Cancel appointments
 
-Patients can register through the bot and link their Telegram account to an existing patient profile.
+The administrator has full **CRUD** functionality for both patients and appointments.
 
-After registration, patients can:
+---
 
-* View their upcoming appointments
-* Receive appointment reminders
-* Access appointment information directly from Telegram
+## 👤 Patient
 
-## Planned AI Features
+Patients can register through Telegram and link their account to an existing patient profile.
 
-Artificial Intelligence integration is planned for future releases.
+Available features:
 
-Potential features include:
+- 📅 View upcoming appointments
+- 🔔 Receive appointment reminders
+- 📖 Access appointment information anytime
 
-* Voice message processing using Whisper
-* Natural language appointment creation
-* AI-powered patient interaction
-* Automated data extraction from messages
-* Local LLM integration through Ollama
+---
 
-Example:
+# 🤖 AI Roadmap
 
-Patient sends a voice message:
+The project is being built with future AI integration in mind.
 
-> Schedule me for a consultation next Tuesday at 15:00.
+Planned features include:
 
-The AI system automatically extracts:
+- 🎙️ Voice message recognition (Whisper)
+- 💬 Natural language appointment creation
+- 🤖 AI-powered assistant
+- 🧠 Automatic information extraction
+- 🖥️ Local LLM support via Ollama
 
-* Patient name
-* Appointment date
-* Appointment time
-* Service type
+### Example
 
-and creates the appointment without manual input.
+Patient sends:
 
-## Technology Stack
+> *"Schedule me for a consultation next Tuesday at 15:00."*
 
-### Current
+The AI automatically extracts:
 
-* Python
-* Aiogram
-* SQLite
-* Asyncio
+- 👤 Patient
+- 📅 Date
+- ⏰ Time
+- 🩺 Service
 
-### Future
+and creates the appointment without manual administrator input.
 
-* Whisper
-* Ollama
-* Local LLM Models
-* PostgreSQL (if scalability becomes necessary)
+---
 
-## Project Structure
+# 🛠️ Technology Stack
+
+## Current
+
+- 🐍 Python 3.13+
+- ⚡ Aiogram 3
+- 🗄️ SQLite
+- 🔄 Asyncio
+
+## Planned
+
+- 🎙️ Whisper
+- 🧠 Ollama
+- 🤖 Local LLMs
+- 🐘 PostgreSQL (for larger deployments)
+
+---
+
+# 🏗️ Architecture
+
+The project follows a layered architecture:
+
+```
+Router
+    ↓
+Service
+    ↓
+Repository
+    ↓
+SQLite
+```
+
+Additional layers:
+
+- ✅ Validators
+- 📦 FSM States
+- ⌨️ Keyboards
+- 🧩 Helpers
+- 🔐 Filters
+- ⚙️ Middlewares
+
+This separation keeps business logic independent from Telegram-specific code.
+
+---
+
+# 📂 Project Structure
 
 ```text
-project/
-│
-├── bot/
-│   ├── handlers/
-│   ├── keyboards/
-│   ├── states/
-│   └── middlewares/
-│
-├── database/
-│   ├── models/
-│   └── repositories/
-│
-├── services/
+bot/
 │
 ├── config/
-│
-└── main.py
+├── handlers/
+├── keyboards/
+├── middlewares/
+├── repositories/
+├── services/
+├── states/
+├── validators/
+├── utils/
+└── run.py
 ```
+
+---
+
+# 🚀 Getting Started
+
+Clone the repository:
+
+```bash
+git clone https://github.com/your_username/your_repository.git
+cd your_repository
+```
+
+Create a virtual environment:
+
+```bash
+python -m venv .venv
+```
+
+Activate it:
+
+**Windows**
+
+```bash
+.venv\Scripts\activate
+```
+
+**Linux / macOS**
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Create a `.env` file:
+
+```env
+BOT_TOKEN=your_bot_token
+ADMIN_IDS=123456789,987654321
+```
+
+Run the bot:
+
+```bash
+python -m bot.run
+```
+
+---
+
+# 📌 Project Status
+
+🚧 **Active development**
+
+Current focus:
+
+- ✅ Patient CRUD
+- 🚧 Appointment management
+- 🚧 Registration flow
+- ⏳ Reminder system
+- ⏳ AI integration
+
+---
+
+# 📄 License
+
+This project is intended for educational purposes and portfolio demonstration.
