@@ -4,7 +4,7 @@ from aiogram.types import Message, CallbackQuery
 
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError
-from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_users
+from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_all_clients
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
     full_name_processing, \
     process_edit_full_name, edit_phone, process_edit_phone, ask_phone
@@ -86,8 +86,8 @@ def create_admin_client_search_router(user_repo):
     @router.callback_query(F.data == "get_all_clients")
     async def get_all_clients(callback_query: CallbackQuery, state: FSMContext):
         found_clients = await user_repo.get_all_clients()
-        await show_users(callback_query, f"Список всех клиентов (всего: {len(found_clients)}): "
-                         , users=found_clients)
+        await show_all_clients(callback_query, f"Список всех клиентов (всего: {len(found_clients)}): "
+                               , users=found_clients)
 
     @router.callback_query(F.data == "approve_client_search")
     async def client_search_finish(callback_query: CallbackQuery, state: FSMContext):
@@ -104,12 +104,12 @@ def create_admin_client_search_router(user_repo):
             return
 
 
-        if isinstance(found, list):
-            await show_users(
-                callback_query,
-                f"Клиентов найдено: {len(found)}",
-                users=found,
-            )
+
+        await show_all_clients(
+            callback_query,
+            f"Клиентов найдено: {len(found)}",
+            users=found,
+        )
 
 
         await state.clear()

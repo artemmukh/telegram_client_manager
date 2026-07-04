@@ -76,7 +76,7 @@ class UserRepository:
             except aiosqlite.IntegrityError:
                 raise UserAlreadyExistsError()
 
-    async def get_users_by_name(self, full_name: str) -> list[User] | None:
+    async def get_clients_by_name(self, full_name: str) -> list[User] | None:
         query = f"%{full_name.strip()}%"
         async with aiosqlite.connect(self.path) as connection:
             cursor = await connection.execute(
@@ -88,7 +88,7 @@ class UserRepository:
                     phone,
                     role
                 FROM users
-                WHERE full_name LIKE ?
+                WHERE role = 'client' AND full_name LIKE ? ORDER BY full_name
                 """,
                 (query,),
             )
@@ -116,7 +116,7 @@ class UserRepository:
 
 
 
-    async def get_user_by_phone(self, phone: str) -> User | None:
+    async def get_client_by_phone(self, phone: str) -> User | None:
 
         async with aiosqlite.connect(self.path) as connection:
 
@@ -129,13 +129,13 @@ class UserRepository:
                     phone,
                     role
                 FROM users
-                WHERE phone = ?
+                WHERE role = 'client' AND phone = ? ORDER BY full_name
                 """,
                 (phone,)
             )
             return self._row_to_user(await cursor.fetchone())
 
-    async def update_user(self, telegram_user_id: int, user: User) -> User | None:
+    async def update_client(self, user_id: int, user: User) -> User | None:
 
         async with aiosqlite.connect(self.path) as connection:
 
@@ -146,13 +146,13 @@ class UserRepository:
                     full_name = ?,
                     phone = ?,
                     role = ?
-                WHERE telegram_user_id = ?
+                WHERE id = ?
                 """,
                 (
                     user.full_name,
                     user.phone,
                     user.role.value,
-                    telegram_user_id
+                    user_id
                 )
             )
 
@@ -162,19 +162,33 @@ class UserRepository:
 
 
 
-    async def delete_user(self, user_id: int) -> None:
+    async def delete_client(self, user_id: int) -> None:
 
         async with aiosqlite.connect(self.path) as connection:
 
             await connection.execute(
                 """
                 DELETE FROM users
-                WHERE id = ? AND role != 'admin'
+                WHERE id = ? AND role = 'client'
                 """,
                 (user_id,)
             )
 
             await connection.commit()
+
+
+    async def get_client_by_id(self, user_id: int) -> User | None:
+
+        async with aiosqlite.connect(self.path) as connection:
+
+            cursor = await connection.execute(
+                """
+                SELECT * FROM users WHERE role = 'client' AND id= ?
+                """, (user_id,)
+            )
+            return self._row_to_user(
+                await cursor.fetchone()
+            )
 
     async def user_exists(self, telegram_user_id: int) -> bool:
 

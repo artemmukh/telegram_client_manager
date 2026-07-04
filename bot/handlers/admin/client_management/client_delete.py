@@ -1,17 +1,16 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
+
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError, RoleError
-from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, build_users_list_text, \
-    show_users, show_user
+from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_clients_one_be_one
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
     full_name_processing, \
     process_edit_full_name, edit_phone, process_edit_phone, ask_phone
 from bot.keyboards.admin.client_management_kb.client_deletion_kb import client_deletion_kb, \
     client_deletion_proceeding_kb, client_search_to_delete_phone_kb, \
     client_search_to_delete_name_kb, choose_to_delete_user_kb
-from bot.keyboards.admin.client_management_kb.client_search_kb import client_search_phone_kb, client_search_name_kb
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_deletion_states import ClientDeletionStates
 from bot.utils.role import RoleFilter
@@ -130,7 +129,7 @@ def create_admin_client_deletion_router(user_repo):
         # Несколько клиентов
         await state.set_state(ClientDeletionStates.proceed_deletion)
 
-        await show_user(
+        await show_clients_one_be_one(
             callback_query,
             users=found,
             keyboard_factory=choose_to_delete_user_kb,
@@ -147,7 +146,7 @@ def create_admin_client_deletion_router(user_repo):
 
         user_id = int(callback_query.data.split(":")[1])
 
-        user = await user_repo.get_user_by_id(user_id)
+        user = await user_repo.get_client_by_id(user_id)
 
         await state.update_data(
             user_id=user.ID,
@@ -174,7 +173,7 @@ def create_admin_client_deletion_router(user_repo):
     async def client_deletion_finish(callback_query: CallbackQuery, state: FSMContext):
         try:
             data = await state.get_data()
-            print(data)
+
             try:
                 await cl_mng.delete_client(data["user_id"])
             except BotException as e:

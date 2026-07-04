@@ -45,7 +45,7 @@ class ClientManagement:
         if phone:
             phone = normalize_phone(phone.strip())
 
-            user = await self.user_repository.get_user_by_phone(phone)
+            user = await self.user_repository.get_client_by_phone(phone)
 
             if user is None:
                 raise UserNotFoundError("Клиент не был найден.")
@@ -55,7 +55,7 @@ class ClientManagement:
         if full_name:
             full_name = full_name.strip()
 
-            users = await self.user_repository.get_users_by_name(full_name)
+            users = await self.user_repository.get_clients_by_name(full_name)
 
             if not users:
                 raise UserNotFoundError("Клиент не был найден.")
@@ -68,7 +68,7 @@ class ClientManagement:
 
 
         if user_id:
-            await self.user_repository.delete_user(user_id)
+            await self.user_repository.delete_client(user_id)
             return True
 
         raise BotException("Ошибка удаления клиента")

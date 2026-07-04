@@ -25,7 +25,7 @@ async def test_user_repository_creates_and_reads_user_by_phone_and_telegram_id(u
 
     await user_repo.create_user(user)
 
-    by_phone = await user_repo.get_user_by_phone("+998901234567")
+    by_phone = await user_repo.get_client_by_phone("+998901234567")
     by_telegram = await user_repo.get_user_by_telegram_id(1001)
 
     assert by_phone is not None
@@ -55,7 +55,7 @@ async def test_user_repository_updates_user(user_repo):
         phone="+998901234568",
         role=Role.ADMIN,
     )
-    await user_repo.update_user(1001, updated)
+    await user_repo.update_client(1001, updated)
 
     user = await user_repo.get_user_by_telegram_id(1001)
 
@@ -75,7 +75,7 @@ async def test_user_repository_deletes_user(user_repo):
         )
     )
 
-    await user_repo.delete_user(1001)
+    await user_repo.delete_client(1001)
 
     assert await user_repo.get_user_by_telegram_id(1001) is None
     assert await user_repo.user_exists(1001) is False
@@ -92,11 +92,11 @@ async def test_user_repository_searches_users_by_name(user_repo):
         User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, telegram_user_id=1002)
     )
 
-    users = await user_repo.get_users_by_name(full_name)
+    users = await user_repo.get_clients_by_name(full_name)
 
     assert len(users) == 2
     assert [user.phone for user in users] == ["+998901234567", "+998901234568"]
-    assert await user_repo.get_users_by_name("\u041f\u0435\u0442\u0440\u043e\u0432 \u041f\u0435\u0442\u0440") == []
+    assert await user_repo.get_clients_by_name("\u041f\u0435\u0442\u0440\u043e\u0432 \u041f\u0435\u0442\u0440") == []
 
 
 @pytest.mark.asyncio

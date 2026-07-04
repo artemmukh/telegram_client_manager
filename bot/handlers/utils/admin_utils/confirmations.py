@@ -1,6 +1,7 @@
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.keyboards.admin.client_management_kb.client_main_menu_kb import back_to_menu_kb
 from bot.models.user import User
 
 FIELDS = {
@@ -52,25 +53,25 @@ async def show_confirmation(
 
 
 async def show_success(
-    callback: CallbackQuery,
+    callback_query: CallbackQuery,
     title: str,
     **kwargs,
 ) -> None:
 
     text = build_client_text(title, kwargs)
 
-    await callback.message.edit_text(
-        text=text,
-        reply_markup=None,
-    )
-
-
-async def show_users(callback_query: CallbackQuery, title: str, users: list[User]):
     await callback_query.message.edit_text(
-        text=build_users_list_text(title, users),
+        text=text, reply_markup=back_to_menu_kb()
     )
 
-async def show_user(
+
+
+async def show_all_clients(callback_query: CallbackQuery, title: str, users: list[User]):
+    await callback_query.message.edit_text(
+        text=build_users_list_text(title, users), reply_markup=back_to_menu_kb()
+    )
+
+async def show_clients_one_be_one(
     callback: CallbackQuery,
     users: list[User],
     keyboard_factory=None,
@@ -80,7 +81,7 @@ async def show_user(
 
 
         if keyboard_factory:
-            markup = keyboard_factory(user)
+            markup = keyboard_factory(user.ID)
 
         await callback.message.answer(
             text=build_client_text(

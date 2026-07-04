@@ -38,11 +38,13 @@ def choose_to_delete_user_kb(user_id: int):
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="❌ Удалить",
+        text="➡️ К Удалению",
         callback_data=f"delete:{user_id}",
     )
 
-    builder.adjust(1)
+    builder.button(text="❌ Отменить", callback_data="cancel")
+
+    builder.adjust(1,1)
     return builder.as_markup()
 
 

@@ -27,3 +27,14 @@ def client_keyboard():
     builder.adjust(2, 2)
 
     return builder.as_markup()
+
+
+def back_to_menu_kb():
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="⬅️ К меню",
+        callback_data="back_to_main_menu"
+    )
+
+    return builder.as_markup()
