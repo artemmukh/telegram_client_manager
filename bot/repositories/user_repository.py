@@ -151,7 +151,7 @@ class UserRepository:
                 (
                     user.full_name,
                     user.phone,
-                    user.role.value,
+                    user.role,
                     user_id
                 )
             )

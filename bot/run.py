@@ -4,6 +4,7 @@ from bot.handlers.admin.client_management.client_creation import create_admin_cl
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
 from bot.handlers.admin.client_management.client_delete import create_admin_client_deletion_router
+from bot.handlers.admin.client_management.client_update import create_admin_client_update_router
 from bot.handlers.admin.record_management.record_menu import create_admin_record_router
 from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
@@ -59,6 +60,9 @@ async def main():
 
     #delete
     dp.include_router(create_admin_client_deletion_router(user_repo))
+
+    #update
+    dp.include_router(create_admin_client_update_router(user_repo))
 
 
     #record handlers

@@ -4,7 +4,7 @@ from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
+from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 
 class ClientManagement:
@@ -64,11 +64,45 @@ class ClientManagement:
 
         raise UserNotFoundError("Клиент не был найден.")
 
-    async def delete_client(self, user_id: int)-> bool:
-
+    async def delete_client(self, user_id: int) -> bool:
 
         if user_id:
             await self.user_repository.delete_client(user_id)
             return True
 
         raise BotException("Ошибка удаления клиента")
+
+    async def update_client_name(self, user_id: int, new_full_name: str) -> User:
+        new_full_name = new_full_name.strip()
+
+        validate_full_name(new_full_name, FULL_NAME_PATTERN)
+
+        user = await self.user_repository.get_client_by_id(user_id)
+
+        if user is None:
+            raise UserNotFoundError("Клиент не найден.")
+
+        user.full_name = new_full_name
+
+        await self.user_repository.update_client(user_id, user)
+
+        return user
+
+    async def update_client_phone(self, user_id: int, new_phone: str) -> User:
+        new_phone = normalize_phone(new_phone.strip())
+
+        validate_phone(new_phone)
+
+        user = await self.user_repository.get_client_by_id(user_id)
+
+        if user is None:
+            raise UserNotFoundError("Клиент не найден.")
+
+        if new_phone != user.phone and await self.user_repository.phone_exists(new_phone):
+            raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
+
+        user.phone = new_phone
+
+        await self.user_repository.update_client(user_id, user)
+
+        return user
