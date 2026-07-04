@@ -3,13 +3,12 @@ from collections.abc import Callable, Awaitable
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import Message, CallbackQuery
+
 from bot.create_bot import db_path
-from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, PhoneAlreadyExistsError, \
-    ValidationError
-from bot.handlers.utils.admin_utils.confirmations import show_confirmation
+from bot.exceptions.user_exceptions import InvalidFullNameError, ValidationError
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.repositories.user_repository import UserRepository
-from bot.validators.validators import validate_phone, validate_full_name, validate_phone_available
+from bot.validators.validators import validate_phone, validate_full_name
 
 user_repo = UserRepository(db_path)
 
