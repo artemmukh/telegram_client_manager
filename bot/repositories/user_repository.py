@@ -15,6 +15,7 @@ class UserRepository:
                 telegram_user_id INTEGER UNIQUE,
                 full_name TEXT NOT NULL,
                 phone TEXT UNIQUE NOT NULL,
+                clinic_id INTEGER DEFAULT NULL,
                 role TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
         """)

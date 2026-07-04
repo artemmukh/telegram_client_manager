@@ -1,9 +1,7 @@
 from aiogram import F, Router
 from aiogram.types import Message
 
-from bot.create_bot import db_path
 from bot.models.user import User
-from bot.repositories.user_repository import UserRepository
 from bot.utils.role import RoleFilter
 
 
