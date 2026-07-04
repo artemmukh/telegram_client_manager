@@ -1,5 +1,5 @@
 import asyncio
-from bot.create_bot import bot, dp, db_path
+from bot.create_bot import bot, dp, db
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
@@ -18,10 +18,10 @@ from bot.repositories.user_repository import UserRepository
 
 async def main():
 
+    connection = await db.connect()
 
-
-    user_repo = UserRepository(db_path)
-    record_repo = RecordRepository(db_path)
+    user_repo = UserRepository(connection)
+    record_repo = RecordRepository(connection)
 
     await user_repo.init()
     await record_repo.init()
@@ -29,12 +29,8 @@ async def main():
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["record_repo"] = record_repo
 
-
     dp.message.middleware(UserContextMiddleware(user_repo))
     dp.callback_query.middleware(UserContextMiddleware(user_repo))
-
-
-
 
     # Routers
 
@@ -64,14 +60,14 @@ async def main():
     #update
     dp.include_router(create_admin_client_update_router(user_repo))
 
-
     #record handlers
     dp.include_router(create_admin_record_router(record_repo))
 
-
-
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    finally:
+        await db.close()
 
 
 if __name__ == "__main__":
