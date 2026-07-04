@@ -17,10 +17,14 @@ class UserNotFoundError(ValidationError):
     pass
 
 
+
 class PhoneAlreadyExistsError(ValidationError):
     """Телефон уже используется."""
     pass
 
+class SamePhoneError(ValidationError):
+    """Введен тот же телефон."""
+    pass
 
 
 class InvalidFullNameError(ValidationError):

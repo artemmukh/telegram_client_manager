@@ -5,7 +5,7 @@ from aiogram.types import Message, CallbackQuery
 
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError, \
-    PhoneAlreadyExistsError
+    PhoneAlreadyExistsError, ValidationError, SamePhoneError
 from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_clients_one_be_one, \
     build_client_text
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
@@ -21,6 +21,7 @@ from bot.keyboards.admin.client_management_kb.client_update_kb import (
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_update_states import ClientUpdateStates
 from bot.utils.role import RoleFilter
+from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.validators.validators import SEARCH_NAME_PATTERN, FULL_NAME_PATTERN
 
 
@@ -154,7 +155,12 @@ def create_admin_client_update_router(user_repo):
     async def start_update_name(callback_query: CallbackQuery, state: FSMContext):
         user_id = int(callback_query.data.split(":")[1])
         await state.update_data(user_id=user_id)
-        await ask_full_name(callback_query, state, next_state=ClientUpdateStates.new_full_name)
+        await state.set_state(ClientUpdateStates.new_full_name)
+        await callback_query.answer('')
+        await callback_query.message.answer(
+            "Введите новое ФИО:",
+            reply_markup=cancel_kb(),
+        )
 
     @router.callback_query(
         ClientUpdateStates.proceed_update,
@@ -163,7 +169,12 @@ def create_admin_client_update_router(user_repo):
     async def start_update_phone(callback_query: CallbackQuery, state: FSMContext):
         user_id = int(callback_query.data.split(":")[1])
         await state.update_data(user_id=user_id)
-        await ask_phone(callback_query, state, ClientUpdateStates.new_phone)
+        await state.set_state(ClientUpdateStates.new_phone)
+        await callback_query.answer('')
+        await callback_query.message.answer(
+            "Введите новый телефон:",
+            reply_markup=cancel_kb(),
+        )
 
     # --- Cancel during edit: return to client card instead of wiping state ---
 
@@ -243,9 +254,21 @@ def create_admin_client_update_router(user_repo):
 
     @router.message(ClientUpdateStates.new_phone, F.text)
     async def process_new_phone(message: Message, state: FSMContext):
+        async def validate_update_phone(phone: str):
+            data = await state.get_data()
+            user_id = data.get("user_id")
+            user = await user_repo.get_client_by_id(user_id)
+            if user is None:
+                raise UserNotFoundError("Клиент не найден.")
+            if phone == user.phone:
+                raise SamePhoneError("Введён такой же номер телефона, Пожалуйста, введите другой:")
+            if await user_repo.phone_exists(phone):
+                raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
+
         if not await phone_processing(
             message,
             state,
+            validator=validate_update_phone,
             final_state=ClientUpdateStates.confirm_new_phone,
         ):
             return
@@ -264,7 +287,7 @@ def create_admin_client_update_router(user_repo):
 
         try:
             user = await cl_mng.update_client_phone(data["user_id"], data["phone"])
-        except (InvalidPhoneError, PhoneAlreadyExistsError, UserNotFoundError) as e:
+        except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
             return
         except BotException as e:
