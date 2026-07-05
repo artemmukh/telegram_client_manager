@@ -11,7 +11,7 @@ class RecordRepository:
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS records(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                clinic_id INTEGER DEFAULT NOT NULL,
+                clinic_id INTEGER NOT NULL,
                 user_id INTEGER NOT NULL,
                 date_time TIMESTAMP NOT NULL,
                 diagnose TEXT DEFAULT NULL,
@@ -22,7 +22,8 @@ class RecordRepository:
                 
                 FOREIGN KEY(user_id)
                     REFERENCES users(id)
-                    ON DELETE CASCADE)
+                    ON DELETE CASCADE,
+                FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
         """)
         await self.connection.commit()
 
@@ -154,13 +155,13 @@ class RecordRepository:
     def _row_to_record(self, row) -> Record | None:
         if row is None:
             return None
-
         return Record(
-            primary_id=row[0],
-            user_id=row[1],
-            date_time=row[2],
-            description=row[3],
-            recommendation=row[4],
-            price=row[5],
-            status=row[6]
+            id=row[0],
+            clinic_id=row[1],
+            user_id=row[2],
+            date_time=row[3],
+            description=row[4],
+            recommendation=row[5],
+            price=row[6],
+            status=row[7]
         )

@@ -1,6 +1,5 @@
 import aiosqlite
 
-from bot.exceptions.user_exceptions import UserAlreadyExistsError, UserNotFoundError
 from bot.models.clinic import Clinic
 
 
@@ -11,13 +10,25 @@ class ClinicRepository:
 
     async def init(self) -> None:
         await self.connection.execute(
-            """"
-            CREATE TABLE IF NOT EXISTS clinics(name TEXT DEFAULT NULL, 
-            clinic_id INTEGER PRIMARY KEY AUTOINCREMENT)
+            """
+            CREATE TABLE IF NOT EXISTS clinics(
             
-            INSERT INTO clinics(name) VALUES ('Зуб Мудрости')
+            id INTEGER UNIQUE PRIMARY KEY AUTOINCREMENT,
+            name TEXT DEFAULT NULL,
+            token TEXT UNIQUE NOT NULL)
             """
         )
+
+        await self.connection.execute("""
+                
+            INSERT OR IGNORE INTO clinics (name, token)
+            VALUES (
+                'Зуб Мудрости',
+                'x7A92JdPkLmQe81'
+);
+
+        """)
+
         await self.connection.commit()
 
 
@@ -25,7 +36,7 @@ class ClinicRepository:
 
         cursor = await self.connection.execute(
             """
-            SELECT * FROM clinics WHERE clinic_id = ?"""
+            SELECT id, name, token FROM clinics WHERE id = ?"""
             , (clinic_id,)
         )
         return self._row_to_clinic(await cursor.fetchone())
@@ -37,7 +48,7 @@ class ClinicRepository:
         params = [f"%{part}%" for part in parts]
 
         sql = f"""
-        SELECT *
+        SELECT id, name, token
         FROM clinics
         WHERE ({conditions})
         ORDER BY name
@@ -48,6 +59,17 @@ class ClinicRepository:
 
         return [self._row_to_clinic(row) for row in rows]
 
+    async def get_clinic_by_token(self, token: str) -> Clinic | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT id, name, token
+            FROM clinics
+            WHERE token = ?
+            """,
+            (token,)
+        )
+        return self._row_to_clinic(await cursor.fetchone())
+
     def _row_to_clinic(self, row) -> Clinic | None:
         if row is None:
             return None
@@ -55,6 +77,7 @@ class ClinicRepository:
         return Clinic(
             clinic_id=row[0],
             name=row[1],
+            token=row[2],
         )
 
 

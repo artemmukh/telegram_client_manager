@@ -12,8 +12,10 @@ from bot.handlers.common.profile import create_profile_router
 from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
 from bot.middlewares.user import UserContextMiddleware
+from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.records_repository import RecordRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.staff_repository import StaffRepository
 
 
 async def main():
@@ -22,9 +24,13 @@ async def main():
 
     user_repo = UserRepository(connection)
     record_repo = RecordRepository(connection)
+    clinic_repo = ClinicRepository(connection)
+    staff_repo = StaffRepository(connection)
 
     await user_repo.init()
     await record_repo.init()
+    await clinic_repo.init()
+    await staff_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["record_repo"] = record_repo
@@ -35,7 +41,7 @@ async def main():
     # Routers
 
     #registration
-    dp.include_router(create_reg_router(user_repo))
+    dp.include_router(create_reg_router(user_repo, clinic_repo, staff_repo))
 
     #common handlers
     dp.include_router(create_start_router())

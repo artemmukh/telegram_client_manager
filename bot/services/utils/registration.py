@@ -11,13 +11,13 @@ class RegistrationService:
     def __init__(self, user_repository: UserRepository):
         self.user_repository = user_repository
 
-
-    async def register(self,
+    async def register(
+            self,
             telegram_user_id: int,
             full_name: str,
             phone: str,
             role: Role,
-
+            clinic_id: int,
     ) -> User:
 
         full_name = full_name.strip()
@@ -34,6 +34,7 @@ class RegistrationService:
         user = User(
             full_name=full_name,
             phone=phone,
+            clinic_id=clinic_id,
             role=role,
             telegram_user_id=telegram_user_id,
         )

@@ -9,5 +9,7 @@ class User:
     role: Role
     telegram_user_id: int | None = None
     ID: int | None = None
+    clinic_id: int | None = None
+    clinic_name: str | None = None
 
 

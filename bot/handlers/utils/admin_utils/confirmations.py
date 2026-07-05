@@ -8,6 +8,7 @@ FIELDS = {
     "user_id": "ID клиента",
     "full_name": "ФИО",
     "phone": "Телефон",
+    "clinic_name": "Клиника"
 }
 
 
@@ -32,6 +33,7 @@ def build_users_list_text(title: str, users: list[User]) -> str:
             lines.append(f"{FIELDS['user_id']}: {user.ID}")
         lines.append(f"{FIELDS['full_name']}: {user.full_name}")
         lines.append(f"{FIELDS['phone']}: {user.phone}")
+        lines.append(f"{FIELDS['clinic_name']}: {user.clinic_name}")
 
     return "\n".join(lines)
 
@@ -90,6 +92,7 @@ async def show_clients_one_be_one(
                     "user_id": user.ID,
                     "full_name": user.full_name,
                     "phone": user.phone,
+                    "clinic_name": user.clinic_name,
                 },
             ),
             reply_markup=markup,

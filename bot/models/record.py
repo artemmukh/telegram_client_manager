@@ -8,5 +8,8 @@ class Record:
     description: str
     recommendation: str
     price: float
+    clinic_id: int
+    clinic_name: str
     status: str
-    primary_id: int | None = None
+    id: int | None = None
+

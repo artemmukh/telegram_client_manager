@@ -3,6 +3,19 @@ import aiosqlite
 from bot.exceptions.user_exceptions import UserAlreadyExistsError, UserNotFoundError
 from bot.models.user import User
 
+USER_SELECT = """
+SELECT
+    u.id,
+    u.telegram_user_id,
+    u.full_name,
+    u.phone,
+    u.clinic_id,
+    c.name AS clinic_name,
+    u.role
+FROM users u
+LEFT JOIN clinics c
+ON u.clinic_id = c.id
+"""
 
 class UserRepository:
     def __init__(self, connection: aiosqlite.Connection):
@@ -17,21 +30,16 @@ class UserRepository:
                 phone TEXT UNIQUE NOT NULL,
                 clinic_id INTEGER DEFAULT NULL,
                 role TEXT DEFAULT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+                
+                FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
         """)
         await self.connection.commit()
 
     async def get_user_by_telegram_id(self, telegram_user_id: int) -> User | None:
         cursor = await self.connection.execute(
-            """
-            SELECT
-                id,
-                telegram_user_id,
-                full_name,
-                phone,
-                role
-            FROM users
-            WHERE telegram_user_id = ?
+            USER_SELECT + """
+            WHERE u.telegram_user_id = ?
             """,
             (telegram_user_id,)
         )
@@ -44,15 +52,17 @@ class UserRepository:
                 INSERT INTO users(
                     telegram_user_id,
                     full_name,
-                    phone,
+                    phone,   
+                    clinic_id,
                     role
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     user.telegram_user_id,
                     user.full_name,
                     user.phone,
+                    user.clinic_id,
                     user.role.value,
                 )
             )
@@ -67,17 +77,10 @@ class UserRepository:
         conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
         params = [f"%{part}%" for part in parts]
 
-        sql = f"""
-        SELECT
-            id,
-            telegram_user_id,
-            full_name,
-            phone,
-            role
-        FROM users
-        WHERE role = 'client'
-          AND ({conditions})
-        ORDER BY full_name
+        sql = USER_SELECT + f"""
+        WHERE u.role = 'client'
+        AND ({conditions})
+        ORDER BY u.full_name
         """
 
         cursor = await self.connection.execute(sql, params)
@@ -87,8 +90,9 @@ class UserRepository:
 
     async def get_all_clients(self) -> list[User] | None:
         cursor = await self.connection.execute(
-            """
-            SELECT * FROM users WHERE role = 'client' ORDER BY full_name
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            ORDER BY u.full_name
             """
         )
         rows = await cursor.fetchall()
@@ -96,40 +100,33 @@ class UserRepository:
 
     async def get_client_by_phone(self, phone: str) -> User | None:
         cursor = await self.connection.execute(
-            """
-            SELECT
-                id,
-                telegram_user_id,
-                full_name,
-                phone,
-                role
-            FROM users
-            WHERE role = 'client' AND phone = ? ORDER BY full_name
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.phone = ?
             """,
             (phone,)
         )
         return self._row_to_user(await cursor.fetchone())
 
     async def update_client(self, user_id: int, user: User) -> User | None:
-        cursor = await self.connection.execute(
+        await self.connection.execute(
             """
             UPDATE users
-            SET
-                full_name = ?,
-                phone = ?,
-                role = ?
+            SET full_name = ?,
+                phone     = ?,
+                role      = ?
             WHERE id = ?
             """,
             (
                 user.full_name,
                 user.phone,
-                user.role,
+                user.role.value,
                 user_id
             )
         )
         await self.connection.commit()
 
-        return self._row_to_user(await cursor.fetchone())
+        return await self.get_client_by_id(user_id)
 
     async def delete_client(self, user_id: int) -> None:
         await self.connection.execute(
@@ -143,9 +140,11 @@ class UserRepository:
 
     async def get_client_by_id(self, user_id: int) -> User | None:
         cursor = await self.connection.execute(
-            """
-            SELECT * FROM users WHERE role = 'client' AND id = ?
-            """, (user_id,)
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.id = ?
+            """,
+            (user_id,)
         )
         return self._row_to_user(await cursor.fetchone())
 
@@ -166,7 +165,9 @@ class UserRepository:
             telegram_user_id=row[1],
             full_name=row[2],
             phone=row[3],
-            role=row[4],
+            clinic_id=row[4],
+            clinic_name=row[5],
+            role=row[6],
         )
 
     async def phone_exists(self, phone: str) -> bool:

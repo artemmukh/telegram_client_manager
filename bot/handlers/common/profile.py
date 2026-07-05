@@ -24,7 +24,7 @@ def create_profile_router():
             f"ФИО: {current_user.full_name}\n"
             f"ID клиента: {current_user.ID}\n"
             f"Номер телефона: {current_user.phone}\n"
-            f"Тип пользователя: {role}"
+            f"Тип пользователя: {role} {current_user.clinic_name}"
         )
 
 
