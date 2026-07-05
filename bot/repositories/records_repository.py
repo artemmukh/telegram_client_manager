@@ -11,13 +11,15 @@ class RecordRepository:
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS records(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                clinic_id INTEGER DEFAULT NOT NULL,
                 user_id INTEGER NOT NULL,
                 date_time TIMESTAMP NOT NULL,
-                description TEXT,
-                recommendation TEXT,
+                diagnose TEXT DEFAULT NULL,
+                description TEXT DEFAULT NULL,
+                recommendation TEXT DEFAULT NULL,
                 price REAL,
                 status TEXT,
-
+                
                 FOREIGN KEY(user_id)
                     REFERENCES users(id)
                     ON DELETE CASCADE)
