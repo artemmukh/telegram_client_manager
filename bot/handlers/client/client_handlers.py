@@ -4,7 +4,7 @@ from bot.keyboards.admin.record_management_kb.record_main_menu_kb import record_
 from bot.utils.role import RoleFilter
 
 
-def create_client_router(user_repo, record_repo):
+def create_client_router(user_repo, appointment_repo):
 
 
     router = Router()

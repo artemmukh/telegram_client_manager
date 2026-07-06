@@ -128,6 +128,17 @@ class UserRepository:
 
         return await self.get_client_by_id(user_id)
 
+    async def update_user_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
+        await self.connection.execute(
+            """
+            UPDATE users
+            SET telegram_user_id = ?
+            WHERE id = ?
+            """,
+            (telegram_user_id, user_id),
+        )
+        await self.connection.commit()
+
     async def delete_client(self, user_id: int) -> None:
         await self.connection.execute(
             """

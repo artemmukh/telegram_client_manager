@@ -1,13 +1,12 @@
 from bot.exceptions.exceptions import BotException
 
 
-class RecordAlreadyExistsError(BotException):
+class AppointmentAlreadyExistsError(BotException):
     """Запись уже существует."""
     pass
 
 
-
-class RecordNotFoundError(BotException):
+class AppointmentNotFoundError(BotException):
     """Запись не найдена."""
     pass
 

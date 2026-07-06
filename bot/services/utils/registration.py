@@ -25,11 +25,18 @@ class RegistrationService:
         validate_full_name(full_name, FULL_NAME_PATTERN)
         validate_phone(phone)
 
-        if await self.user_repository.phone_exists(phone):
-            raise PhoneAlreadyExistsError()
-
         if await self.user_repository.user_exists(telegram_user_id):
             raise UserAlreadyExistsError()
+
+        existing = await self.user_repository.get_client_by_phone(phone)
+
+        if existing is not None:
+            if existing.telegram_user_id is not None:
+                raise PhoneAlreadyExistsError()
+
+            await self.user_repository.update_user_telegram_id(existing.ID, telegram_user_id)
+            existing.telegram_user_id = telegram_user_id
+            return existing
 
         user = User(
             full_name=full_name,

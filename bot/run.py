@@ -13,7 +13,7 @@ from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
 from bot.middlewares.user import UserContextMiddleware
 from bot.repositories.clinic_repository import ClinicRepository
-from bot.repositories.records_repository import RecordRepository
+from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.staff_repository import StaffRepository
 
@@ -23,17 +23,17 @@ async def main():
     connection = await db.connect()
 
     user_repo = UserRepository(connection)
-    record_repo = RecordRepository(connection)
+    appointment_repo = AppointmentRepository(connection)
     clinic_repo = ClinicRepository(connection)
     staff_repo = StaffRepository(connection)
 
     await user_repo.init()
-    await record_repo.init()
+    await appointment_repo.init()
     await clinic_repo.init()
     await staff_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
-    dp["record_repo"] = record_repo
+    dp["appointment_repo"] = appointment_repo
 
     dp.message.middleware(UserContextMiddleware(user_repo))
     dp.callback_query.middleware(UserContextMiddleware(user_repo))
@@ -67,7 +67,7 @@ async def main():
     dp.include_router(create_admin_client_update_router(user_repo))
 
     #record handlers
-    dp.include_router(create_admin_record_router(record_repo))
+    dp.include_router(create_admin_record_router(appointment_repo))
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)

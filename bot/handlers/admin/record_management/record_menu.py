@@ -6,7 +6,7 @@ from bot.keyboards.admin.record_management_kb.record_main_menu_kb import record_
 from bot.keyboards.admin.admin_main_menu_kb import start_admin_keyboard
 
 
-def create_admin_record_router(record_repo):
+def create_admin_record_router(appointment_repo):
 
     router = Router()
 
