@@ -1,4 +1,5 @@
 from bot.exceptions.exceptions import BotException
+from bot.exceptions.user_exceptions import ValidationError
 
 
 class AppointmentAlreadyExistsError(BotException):
@@ -6,11 +7,21 @@ class AppointmentAlreadyExistsError(BotException):
     pass
 
 
-class AppointmentNotFoundError(BotException):
+class AppointmentNotFoundError(ValidationError):
     """Запись не найдена."""
     pass
 
 
 class BusyTimeError(BotException):
     """Выбранное время занято."""
+    pass
+
+
+class InvalidDatetimeError(ValidationError):
+    """Некорректная дата или время."""
+    pass
+
+
+class InvalidPurposeError(ValidationError):
+    """Некорректное описание услуги."""
     pass

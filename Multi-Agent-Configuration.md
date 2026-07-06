@@ -56,7 +56,7 @@ Reviewer
 
 # Agent: Planner
 
-**Model:** Claude Sonnet 5
+**Model:** Claude Opus 4.8
 
 ## Responsibility
 

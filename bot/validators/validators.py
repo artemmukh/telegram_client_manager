@@ -1,8 +1,12 @@
 import re
+from datetime import datetime
 
+from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPurposeError
 from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError, PhoneAlreadyExistsError, ValidationError
 from bot.repositories.user_repository import UserRepository
 from bot.utils.tools import normalize_phone
+
+DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 
 FULL_NAME_PATTERN = re.compile(
     r"^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?"
@@ -56,6 +60,35 @@ def validate_fields_filled(data):
 
     if "phone" not in data:
         raise ValidationError("Телефон отсутствует.")
+
+
+def validate_datetime(value: str) -> str:
+    value = value.strip()
+
+    if not DATETIME_PATTERN.fullmatch(value):
+        raise InvalidDatetimeError(
+            "Введите дату и время в формате ГГГГ-ММ-ДД ЧЧ:ММ.\n"
+            "Например: 2026-07-10 14:30"
+        )
+
+    try:
+        datetime.strptime(value, "%Y-%m-%d %H:%M")
+    except ValueError:
+        raise InvalidDatetimeError("Такой даты или времени не существует. Проверьте ввод.")
+
+    return value
+
+
+def validate_purpose(value: str) -> str:
+    value = value.strip()
+
+    if not 2 <= len(value) <= 100:
+        raise InvalidPurposeError(
+            "Опишите услугу (от 2 до 100 символов).\n"
+            "Например: Консультация, Чистка."
+        )
+
+    return value
 
 
 
