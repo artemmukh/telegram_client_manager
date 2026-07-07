@@ -1,10 +1,13 @@
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
-from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
+from bot.exceptions.user_exceptions import UserNotFoundError
 from bot.models.appointment import Appointment
+from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.clinic import resolve_staff_clinic
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_datetime, validate_purpose
@@ -16,15 +19,15 @@ class AppointmentManagement:
         appointment_repository: AppointmentRepository,
         user_repository: UserRepository,
         staff_repository: StaffRepository,
+        clinic_repository: ClinicRepository,
     ):
         self.appointment_repository = appointment_repository
         self.user_repository = user_repository
         self.staff_repository = staff_repository
+        self.clinic_repository = clinic_repository
 
     async def create_appointment(self, doctor_telegram_id: int, data: dict) -> Appointment:
-        staff = await self.staff_repository.get_staff(doctor_telegram_id)
-        if staff is None:
-            raise RoleError("Только сотрудник клиники может создавать записи.")
+        clinic = await self.get_admin_clinic(doctor_telegram_id)
 
         client = await self._resolve_client(data["phone"])
 
@@ -32,16 +35,22 @@ class AppointmentManagement:
         purpose = validate_purpose(data["purpose"])
 
         appointment = Appointment(
-            clinic_id=staff.clinic_id,
+            clinic_id=clinic.clinic_id,
             client_id=client.ID,
             datetime=appointment_datetime,
             purpose=purpose,
             created_by=CreatedBy.ADMIN,
             status=AppointmentStatus.PENDING,
+            clinic_name=clinic.name,
         )
 
         await self.appointment_repository.create_appointment(appointment)
         return appointment
+
+    async def get_admin_clinic(self, doctor_telegram_id: int) -> Clinic:
+        return await resolve_staff_clinic(
+            self.staff_repository, self.clinic_repository, doctor_telegram_id
+        )
 
     async def search_appointments(self, phone: str) -> list[Appointment]:
         client = await self._resolve_client(phone)

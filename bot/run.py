@@ -5,11 +5,11 @@ from bot.handlers.admin.client_management.client_menu import create_admin_client
 from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
 from bot.handlers.admin.client_management.client_delete import create_admin_client_deletion_router
 from bot.handlers.admin.client_management.client_update import create_admin_client_update_router
-from bot.handlers.admin.record_management.record_menu import create_admin_record_router
-from bot.handlers.admin.record_management.appointment_creation import create_admin_appointment_creation_router
-from bot.handlers.admin.record_management.appointment_search import create_admin_appointment_search_router
-from bot.handlers.admin.record_management.appointment_delete import create_admin_appointment_deletion_router
-from bot.handlers.admin.record_management.appointment_update import create_admin_appointment_update_router
+from bot.handlers.admin.appointment_management.record_menu import create_admin_record_router
+from bot.handlers.admin.appointment_management.appointment_creation import create_admin_appointment_creation_router
+from bot.handlers.admin.appointment_management.appointment_search import create_admin_appointment_search_router
+from bot.handlers.admin.appointment_management.appointment_delete import create_admin_appointment_deletion_router
+from bot.handlers.admin.appointment_management.appointment_update import create_admin_appointment_update_router
 from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
 from bot.handlers.common.profile import create_profile_router
@@ -59,7 +59,7 @@ async def main():
     dp.include_router(create_admin_client_menu_router())
 
     #create
-    dp.include_router(create_admin_client_creation_router(user_repo))
+    dp.include_router(create_admin_client_creation_router(user_repo, staff_repo, clinic_repo))
 
     #search
     dp.include_router(create_admin_client_search_router(user_repo))
@@ -72,10 +72,10 @@ async def main():
 
     #record handlers
     dp.include_router(create_admin_record_router(appointment_repo))
-    dp.include_router(create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo))
-    dp.include_router(create_admin_appointment_search_router(appointment_repo, user_repo, staff_repo))
-    dp.include_router(create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_repo))
-    dp.include_router(create_admin_appointment_update_router(appointment_repo, user_repo, staff_repo))
+    dp.include_router(create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_appointment_search_router(appointment_repo, user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_appointment_update_router(appointment_repo, user_repo, staff_repo, clinic_repo))
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)

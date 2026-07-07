@@ -1,17 +1,28 @@
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError, ValidationError
+from bot.models.clinic import Clinic
 from bot.models.user import User
+from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.clinic import resolve_staff_clinic
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 
 class ClientManagement:
-    def __init__(self, user_repository: UserRepository):
+    def __init__(
+        self,
+        user_repository: UserRepository,
+        staff_repository: StaffRepository,
+        clinic_repository: ClinicRepository,
+    ):
         self.user_repository = user_repository
+        self.staff_repository = staff_repository
+        self.clinic_repository = clinic_repository
 
-    async def create_client(self, data):
+    async def create_client(self, admin_telegram_id: int, data: dict) -> User:
 
         full_name = data['full_name'].strip()
         # Phone is already normalized and validated by the handler layer,
@@ -22,21 +33,28 @@ class ClientManagement:
         validate_phone(phone)
 
         phone = normalize_phone(phone)
-        role = Role.CLIENT
+
+        clinic = await self.get_admin_clinic(admin_telegram_id)
 
         if await self.user_repository.phone_exists(phone):
             raise PhoneAlreadyExistsError()
 
         user = User(
-
             full_name=full_name,
             phone=phone,
-            role=role
+            role=Role.CLIENT,
+            clinic_id=clinic.clinic_id,
+            clinic_name=clinic.name,
         )
 
         await self.user_repository.create_user(user)
 
         return user
+
+    async def get_admin_clinic(self, admin_telegram_id: int) -> Clinic:
+        return await resolve_staff_clinic(
+            self.staff_repository, self.clinic_repository, admin_telegram_id
+        )
 
     async def search_client(self, data) -> User | list[User]:
         phone = data.get("phone")

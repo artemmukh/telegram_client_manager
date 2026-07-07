@@ -17,10 +17,10 @@ from bot.states.admin.record_management.appointment_states import AppointmentDel
 from bot.utils.role import RoleFilter
 
 
-def create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_repo):
+def create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_repo, clinic_repo):
     router = Router()
 
-    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo)
+    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))

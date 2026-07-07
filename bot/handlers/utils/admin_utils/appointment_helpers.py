@@ -21,6 +21,7 @@ def build_appointment_confirmation(data: dict) -> str:
     return "\n".join([
         "Проверьте данные записи:",
         "",
+        f"Клиника: {data.get('clinic_name', '')}",
         f"Имя клиента: {data.get('client_name', '')}",
         f"Телефон: {data.get('phone', '')}",
         f"Дата и время: {data.get('appointment_datetime', '')}",
@@ -30,12 +31,17 @@ def build_appointment_confirmation(data: dict) -> str:
 
 
 def build_appointment_card(appointment: Appointment) -> str:
-    return "\n".join([
-        f"Запись №{appointment.id}",
+    lines = [f"Запись №{appointment.id}"]
+
+    if appointment.clinic_name:
+        lines.append(f"Клиника: {appointment.clinic_name}")
+
+    lines += [
         f"Дата и время: {appointment.datetime}",
         f"Услуга: {appointment.purpose}",
         f"Статус: {STATUS_LABELS.get(appointment.status, appointment.status.value)}",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 async def show_appointments_list(message: Message, phone: str, appointments: list[Appointment]) -> None:

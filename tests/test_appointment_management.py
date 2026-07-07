@@ -3,6 +3,7 @@ import pytest
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
+from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
@@ -57,6 +58,18 @@ class FakeStaffRepo:
         return self.staff
 
 
+class FakeClinicRepo:
+    def __init__(self, clinic=None):
+        self.clinic = clinic
+
+    async def get_clinic_by_id(self, clinic_id):
+        return self.clinic
+
+
+def _clinic_repo(clinic_id=1):
+    return FakeClinicRepo(Clinic(clinic_id=clinic_id, name="Зуб Мудрости", token="t"))
+
+
 def _client():
     return User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7)
 
@@ -80,6 +93,7 @@ async def test_create_appointment_resolves_clinic_and_client():
         appt_repo,
         FakeUserRepo(_client()),
         FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
     )
 
     appointment = await service.create_appointment(
@@ -90,6 +104,7 @@ async def test_create_appointment_resolves_clinic_and_client():
     assert appt_repo.created == [appointment]
     assert appointment.clinic_id == 1
     assert appointment.client_id == 7
+    assert appointment.clinic_name == "Зуб Мудрости"
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.created_by is CreatedBy.ADMIN
 
@@ -100,6 +115,7 @@ async def test_create_appointment_rejects_unknown_client():
         FakeAppointmentRepository(),
         FakeUserRepo(None),
         FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
     )
 
     with pytest.raises(UserNotFoundError):
@@ -115,6 +131,7 @@ async def test_create_appointment_rejects_non_staff():
         FakeAppointmentRepository(),
         FakeUserRepo(_client()),
         FakeStaffRepo(None),
+        FakeClinicRepo(None),
     )
 
     with pytest.raises(RoleError):
@@ -130,6 +147,7 @@ async def test_search_appointments_returns_client_appointments():
         FakeAppointmentRepository([_appointment()]),
         FakeUserRepo(_client()),
         FakeStaffRepo(None),
+        _clinic_repo(),
     )
 
     appointments = await service.search_appointments("+998901234567")
@@ -144,6 +162,7 @@ async def test_search_appointments_raises_when_empty():
         FakeAppointmentRepository([]),
         FakeUserRepo(_client()),
         FakeStaffRepo(None),
+        _clinic_repo(),
     )
 
     with pytest.raises(AppointmentNotFoundError):
@@ -153,7 +172,7 @@ async def test_search_appointments_raises_when_empty():
 @pytest.mark.asyncio
 async def test_update_status():
     appt_repo = FakeAppointmentRepository([_appointment()])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None))
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
     appointment = await service.update_status(1, AppointmentStatus.CONFIRMED)
 
@@ -164,7 +183,7 @@ async def test_update_status():
 @pytest.mark.asyncio
 async def test_update_datetime_validates_and_persists():
     appt_repo = FakeAppointmentRepository([_appointment()])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None))
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
     appointment = await service.update_datetime(1, "2026-08-01 09:00")
 

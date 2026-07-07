@@ -22,16 +22,23 @@ from bot.states.admin.record_management.appointment_states import AppointmentCre
 from bot.utils.role import RoleFilter
 
 
-def create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo):
+def create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo, clinic_repo):
     router = Router()
 
-    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo)
+    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
     @router.callback_query(F.data == "create_record")
     async def start_create(callback_query: CallbackQuery, state: FSMContext):
+        try:
+            clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        await state.update_data(clinic_name=clinic.name)
         await state.set_state(AppointmentCreationStates.client_name)
         await callback_query.answer('')
         await callback_query.message.edit_text("Введите имя клиента:", reply_markup=cancel_kb())

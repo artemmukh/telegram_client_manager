@@ -21,11 +21,11 @@ from bot.states.admin.client_management.client_creation_states import ClientCrea
 from bot.validators.validators import validate_fields_filled, validate_phone_available
 
 
-def create_admin_client_creation_router(user_repo):
+def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
 
     router = Router()
 
-    cl_mng = ClientManagement(user_repo)
+    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo)
 
 
     router.message.filter(RoleFilter("admin"))
@@ -34,6 +34,13 @@ def create_admin_client_creation_router(user_repo):
 
     @router.callback_query(F.data == "create_client")
     async def create_client_name(callback_query: CallbackQuery, state: FSMContext):
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        await state.update_data(clinic_id=clinic.clinic_id, clinic_name=clinic.name)
         await ask_full_name(callback_query, state, next_state=ClientCreationStates.client_full_name)
 
     @router.message(ClientCreationStates.client_full_name, F.text)
@@ -97,7 +104,7 @@ def create_admin_client_creation_router(user_repo):
             return
 
         try:
-            await cl_mng.create_client(data)
+            user = await cl_mng.create_client(callback_query.from_user.id, data)
         except PhoneAlreadyExistsError:
             await state.clear()
             await callback_query.message.edit_text(
@@ -116,8 +123,9 @@ def create_admin_client_creation_router(user_repo):
         await show_success(
             callback_query,
             "Клиент успешно добавлен!",
-            full_name=data["full_name"],
-            phone=data["phone"],
+            full_name=user.full_name,
+            phone=user.phone,
+            clinic_name=user.clinic_name,
         )
 
         await state.clear()

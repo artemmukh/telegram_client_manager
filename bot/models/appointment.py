@@ -14,3 +14,4 @@ class Appointment:
     doctor_id: int | None = None
     created_at: str | None = None
     id: int | None = None
+    clinic_name: str | None = None
