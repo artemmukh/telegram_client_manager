@@ -3,7 +3,10 @@ from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from bot.exceptions.exceptions import BotException
+from bot.exceptions.appointment_exceptions import (
+    JobSchedulingError,
+    JobCancellationError,
+)
 from bot.models.appointment import Appointment
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
@@ -78,7 +81,7 @@ class AppointmentScheduler:
                     f"Scheduled reminder for appointment {appointment.id} "
                     f"at {reminder_dt.isoformat()}"
                 )
-        except BotException as e:
+        except JobSchedulingError as e:
             logger.error(
                 f"Failed to schedule reminders for appointment {appointment.id}: {e}"
             )
@@ -102,9 +105,9 @@ class AppointmentScheduler:
                     logger.info(f"Cancelled reminder job: {job_id}")
                 except JobLookupError:
                     logger.debug(f"Job {job_id} does not exist (already ran or cancelled)")
-                except Exception as e:
+                except JobCancellationError as e:
                     logger.warning(f"Failed to remove job {job_id}: {e}")
-        except Exception as e:
+        except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel reminders for appointment {appointment_id}: {e}"
             )
@@ -140,7 +143,7 @@ class AppointmentScheduler:
                 f"Scheduled completion for appointment {appointment.id} "
                 f"at {completion_time.isoformat()}"
             )
-        except BotException as e:
+        except JobSchedulingError as e:
             logger.error(
                 f"Failed to schedule completion for appointment {appointment.id}: {e}"
             )
@@ -160,9 +163,9 @@ class AppointmentScheduler:
                 logger.info(f"Cancelled completion job: {job_id}")
             except JobLookupError:
                 logger.debug(f"Completion job {job_id} does not exist (already ran or cancelled)")
-            except Exception as e:
+            except JobCancellationError as e:
                 logger.warning(f"Failed to remove completion job {job_id}: {e}")
-        except Exception as e:
+        except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel completion for appointment {appointment_id}: {e}"
             )

@@ -18,6 +18,7 @@ from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
 from bot.utils.appointment_enums import AppointmentStatus
+from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,8 @@ async def send_reminder_job(appointment_id: int) -> None:
                 f"(client not found or no telegram_id)"
             )
 
+    except AppointmentNotFoundError as e:
+        logger.warning(f"Send reminder job: appointment {appointment_id} not found")
     except Exception as e:
         logger.exception(
             f"Error in send_reminder_job({appointment_id}): {e}"
@@ -147,6 +150,8 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
                 f"Failed to send completion notification to client {appointment.client_id}: {e}"
             )
 
+    except AppointmentNotFoundError as e:
+        logger.warning(f"Mark completion job: appointment {appointment_id} not found")
     except Exception as e:
         logger.exception(
             f"Error in mark_appointment_completed_job({appointment_id}): {e}"

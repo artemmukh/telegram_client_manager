@@ -25,3 +25,18 @@ class InvalidDatetimeError(ValidationError):
 class InvalidPurposeError(ValidationError):
     """Некорректное описание услуги."""
     pass
+
+
+class SchedulerError(BotException):
+    """Ошибка планировщика (APScheduler)."""
+    pass
+
+
+class JobSchedulingError(SchedulerError):
+    """Ошибка при планировании job'а."""
+    pass
+
+
+class JobCancellationError(SchedulerError):
+    """Ошибка при отмене job'а."""
+    pass

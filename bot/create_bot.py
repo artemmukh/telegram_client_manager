@@ -41,4 +41,4 @@ scheduler = AsyncIOScheduler(
         'max_instances': 1  # Only one instance at a time
     }
 )
-dp["scheduler"] = scheduler
+
