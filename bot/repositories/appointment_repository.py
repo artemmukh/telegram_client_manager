@@ -85,8 +85,8 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def create_appointment(self, appointment: Appointment) -> None:
-        await self.connection.execute(
+    async def create_appointment(self, appointment: Appointment) -> Appointment:
+        cursor = await self.connection.execute(
             """
             INSERT INTO appointments(
                 clinic_id, client_id, doctor_id,
@@ -105,6 +105,10 @@ class AppointmentRepository:
             ),
         )
         await self.connection.commit()
+
+        appointment_id = cursor.lastrowid
+        created_appointment = await self.get_appointment_by_id(appointment_id)
+        return created_appointment
 
     async def update_appointment(self, appointment_id: int, appointment: Appointment) -> None:
         await self.connection.execute(

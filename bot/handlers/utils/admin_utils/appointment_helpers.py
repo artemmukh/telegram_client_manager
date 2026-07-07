@@ -2,11 +2,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import Message
 
-from bot.exceptions.user_exceptions import ValidationError
+from bot.exceptions.user_exceptions import ValidationError, InvalidFullNameError
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus
-from bot.validators.validators import validate_datetime, validate_purpose
+from bot.validators.validators import (
+    validate_datetime,
+    validate_purpose,
+    validate_full_name,
+    FULL_NAME_PATTERN,
+)
 
 STATUS_LABELS = {
     AppointmentStatus.PENDING: "Ожидает",
@@ -72,8 +77,10 @@ async def show_appointments_with_actions(
 async def client_name_processing(message: Message, state: FSMContext, next_state: State) -> bool:
     name = message.text.strip()
 
-    if not name:
-        await message.answer("Введите имя клиента.")
+    try:
+        validate_full_name(name, FULL_NAME_PATTERN)
+    except InvalidFullNameError as e:
+        await message.answer(str(e))
         return False
 
     await state.update_data(client_name=name)

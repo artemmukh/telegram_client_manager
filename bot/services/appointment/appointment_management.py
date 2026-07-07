@@ -44,8 +44,7 @@ class AppointmentManagement:
             clinic_name=clinic.name,
         )
 
-        await self.appointment_repository.create_appointment(appointment)
-        return appointment
+        return await self.appointment_repository.create_appointment(appointment)
 
     async def get_admin_clinic(self, doctor_telegram_id: int) -> Clinic:
         return await resolve_staff_clinic(
