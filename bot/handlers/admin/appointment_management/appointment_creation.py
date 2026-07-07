@@ -15,6 +15,7 @@ from bot.handlers.utils.admin_utils.input_helpers import phone_processing
 from bot.keyboards.admin.record_management_kb.appointment_kb import (
     appointment_confirm_kb,
     appointment_datetime_confirm_kb,
+    client_creation_confirm_kb,
     back_to_records_kb,
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
@@ -62,12 +63,67 @@ def create_admin_appointment_creation_router(
     @router.message(AppointmentCreationStates.client_phone, F.text)
     async def get_phone(message: Message, state: FSMContext):
         if not await phone_processing(
-            message, state, final_state=AppointmentCreationStates.appointment_datetime
+            message, state, final_state=AppointmentCreationStates.client_creation_confirm
         ):
             return
-        await message.answer(
+
+        data = await state.get_data()
+        phone = data.get('phone')
+
+        client = await user_repo.get_client_by_phone(phone)
+
+        if client:
+            await state.set_state(AppointmentCreationStates.appointment_datetime)
+            await message.answer(
+                "Введите дату и время на русском языке:\n"
+                "Например: завтра в 3 часа, 13 сентября 15:30, в понедельник в 14:00, сегодня в 18:00",
+                reply_markup=cancel_kb(),
+            )
+        else:
+            client_name = data.get('client_name')
+            await message.answer(
+                f"Клиент не найден.\n\n"
+                f"Создать нового клиента?\n"
+                f"Имя: {client_name}\n"
+                f"Телефон: {phone}",
+                reply_markup=client_creation_confirm_kb(),
+            )
+
+    @router.callback_query(AppointmentCreationStates.client_creation_confirm, F.data == "create_client")
+    async def handle_create_client(callback_query: CallbackQuery, state: FSMContext):
+        from bot.utils.role import Role
+
+        data = await state.get_data()
+        phone = data.get('phone')
+        client_name = data.get('client_name')
+        clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
+
+        from bot.models.user import User
+
+        new_client = User(
+            full_name=client_name,
+            phone=phone,
+            role=Role.CLIENT,
+            clinic_id=clinic.clinic_id,
+            clinic_name=clinic.name,
+        )
+
+        await user_repo.create_user(new_client)
+
+        await state.set_state(AppointmentCreationStates.appointment_datetime)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
             "Введите дату и время на русском языке:\n"
             "Например: завтра в 3 часа, 13 сентября 15:30, в понедельник в 14:00, сегодня в 18:00",
+            reply_markup=cancel_kb(),
+        )
+
+    @router.callback_query(AppointmentCreationStates.client_creation_confirm, F.data == "cancel_client_creation")
+    async def handle_cancel_client_creation(callback_query: CallbackQuery, state: FSMContext):
+        await state.set_state(AppointmentCreationStates.client_phone)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите номер телефона клиента:",
             reply_markup=cancel_kb(),
         )
 
