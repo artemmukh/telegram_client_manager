@@ -8,7 +8,7 @@ from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.validators.validators import (
     validate_client_name,
-    validate_datetime,
+    validate_datetime_natural,
     validate_purpose,
 )
 
@@ -22,13 +22,14 @@ STATUS_LABELS = {
 
 
 def build_appointment_confirmation(data: dict) -> str:
+    display_datetime = data.get('appointment_datetime_display') or data.get('appointment_datetime', '')
     return "\n".join([
         "Проверьте данные записи:",
         "",
         f"Клиника: {data.get('clinic_name', '')}",
         f"Имя клиента: {data.get('client_name', '')}",
         f"Телефон: {data.get('phone', '')}",
-        f"Дата и время: {data.get('appointment_datetime', '')}",
+        f"Дата и время: {display_datetime}",
         f"Услуга: {data.get('purpose', '')}",
         "Статус: Ожидает",
     ])
@@ -86,13 +87,20 @@ async def client_name_processing(message: Message, state: FSMContext, next_state
 
 
 async def datetime_processing(message: Message, state: FSMContext, next_state: State) -> bool:
+    from bot.exceptions.user_exceptions import ValidationError
+    from bot.services.date_parser import parse_ru_datetime, format_datetime_for_display
+
     try:
-        value = validate_datetime(message.text.strip())
+        validate_datetime_natural(message.text.strip())
     except ValidationError as e:
         await message.answer(str(e))
         return False
 
-    await state.update_data(appointment_datetime=value)
+    parsed_dt = parse_ru_datetime(message.text.strip())
+    await state.update_data(
+        appointment_datetime_parsed=parsed_dt,
+        appointment_datetime_display=format_datetime_for_display(parsed_dt)
+    )
     await state.set_state(next_state)
     return True
 

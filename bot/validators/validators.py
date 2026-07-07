@@ -21,24 +21,17 @@ SEARCH_NAME_PATTERN = re.compile(
 
 
 
-def validate_full_name(full_name: str, pattern) -> None:
+def validate_full_name(full_name: str, pattern):
     if not pattern.fullmatch(full_name.strip()):
         raise InvalidFullNameError(
             "Введите ФИО корректно.\n\n"
             "Например:\n"
-            "Для создания и регистрации: Иванов Иван Иванович.\n"
+            "Для создания и регистрации: Иванов Иван (Иванович).\n"
             "Для поиска: Иван, Иван Иванов, Иван Иванов Иванович."
         )
+    return full_name
 
 
-def validate_client_name(name: str) -> str:
-    name = name.strip()
-    if not SEARCH_NAME_PATTERN.fullmatch(name):
-        raise InvalidFullNameError(
-            "Введите имя, используя русские буквы.\n"
-            "Например: Иван, Иван Иванов, Иван-Петров"
-        )
-    return name
 
 
 def validate_phone(phone: str) -> str:
@@ -87,6 +80,32 @@ def validate_datetime(value: str) -> str:
         raise InvalidDatetimeError("Такой даты или времени не существует. Проверьте ввод.")
 
     return value
+
+
+def validate_datetime_natural(value: str) -> str:
+    """Validate datetime from natural Russian text or strict format."""
+    from bot.services.date_parser import parse_ru_datetime, format_datetime_for_db
+
+    value = value.strip()
+
+    if not value:
+        raise InvalidDatetimeError(
+            "Введите дату и время.\n"
+            "Например: завтра в 3 часа, 13 сентября 15:30"
+        )
+
+    parsed_dt = parse_ru_datetime(value)
+
+    if parsed_dt is None:
+        raise InvalidDatetimeError(
+            "Не смог распознать дату и время.\n"
+            "Попробуйте снова:\n"
+            "• завтра в 3 часа\n"
+            "• 13 сентября 15:30\n"
+            "• в понедельник в 14:00"
+        )
+
+    return format_datetime_for_db(parsed_dt)
 
 
 def validate_purpose(value: str) -> str:

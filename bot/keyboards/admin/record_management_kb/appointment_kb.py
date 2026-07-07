@@ -3,6 +3,18 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.utils.appointment_enums import AppointmentStatus
 
 
+def appointment_datetime_confirm_kb():
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="✅ Верно", callback_data="approve_datetime")
+    builder.button(text="🔄 Изменить", callback_data="retry_datetime")
+    builder.button(text="❌ Отменить", callback_data="cancel")
+
+    builder.adjust(1, 1, 1)
+
+    return builder.as_markup()
+
+
 def appointment_confirm_kb():
     builder = InlineKeyboardBuilder()
 

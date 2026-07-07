@@ -14,6 +14,7 @@ from bot.handlers.utils.admin_utils.appointment_helpers import (
 from bot.handlers.utils.admin_utils.input_helpers import phone_processing
 from bot.keyboards.admin.record_management_kb.appointment_kb import (
     appointment_confirm_kb,
+    appointment_datetime_confirm_kb,
     back_to_records_kb,
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
@@ -64,14 +65,47 @@ def create_admin_appointment_creation_router(
             message, state, final_state=AppointmentCreationStates.appointment_datetime
         ):
             return
-        await message.answer("Введите дату и время (ГГГГ-ММ-ДД ЧЧ:ММ):", reply_markup=cancel_kb())
+        await message.answer(
+            "Введите дату и время на русском языке:\n"
+            "Например: завтра в 3 часа, 13 сентября 15:30, в понедельник в 14:00, сегодня в 18:00",
+            reply_markup=cancel_kb(),
+        )
 
     @router.message(AppointmentCreationStates.appointment_datetime, F.text)
     async def get_datetime(message: Message, state: FSMContext):
-        if not await datetime_processing(message, state, AppointmentCreationStates.purpose):
+        if not await datetime_processing(message, state, AppointmentCreationStates.appointment_datetime_confirm):
             return
+        data = await state.get_data()
         await message.answer(
+            f"Вы имели в виду: {data.get('appointment_datetime_display')}?",
+            reply_markup=appointment_datetime_confirm_kb(),
+        )
+
+    @router.callback_query(AppointmentCreationStates.appointment_datetime_confirm, F.data == "approve_datetime")
+    async def confirm_datetime(callback_query: CallbackQuery, state: FSMContext):
+        from bot.services.date_parser import format_datetime_for_db
+
+        data = await state.get_data()
+        parsed_dt = data.get('appointment_datetime_parsed')
+
+        if parsed_dt:
+            db_datetime = format_datetime_for_db(parsed_dt)
+            await state.update_data(appointment_datetime=db_datetime)
+
+        await state.set_state(AppointmentCreationStates.purpose)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
             "Опишите услугу (например: Консультация, Чистка):",
+            reply_markup=cancel_kb(),
+        )
+
+    @router.callback_query(AppointmentCreationStates.appointment_datetime_confirm, F.data == "retry_datetime")
+    async def retry_datetime(callback_query: CallbackQuery, state: FSMContext):
+        await state.set_state(AppointmentCreationStates.appointment_datetime)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите дату и время на русском языке:\n"
+            "Например: завтра в 3 часа, 13 сентября 15:30, в понедельник в 14:00",
             reply_markup=cancel_kb(),
         )
 
