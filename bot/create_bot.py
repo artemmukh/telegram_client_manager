@@ -36,7 +36,7 @@ scheduler = AsyncIOScheduler(
         'default': SQLAlchemyJobStore(engine=jobstore_engine)
     },
     job_defaults={
-        'misfire_grace_time': 0,  # Skip missed jobs, only run future jobs
+        'misfire_grace_time': None,  # Skip missed jobs, only run future jobs
         'coalesce': True,  # Merge missed job runs
         'max_instances': 1  # Only one instance at a time
     }
