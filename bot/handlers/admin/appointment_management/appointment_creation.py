@@ -3,15 +3,21 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.exceptions.exceptions import BotException
-from bot.exceptions.user_exceptions import ValidationError
+from bot.exceptions.user_exceptions import ValidationError, PhoneAlreadyExistsError
 from bot.handlers.utils.admin_utils.appointment_helpers import (
-    build_appointment_card,
     build_appointment_confirmation,
-    client_name_processing,
+    build_appointment_card,
     datetime_processing,
     purpose_processing,
 )
-from bot.handlers.utils.admin_utils.input_helpers import phone_processing
+from bot.handlers.utils.admin_utils.confirmations import show_confirmation
+from bot.handlers.utils.admin_utils.input_helpers import (
+    ask_full_name,
+    phone_processing,
+    full_name_processing,
+    edit_full_name,
+    edit_phone,
+)
 from bot.keyboards.admin.record_management_kb.appointment_kb import (
     appointment_confirm_kb,
     appointment_datetime_confirm_kb,
@@ -20,9 +26,9 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.role import RoleFilter
+from bot.validators.validators import validate_full_name, SEARCH_NAME_PATTERN
 
 
 def create_admin_appointment_creation_router(
@@ -44,26 +50,24 @@ def create_admin_appointment_creation_router(
             return
 
         await state.update_data(clinic_name=clinic.name)
-        await state.set_state(AppointmentCreationStates.client_name)
-        await callback_query.answer('')
-        await callback_query.message.edit_text("Введите имя клиента:", reply_markup=cancel_kb())
+        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name)
 
     @router.callback_query(F.data == "restart_appointment_create")
     async def restart_create(callback_query: CallbackQuery, state: FSMContext):
-        await state.set_state(AppointmentCreationStates.client_name)
+        await state.set_state(AppointmentCreationStates.client_full_name)
         await callback_query.answer('')
         await callback_query.message.answer("Введите имя клиента:", reply_markup=cancel_kb())
 
-    @router.message(AppointmentCreationStates.client_name, F.text)
+    @router.message(AppointmentCreationStates.client_full_name, F.text)
     async def get_name(message: Message, state: FSMContext):
-        if not await client_name_processing(message, state, AppointmentCreationStates.client_phone):
+        if not await full_name_processing(message, state, AppointmentCreationStates.client_phone, re_pattern=SEARCH_NAME_PATTERN):
             return
         await message.answer("Введите номер телефона клиента:", reply_markup=cancel_kb())
 
     @router.message(AppointmentCreationStates.client_phone, F.text)
     async def get_phone(message: Message, state: FSMContext):
         if not await phone_processing(
-            message, state, final_state=AppointmentCreationStates.client_creation_confirm
+            message, state, final_state=AppointmentCreationStates.confirm_create
         ):
             return
 
@@ -80,108 +84,62 @@ def create_admin_appointment_creation_router(
                 reply_markup=cancel_kb(),
             )
         else:
-            client_name = data.get('client_name')
-            await message.answer(
-                f"Клиент не найден.\n\n"
-                f"Подтвердите данные для создания нового клиента:\n"
-                f"Имя: {client_name}\n"
-                f"Телефон: {phone}",
-                reply_markup=client_creation_confirm_kb(),
-            )
+            await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
 
-    @router.callback_query(AppointmentCreationStates.client_creation_confirm, F.data == "confirm_client_creation")
+    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "confirm_client_creation")
     async def handle_confirm_client_creation(callback_query: CallbackQuery, state: FSMContext):
-        from bot.utils.role import Role
-        from bot.models.user import User
-
         data = await state.get_data()
-        phone = data.get('phone')
-        client_name = data.get('client_name')
-        clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
 
-        new_client = User(
-            full_name=client_name,
-            phone=phone,
-            role=Role.CLIENT,
-            clinic_id=clinic.clinic_id,
-            clinic_name=clinic.name,
-        )
-
-        await user_repo.create_user(new_client)
+        try:
+            client = await appt_mng.check_or_create_client(
+                callback_query.from_user.id,
+                full_name=data['full_name'],
+                phone=data['phone'],
+            )
+        except PhoneAlreadyExistsError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        except ValidationError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        except BotException as e:
+            await callback_query.answer(f"Ошибка создания клиента: {e}", show_alert=True)
+            return
 
         await state.set_state(AppointmentCreationStates.appointment_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            f"✅ Клиент создан: {client_name}\n\n"
+            f"✅ Клиент создан: {data['full_name']}\n\n"
             "Введите дату и время на русском языке:\n"
             "Например: завтра в 3 часа, 13 сентября 15:30, в понедельник в 14:00, сегодня в 18:00",
             reply_markup=cancel_kb(),
         )
 
-    @router.callback_query(AppointmentCreationStates.client_creation_confirm, F.data == "edit_client_name_in_appointment")
+    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "edit_client_name_in_appointment")
     async def handle_edit_client_name(callback_query: CallbackQuery, state: FSMContext):
-        await state.set_state(AppointmentCreationStates.edit_client_name)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            "Введите новое имя клиента:",
-            reply_markup=cancel_kb(),
-        )
+        await edit_full_name(callback_query, state, AppointmentCreationStates.edit_full_name)
 
-    @router.message(AppointmentCreationStates.edit_client_name, F.text)
+    @router.message(AppointmentCreationStates.edit_full_name, F.text)
     async def process_edit_client_name(message: Message, state: FSMContext):
-        from bot.exceptions.user_exceptions import InvalidFullNameError
-
-        try:
-            name = validate_full_name(message.text, SEARCH_NAME_PATTERN)
-        except InvalidFullNameError as e:
-            await message.answer(str(e))
+        if not await full_name_processing(message, state, AppointmentCreationStates.confirm_create, re_pattern=SEARCH_NAME_PATTERN):
             return
+        await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
 
-        await state.update_data(client_name=name)
-        await state.set_state(AppointmentCreationStates.client_creation_confirm)
-
-        data = await state.get_data()
-        phone = data.get('phone')
-
-        await message.answer(
-            f"Клиент не найден.\n\n"
-            f"Создать нового клиента?\n"
-            f"Имя: {name}\n"
-            f"Телефон: {phone}",
-            reply_markup=client_creation_confirm_kb(),
-        )
-
-    @router.callback_query(AppointmentCreationStates.client_creation_confirm, F.data == "edit_client_phone_in_appointment")
+    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "edit_client_phone_in_appointment")
     async def handle_edit_client_phone(callback_query: CallbackQuery, state: FSMContext):
-        await state.set_state(AppointmentCreationStates.edit_client_phone)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            "Введите новый номер телефона клиента:",
-            reply_markup=cancel_kb(),
-        )
+        await edit_phone(callback_query, state, AppointmentCreationStates.edit_phone)
 
-    @router.message(AppointmentCreationStates.edit_client_phone, F.text)
+    @router.message(AppointmentCreationStates.edit_phone, F.text)
     async def process_edit_client_phone(message: Message, state: FSMContext):
         if not await phone_processing(
-            message, state, final_state=AppointmentCreationStates.client_creation_confirm
+            message, state, final_state=AppointmentCreationStates.confirm_create
         ):
             return
+        await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
 
-        data = await state.get_data()
-        client_name = data.get('client_name')
-        phone = data.get('phone')
-
-        await message.answer(
-            f"Клиент не найден.\n\n"
-            f"Создать нового клиента?\n"
-            f"Имя: {client_name}\n"
-            f"Телефон: {phone}",
-            reply_markup=client_creation_confirm_kb(),
-        )
-
-    @router.callback_query(AppointmentCreationStates.client_creation_confirm, F.data == "cancel_client_creation")
+    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "cancel_client_creation")
     async def handle_cancel_client_creation(callback_query: CallbackQuery, state: FSMContext):
-        await state.set_state(AppointmentCreationStates.client_name)
+        await state.set_state(AppointmentCreationStates.client_full_name)
         await callback_query.answer('')
         await callback_query.message.edit_text(
             "Введите имя клиента:",
@@ -256,7 +214,6 @@ def create_admin_appointment_creation_router(
             await callback_query.answer(f"Ошибка создания записи: {e}", show_alert=True)
             return
 
-        # Send notification to client if notification service is available
         notification_text = "Запись успешно создана!\n\n" + build_appointment_card(appointment)
         if notification_service:
             notification_sent = await notification_service.notify_client_appointment(appointment)
@@ -265,12 +222,10 @@ def create_admin_appointment_creation_router(
             else:
                 notification_text += "\n⚠️ Не удалось отправить уведомление клиенту (нет Telegram ID)"
 
-        # Schedule reminders if scheduler is available
         if scheduler:
             await scheduler.schedule_appointment_reminders(appointment)
             notification_text += "\n⏰ Напоминания запланированы (24ч и 2ч перед приемом)"
 
-        # Schedule completion if scheduler is available
         if scheduler:
             await scheduler.schedule_appointment_completion(appointment)
             notification_text += "\n✅ Автозавершение: через 1ч после приема"

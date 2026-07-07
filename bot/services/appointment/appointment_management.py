@@ -1,5 +1,5 @@
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
-from bot.exceptions.user_exceptions import UserNotFoundError
+from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
 from bot.models.user import User
@@ -9,8 +9,9 @@ from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_datetime, validate_purpose
+from bot.validators.validators import validate_datetime, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 
 class AppointmentManagement:
@@ -50,6 +51,41 @@ class AppointmentManagement:
         return await resolve_staff_clinic(
             self.staff_repository, self.clinic_repository, doctor_telegram_id
         )
+
+    async def check_or_create_client(
+        self,
+        admin_telegram_id: int,
+        full_name: str,
+        phone: str,
+    ) -> User:
+        """Check if client exists by phone. If not, create new client."""
+        phone = normalize_phone(phone.strip())
+
+        client = await self.user_repository.get_client_by_phone(phone)
+        if client is not None:
+            return client
+
+        # Validate before creating
+        full_name = full_name.strip()
+        validate_full_name(full_name, FULL_NAME_PATTERN)
+        validate_phone(phone)
+
+        clinic = await self.get_admin_clinic(admin_telegram_id)
+
+        if await self.user_repository.phone_exists(phone):
+            raise PhoneAlreadyExistsError()
+
+        new_client = User(
+            full_name=full_name,
+            phone=phone,
+            role=Role.CLIENT,
+            clinic_id=clinic.clinic_id,
+            clinic_name=clinic.name,
+        )
+
+        await self.user_repository.create_user(new_client)
+
+        return new_client
 
     async def search_appointments(self, phone: str) -> list[Appointment]:
         client = await self._resolve_client(phone)
