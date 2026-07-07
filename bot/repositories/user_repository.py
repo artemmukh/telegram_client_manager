@@ -2,6 +2,7 @@ import aiosqlite
 
 from bot.exceptions.user_exceptions import UserAlreadyExistsError, UserNotFoundError
 from bot.models.user import User
+from bot.utils.role import Role
 
 USER_SELECT = """
 SELECT
@@ -178,7 +179,7 @@ class UserRepository:
             phone=row[3],
             clinic_id=row[4],
             clinic_name=row[5],
-            role=row[6],
+            role=Role(row[6]) if row[6] else None,
         )
 
     async def phone_exists(self, phone: str) -> bool:
