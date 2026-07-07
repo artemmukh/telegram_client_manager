@@ -1,7 +1,10 @@
 import asyncio
 import logging
 
-from bot.create_bot import bot, dp, db
+from bot.loader import get_bot
+from bot.create_bot import dp, db
+
+bot = get_bot()
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
@@ -57,6 +60,11 @@ async def main():
     # Create and start scheduler for appointment reminders
     scheduler = dp["scheduler"]
     scheduler.start()
+
+    # Verify persistent jobs loaded
+    loaded_jobs = scheduler.get_jobs()
+    logger.info(f"Loaded {len(loaded_jobs)} jobs from persistent store")
+
     appointment_scheduler = AppointmentScheduler(
         scheduler=scheduler,
         appointment_repo=appointment_repo,
