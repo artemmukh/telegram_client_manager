@@ -6,10 +6,12 @@ from bot.utils.appointment_enums import AppointmentStatus
 def client_creation_confirm_kb():
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="✅ Да, создать", callback_data="create_client")
-    builder.button(text="❌ Нет, вернуться", callback_data="cancel_client_creation")
+    builder.button(text="✅ Подтвердить", callback_data="confirm_client_creation")
+    builder.button(text="📝 Изменить имя", callback_data="edit_client_name_in_appointment")
+    builder.button(text="📞 Изменить номер", callback_data="edit_client_phone_in_appointment")
+    builder.button(text="❌ Отменить", callback_data="cancel_client_creation")
 
-    builder.adjust(1, 1)
+    builder.adjust(2, 2)
 
     return builder.as_markup()
 

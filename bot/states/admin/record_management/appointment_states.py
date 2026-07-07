@@ -5,6 +5,8 @@ class AppointmentCreationStates(StatesGroup):
     client_name = State()
     client_phone = State()
     client_creation_confirm = State()
+    edit_client_name = State()
+    edit_client_phone = State()
     appointment_datetime = State()
     appointment_datetime_confirm = State()
     purpose = State()
