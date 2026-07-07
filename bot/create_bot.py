@@ -42,3 +42,4 @@ scheduler = AsyncIOScheduler(
     }
 )
 
+dp["scheduler"] = scheduler
