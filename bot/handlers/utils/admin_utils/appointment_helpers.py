@@ -7,8 +7,9 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_reco
 from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.validators.validators import (
-    validate_client_name,
+    validate_full_name,
     validate_purpose,
+    SEARCH_NAME_PATTERN,
 )
 
 STATUS_LABELS = {
@@ -75,7 +76,7 @@ async def show_appointments_with_actions(
 
 async def client_name_processing(message: Message, state: FSMContext, next_state: State) -> bool:
     try:
-        name = validate_client_name(message.text)
+        name = validate_full_name(message.text, SEARCH_NAME_PATTERN)
     except InvalidFullNameError as e:
         await message.answer(str(e))
         return False

@@ -32,17 +32,6 @@ def validate_full_name(full_name: str, pattern) -> str:
     return full_name
 
 
-def validate_client_name(name: str) -> str:
-    """Validate client name using search pattern (flexible Russian name format)."""
-    name = name.strip()
-    if not SEARCH_NAME_PATTERN.fullmatch(name):
-        raise InvalidFullNameError(
-            "Введите имя, используя русские буквы.\n"
-            "Например: Иван, Иван Иванов, Иван-Петров"
-        )
-    return name
-
-
 
 
 def validate_phone(phone: str) -> str:
