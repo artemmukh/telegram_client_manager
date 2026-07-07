@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.exceptions.exceptions import BotException
-from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, ValidationError
+from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, PhoneAlreadyExistsError, ValidationError
 from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name,
@@ -98,6 +98,14 @@ def create_admin_client_creation_router(user_repo):
 
         try:
             await cl_mng.create_client(data)
+        except PhoneAlreadyExistsError:
+            await state.clear()
+            await callback_query.message.edit_text(
+                "Пациент с таким номером телефона уже существует.",
+                reply_markup=None,
+            )
+            await callback_query.answer('')
+            return
         except (InvalidPhoneError, InvalidFullNameError) as e:
             await callback_query.answer(str(e), show_alert=True)
             return
