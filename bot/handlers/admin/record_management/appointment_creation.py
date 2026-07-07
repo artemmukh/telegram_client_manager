@@ -1,0 +1,97 @@
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+
+from bot.exceptions.exceptions import BotException
+from bot.exceptions.user_exceptions import ValidationError
+from bot.handlers.utils.admin_utils.appointment_helpers import (
+    build_appointment_card,
+    build_appointment_confirmation,
+    client_name_processing,
+    datetime_processing,
+    purpose_processing,
+)
+from bot.handlers.utils.admin_utils.input_helpers import phone_processing
+from bot.keyboards.admin.record_management_kb.appointment_kb import (
+    appointment_confirm_kb,
+    back_to_records_kb,
+)
+from bot.keyboards.utils.utils_kb import cancel_kb
+from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
+from bot.utils.role import RoleFilter
+
+
+def create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo):
+    router = Router()
+
+    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo)
+
+    router.message.filter(RoleFilter("admin"))
+    router.callback_query.filter(RoleFilter("admin"))
+
+    @router.callback_query(F.data == "create_record")
+    async def start_create(callback_query: CallbackQuery, state: FSMContext):
+        await state.set_state(AppointmentCreationStates.client_name)
+        await callback_query.answer('')
+        await callback_query.message.edit_text("Введите имя клиента:", reply_markup=cancel_kb())
+
+    @router.callback_query(F.data == "restart_appointment_create")
+    async def restart_create(callback_query: CallbackQuery, state: FSMContext):
+        await state.set_state(AppointmentCreationStates.client_name)
+        await callback_query.answer('')
+        await callback_query.message.answer("Введите имя клиента:", reply_markup=cancel_kb())
+
+    @router.message(AppointmentCreationStates.client_name, F.text)
+    async def get_name(message: Message, state: FSMContext):
+        if not await client_name_processing(message, state, AppointmentCreationStates.client_phone):
+            return
+        await message.answer("Введите номер телефона клиента:", reply_markup=cancel_kb())
+
+    @router.message(AppointmentCreationStates.client_phone, F.text)
+    async def get_phone(message: Message, state: FSMContext):
+        if not await phone_processing(
+            message, state, final_state=AppointmentCreationStates.appointment_datetime
+        ):
+            return
+        await message.answer("Введите дату и время (ГГГГ-ММ-ДД ЧЧ:ММ):", reply_markup=cancel_kb())
+
+    @router.message(AppointmentCreationStates.appointment_datetime, F.text)
+    async def get_datetime(message: Message, state: FSMContext):
+        if not await datetime_processing(message, state, AppointmentCreationStates.purpose):
+            return
+        await message.answer(
+            "Опишите услугу (например: Консультация, Чистка):",
+            reply_markup=cancel_kb(),
+        )
+
+    @router.message(AppointmentCreationStates.purpose, F.text)
+    async def get_purpose(message: Message, state: FSMContext):
+        if not await purpose_processing(message, state, AppointmentCreationStates.confirm):
+            return
+        data = await state.get_data()
+        await message.answer(
+            build_appointment_confirmation(data),
+            reply_markup=appointment_confirm_kb(),
+        )
+
+    @router.callback_query(AppointmentCreationStates.confirm, F.data == "approve_appointment_create")
+    async def finish(callback_query: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+
+        try:
+            appointment = await appt_mng.create_appointment(callback_query.from_user.id, data)
+        except ValidationError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        except BotException as e:
+            await callback_query.answer(f"Ошибка создания записи: {e}", show_alert=True)
+            return
+
+        await callback_query.message.edit_text(
+            "Запись успешно создана!\n\n" + build_appointment_card(appointment),
+            reply_markup=back_to_records_kb(),
+        )
+        await state.clear()
+
+    return router
