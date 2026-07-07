@@ -88,9 +88,16 @@ def create_admin_appointment_creation_router(
         data = await state.get_data()
         parsed_dt = data.get('appointment_datetime_parsed')
 
-        if parsed_dt:
-            db_datetime = format_datetime_for_db(parsed_dt)
-            await state.update_data(appointment_datetime=db_datetime)
+        if not parsed_dt:
+            await callback_query.answer(
+                "Ошибка: не удалось обработать дату. Попробуйте снова.",
+                show_alert=True
+            )
+            await state.set_state(AppointmentCreationStates.appointment_datetime)
+            return
+
+        db_datetime = format_datetime_for_db(parsed_dt)
+        await state.update_data(appointment_datetime=db_datetime)
 
         await state.set_state(AppointmentCreationStates.purpose)
         await callback_query.answer('')

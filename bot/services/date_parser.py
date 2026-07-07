@@ -55,8 +55,8 @@ def format_datetime_for_display(dt: datetime) -> str:
 
 def format_datetime_for_db(dt: datetime) -> str:
     """
-    Format datetime for database storage (ISO format without timezone).
+    Format datetime for database storage (strips timezone information).
 
-    Returns: YYYY-MM-DD HH:MM format
+    Returns: YYYY-MM-DD HH:MM format string
     """
     return dt.strftime("%Y-%m-%d %H:%M")

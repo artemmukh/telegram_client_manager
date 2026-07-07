@@ -21,7 +21,7 @@ SEARCH_NAME_PATTERN = re.compile(
 
 
 
-def validate_full_name(full_name: str, pattern):
+def validate_full_name(full_name: str, pattern) -> str:
     if not pattern.fullmatch(full_name.strip()):
         raise InvalidFullNameError(
             "Введите ФИО корректно.\n\n"
@@ -30,6 +30,17 @@ def validate_full_name(full_name: str, pattern):
             "Для поиска: Иван, Иван Иванов, Иван Иванов Иванович."
         )
     return full_name
+
+
+def validate_client_name(name: str) -> str:
+    """Validate client name using search pattern (flexible Russian name format)."""
+    name = name.strip()
+    if not SEARCH_NAME_PATTERN.fullmatch(name):
+        raise InvalidFullNameError(
+            "Введите имя, используя русские буквы.\n"
+            "Например: Иван, Иван Иванов, Иван-Петров"
+        )
+    return name
 
 
 

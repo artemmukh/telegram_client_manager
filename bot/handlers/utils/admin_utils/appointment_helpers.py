@@ -8,7 +8,6 @@ from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.validators.validators import (
     validate_client_name,
-    validate_datetime_natural,
     validate_purpose,
 )
 
@@ -88,15 +87,20 @@ async def client_name_processing(message: Message, state: FSMContext, next_state
 
 async def datetime_processing(message: Message, state: FSMContext, next_state: State) -> bool:
     from bot.exceptions.user_exceptions import ValidationError
-    from bot.services.date_parser import parse_ru_datetime, format_datetime_for_display
-
-    try:
-        validate_datetime_natural(message.text.strip())
-    except ValidationError as e:
-        await message.answer(str(e))
-        return False
+    from bot.services.date_parser import parse_ru_datetime, format_datetime_for_display, format_datetime_for_db
 
     parsed_dt = parse_ru_datetime(message.text.strip())
+
+    if parsed_dt is None:
+        await message.answer(
+            "Не смог распознать дату и время.\n"
+            "Попробуйте снова:\n"
+            "• завтра в 3 часа\n"
+            "• 13 сентября 15:30\n"
+            "• в понедельник в 14:00"
+        )
+        return False
+
     await state.update_data(
         appointment_datetime_parsed=parsed_dt,
         appointment_datetime_display=format_datetime_for_display(parsed_dt)
