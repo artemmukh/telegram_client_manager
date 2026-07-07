@@ -62,13 +62,13 @@ async def main():
     dp.include_router(create_admin_client_creation_router(user_repo, staff_repo, clinic_repo))
 
     #search
-    dp.include_router(create_admin_client_search_router(user_repo))
+    dp.include_router(create_admin_client_search_router(user_repo, staff_repo, clinic_repo))
 
     #delete
-    dp.include_router(create_admin_client_deletion_router(user_repo))
+    dp.include_router(create_admin_client_deletion_router(user_repo, staff_repo, clinic_repo))
 
     #update
-    dp.include_router(create_admin_client_update_router(user_repo))
+    dp.include_router(create_admin_client_update_router(user_repo, staff_repo, clinic_repo))
 
     #record handlers
     dp.include_router(create_admin_record_router(appointment_repo))

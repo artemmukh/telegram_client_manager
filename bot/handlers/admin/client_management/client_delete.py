@@ -17,10 +17,10 @@ from bot.utils.role import RoleFilter
 from bot.validators.validators import SEARCH_NAME_PATTERN
 
 
-def create_admin_client_deletion_router(user_repo):
+def create_admin_client_deletion_router(user_repo, staff_repo, clinic_repo):
     router = Router()
 
-    cl_mng = ClientManagement(user_repo)
+    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo,)
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
