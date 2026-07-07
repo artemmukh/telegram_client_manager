@@ -27,10 +27,14 @@ dist/
 *.egg-info/
 
 # Database
+*.db
 data/*.db
 data/*.sqlite
 data/*.sqlite3
 
+# Binaries / tools
+*.exe
+
 # AI
-AGENTS.md
+CLAUDE.md
 .agents/!/data/data_base.db
