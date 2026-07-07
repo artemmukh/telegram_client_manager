@@ -1,4 +1,6 @@
 import asyncio
+import logging
+
 from bot.create_bot import bot, dp, db
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
@@ -10,6 +12,7 @@ from bot.handlers.admin.appointment_management.appointment_creation import creat
 from bot.handlers.admin.appointment_management.appointment_search import create_admin_appointment_search_router
 from bot.handlers.admin.appointment_management.appointment_delete import create_admin_appointment_deletion_router
 from bot.handlers.admin.appointment_management.appointment_update import create_admin_appointment_update_router
+from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
 from bot.handlers.common.profile import create_profile_router
@@ -20,6 +23,11 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.staff_repository import StaffRepository
+from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+from bot.services.appointment.appointment_scheduler import AppointmentScheduler
+
+logger = logging.getLogger(__name__)
 
 
 async def main():
@@ -41,6 +49,20 @@ async def main():
 
     dp.message.middleware(UserContextMiddleware(user_repo))
     dp.callback_query.middleware(UserContextMiddleware(user_repo))
+
+    # Create services
+    appointment_management_service = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+    # Create and start scheduler for appointment reminders
+    scheduler = dp["scheduler"]
+    await scheduler.start()
+    appointment_scheduler = AppointmentScheduler(
+        scheduler=scheduler,
+        appointment_repo=appointment_repo,
+        user_repo=user_repo,
+        notification_service=notification_service,
+    )
 
     # Routers
 
@@ -72,16 +94,31 @@ async def main():
 
     #record handlers
     dp.include_router(create_admin_record_router(appointment_repo))
-    dp.include_router(create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_appointment_creation_router(
+        appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+    ))
     dp.include_router(create_admin_appointment_search_router(appointment_repo, user_repo, staff_repo, clinic_repo))
-    dp.include_router(create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_repo, clinic_repo))
-    dp.include_router(create_admin_appointment_update_router(appointment_repo, user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_appointment_deletion_router(
+        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler
+    ))
+    dp.include_router(create_admin_appointment_update_router(
+        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler
+    ))
+
+    #client handlers
+    dp.include_router(create_client_appointment_router(
+        bot, user_repo, appointment_repo, appointment_management_service, notification_service
+    ))
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Starting bot with appointment reminders enabled")
         await dp.start_polling(bot)
     finally:
+        # Graceful shutdown of scheduler
+        await scheduler.shutdown()
         await db.close()
+        logger.info("Bot stopped")
 
 
 if __name__ == "__main__":

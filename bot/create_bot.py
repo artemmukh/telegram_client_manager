@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 bot = Bot(token=load_config().bot_token)
 db = Database(load_config().database_path)
 
-
-
-
 dp = Dispatcher()
+
+# Create scheduler with timezone support for Asia/Tashkent
 scheduler = AsyncIOScheduler(timezone='Asia/Tashkent')
+dp["scheduler"] = scheduler

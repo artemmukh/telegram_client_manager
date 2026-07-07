@@ -1,0 +1,664 @@
+"""Tests for AppointmentScheduler service."""
+
+import pytest
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from bot.models.appointment import Appointment
+from bot.services.appointment.appointment_scheduler import AppointmentScheduler
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+
+
+@pytest.fixture
+def mock_appointment_repo():
+    """Mock AppointmentRepository."""
+    repo = AsyncMock()
+    return repo
+
+
+@pytest.fixture
+def mock_user_repo():
+    """Mock UserRepository."""
+    repo = AsyncMock()
+    return repo
+
+
+@pytest.fixture
+def mock_notification_service():
+    """Mock AppointmentNotificationService."""
+    service = AsyncMock()
+    service.notify_client_appointment = AsyncMock(return_value=True)
+    return service
+
+
+@pytest.fixture
+def scheduler():
+    """Create APScheduler instance for testing."""
+    sched = AsyncIOScheduler(timezone='Asia/Tashkent')
+    yield sched
+    # Cleanup - only shutdown if still running
+    try:
+        if sched.running:
+            sched.shutdown(wait=False)
+    except Exception:
+        # Event loop may already be closed, ignore errors
+        pass
+
+
+@pytest.fixture
+def appointment_scheduler(
+    scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service
+):
+    """Create AppointmentScheduler instance."""
+    return AppointmentScheduler(
+        scheduler=scheduler,
+        appointment_repo=mock_appointment_repo,
+        user_repo=mock_user_repo,
+        notification_service=mock_notification_service,
+    )
+
+
+@pytest.fixture
+def sample_appointment():
+    """Create a sample appointment for testing."""
+    now = datetime.now()
+    appointment_time = now + timedelta(days=2)
+
+    return Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=appointment_time.isoformat(),
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Test Clinic",
+    )
+
+
+@pytest.mark.asyncio
+async def test_schedule_appointment_reminders_creates_two_jobs(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that scheduling creates exactly 2 reminder jobs."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 2
+
+    job_ids = {job.id for job in jobs}
+    assert f"appt_{sample_appointment.id}_24h" in job_ids
+    assert f"appt_{sample_appointment.id}_2h" in job_ids
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_job_ids_follow_correct_pattern(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that job IDs follow the pattern: appt_{id}_{hours}h."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    for job in jobs:
+        assert job.id.startswith(f"appt_{sample_appointment.id}_")
+        assert job.id.endswith("h")
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reminder_times_calculated_correctly(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that reminder times are calculated correctly (24h and 2h before)."""
+    scheduler.start()
+
+    appointment_dt = datetime.fromisoformat(sample_appointment.datetime)
+    expected_24h_time = appointment_dt - timedelta(hours=24)
+    expected_2h_time = appointment_dt - timedelta(hours=2)
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    job_times = {job.id: job.next_run_time for job in jobs}
+
+    # Get actual scheduled times
+    actual_24h_time = job_times[f"appt_{sample_appointment.id}_24h"]
+    actual_2h_time = job_times[f"appt_{sample_appointment.id}_2h"]
+
+    # Replace timezone info to make comparison
+    if actual_24h_time.tzinfo:
+        expected_24h_time = expected_24h_time.replace(tzinfo=actual_24h_time.tzinfo)
+        expected_2h_time = expected_2h_time.replace(tzinfo=actual_2h_time.tzinfo)
+
+    # Check times are close (within 1 second tolerance for datetime precision)
+    assert abs(
+        (actual_24h_time - expected_24h_time).total_seconds()
+    ) < 1
+    assert abs(
+        (actual_2h_time - expected_2h_time).total_seconds()
+    ) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_reminders_removes_jobs(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling reminders removes all scheduled jobs."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+    assert len(scheduler.get_jobs()) == 2
+
+    await appointment_scheduler.cancel_appointment_reminders(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_reminders_idempotent_no_error_if_already_cancelled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling non-existent reminders doesn't raise error."""
+    scheduler.start()
+
+    # Cancel reminders that were never scheduled
+    await appointment_scheduler.cancel_appointment_reminders(999)
+
+    # Should not raise error
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_sends_message_if_pending(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test that reminder job sends message when appointment is PENDING."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    await appointment_scheduler._send_reminder_job(sample_appointment.id)
+
+    mock_appointment_repo.get_appointment_by_id.assert_called_once_with(sample_appointment.id)
+    mock_notification_service.notify_client_appointment.assert_called_once_with(
+        sample_appointment
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_sends_message_if_confirmed(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test that reminder job sends message when appointment is CONFIRMED."""
+    confirmed_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CONFIRMED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
+
+    await appointment_scheduler._send_reminder_job(confirmed_appointment.id)
+
+    mock_notification_service.notify_client_appointment.assert_called_once_with(
+        confirmed_appointment
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_skips_if_cancelled(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test that reminder job skips sending if appointment is CANCELLED."""
+    cancelled_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CANCELLED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = cancelled_appointment
+
+    await appointment_scheduler._send_reminder_job(cancelled_appointment.id)
+
+    mock_notification_service.notify_client_appointment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_skips_if_completed(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test that reminder job skips sending if appointment is COMPLETED."""
+    completed_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.COMPLETED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = completed_appointment
+
+    await appointment_scheduler._send_reminder_job(completed_appointment.id)
+
+    mock_notification_service.notify_client_appointment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_skips_if_no_show(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test that reminder job skips sending if appointment is NO_SHOW."""
+    no_show_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.NO_SHOW,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = no_show_appointment
+
+    await appointment_scheduler._send_reminder_job(no_show_appointment.id)
+
+    mock_notification_service.notify_client_appointment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_handles_missing_appointment(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service
+):
+    """Test that reminder job handles case where appointment is not found."""
+    mock_appointment_repo.get_appointment_by_id.return_value = None
+
+    # Should not raise error
+    await appointment_scheduler._send_reminder_job(999)
+
+    mock_notification_service.notify_client_appointment.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_reminder_job_handles_notification_failure(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test that reminder job handles notification service failure gracefully."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_notification_service.notify_client_appointment.return_value = False
+
+    # Should not raise error even if notification fails
+    await appointment_scheduler._send_reminder_job(sample_appointment.id)
+
+    mock_notification_service.notify_client_appointment.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_reminders_when_datetime_changes(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that reminders can be rescheduled when appointment datetime changes."""
+    scheduler.start()
+
+    # Schedule initial reminders
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+    initial_jobs = scheduler.get_jobs()
+    assert len(initial_jobs) == 2
+
+    # Update appointment with new datetime
+    new_datetime = datetime.fromisoformat(sample_appointment.datetime) + timedelta(hours=5)
+    sample_appointment.datetime = new_datetime.isoformat()
+
+    # Cancel old and schedule new reminders
+    await appointment_scheduler.cancel_appointment_reminders(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+    new_jobs = scheduler.get_jobs()
+    assert len(new_jobs) == 2
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_appointment_without_id_not_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that appointments without ID are not scheduled."""
+    scheduler.start()
+
+    sample_appointment.id = None
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+# Phase 4: Auto-Complete Tests
+
+
+@pytest.mark.asyncio
+async def test_schedule_appointment_completion_creates_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that scheduling completion creates exactly 1 job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_appointment.id}_complete"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_completion_job_id_correct(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that completion job ID follows pattern: appt_{id}_complete."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_appointment.id}_complete"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_completion_time_calculated_correctly(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that completion time is calculated correctly (1h after appointment)."""
+    scheduler.start()
+
+    appointment_dt = datetime.fromisoformat(sample_appointment.datetime)
+    expected_completion_time = appointment_dt + timedelta(hours=1)
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    actual_completion_time = jobs[0].next_run_time
+
+    # Replace timezone info to make comparison
+    if actual_completion_time.tzinfo:
+        expected_completion_time = expected_completion_time.replace(tzinfo=actual_completion_time.tzinfo)
+
+    # Check times are close (within 1 second tolerance for datetime precision)
+    assert abs(
+        (actual_completion_time - expected_completion_time).total_seconds()
+    ) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_completions_removes_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling completion removes the scheduled job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+    assert len(scheduler.get_jobs()) == 1
+
+    await appointment_scheduler.cancel_appointment_completions(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_completions_idempotent_no_error(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling non-existent completion doesn't raise error."""
+    scheduler.start()
+
+    # Cancel completion that was never scheduled
+    await appointment_scheduler.cancel_appointment_completions(999)
+
+    # Should not raise error
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_completed_job_updates_status_if_pending(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Test that completion job updates status to COMPLETED if appointment is PENDING."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
+
+    mock_appointment_repo.update_appointment_status.assert_called_once_with(
+        sample_appointment.id,
+        AppointmentStatus.COMPLETED
+    )
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_completed_job_updates_status_if_confirmed(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Test that completion job updates status to COMPLETED if appointment is CONFIRMED."""
+    confirmed_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CONFIRMED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
+
+    await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
+
+    mock_appointment_repo.update_appointment_status.assert_called_once_with(
+        confirmed_appointment.id,
+        AppointmentStatus.COMPLETED
+    )
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_completed_job_skips_if_cancelled(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Test that completion job skips if appointment is already CANCELLED."""
+    cancelled_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CANCELLED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = cancelled_appointment
+
+    await appointment_scheduler._mark_appointment_completed_job(cancelled_appointment.id)
+
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_completed_job_skips_if_no_show(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Test that completion job skips if appointment is already NO_SHOW."""
+    no_show_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.NO_SHOW,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = no_show_appointment
+
+    await appointment_scheduler._mark_appointment_completed_job(no_show_appointment.id)
+
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_completed_job_skips_if_already_completed(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Test that completion job skips if appointment is already COMPLETED."""
+    completed_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.COMPLETED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = completed_appointment
+
+    await appointment_scheduler._mark_appointment_completed_job(completed_appointment.id)
+
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mark_appointment_completed_job_handles_missing_appointment(
+    appointment_scheduler, mock_appointment_repo
+):
+    """Test that completion job handles case where appointment is not found."""
+    mock_appointment_repo.get_appointment_by_id.return_value = None
+
+    # Should not raise error
+    await appointment_scheduler._mark_appointment_completed_job(999)
+
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reschedule_completion_when_datetime_changes(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that completion can be rescheduled when appointment datetime changes."""
+    scheduler.start()
+
+    # Schedule initial completion
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+    initial_jobs = scheduler.get_jobs()
+    assert len(initial_jobs) == 1
+    initial_time = initial_jobs[0].next_run_time
+
+    # Update appointment with new datetime
+    new_datetime = datetime.fromisoformat(sample_appointment.datetime) + timedelta(hours=5)
+    sample_appointment.datetime = new_datetime.isoformat()
+
+    # Cancel old and schedule new completion
+    await appointment_scheduler.cancel_appointment_completions(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+    new_jobs = scheduler.get_jobs()
+    assert len(new_jobs) == 1
+    new_time = new_jobs[0].next_run_time
+
+    # New time should be 5 hours later
+    time_difference = (new_time - initial_time).total_seconds() / 3600
+    assert abs(time_difference - 5) < 0.1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_appointment_without_id_completion_not_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that appointments without ID are not scheduled for completion."""
+    scheduler.start()
+
+    sample_appointment.id = None
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_multiple_appointments_independent_completions(
+    appointment_scheduler, scheduler
+):
+    """Test that multiple appointments have independent completion jobs."""
+    scheduler.start()
+
+    # Create and schedule two appointments
+    appt1 = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=(datetime.now() + timedelta(days=1)).isoformat(),
+        purpose="Service 1",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Clinic",
+    )
+    appt2 = Appointment(
+        id=2,
+        clinic_id=1,
+        client_id=2,
+        datetime=(datetime.now() + timedelta(days=2)).isoformat(),
+        purpose="Service 2",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Clinic",
+    )
+
+    await appointment_scheduler.schedule_appointment_completion(appt1)
+    await appointment_scheduler.schedule_appointment_completion(appt2)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 2
+
+    job_ids = {job.id for job in jobs}
+    assert "appt_1_complete" in job_ids
+    assert "appt_2_complete" in job_ids
+
+    # Cancel one completion should not affect the other
+    await appointment_scheduler.cancel_appointment_completions(1)
+    remaining_jobs = scheduler.get_jobs()
+    assert len(remaining_jobs) == 1
+    assert remaining_jobs[0].id == "appt_2_complete"
+
+    scheduler.shutdown(wait=False)

@@ -102,6 +102,18 @@ class AppointmentManagement:
 
         return client
 
+    async def get_appointment_with_client_info(
+        self, appointment_id: int
+    ) -> tuple[Appointment, User | None]:
+        """Get appointment and related client info.
+
+        Used for notification handlers. Returns appointment and client or None.
+        """
+        appointment = await self._get_or_raise(appointment_id)
+        client = await self.user_repository.get_client_by_id(appointment.client_id)
+
+        return appointment, client
+
     async def _get_or_raise(self, appointment_id: int) -> Appointment:
         appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
         if appointment is None:

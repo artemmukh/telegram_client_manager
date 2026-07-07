@@ -18,11 +18,14 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.role import RoleFilter
 
 
-def create_admin_appointment_creation_router(appointment_repo, user_repo, staff_repo, clinic_repo):
+def create_admin_appointment_creation_router(
+    appointment_repo, user_repo, staff_repo, clinic_repo, notification_service=None, scheduler=None
+):
     router = Router()
 
     appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
@@ -95,8 +98,27 @@ def create_admin_appointment_creation_router(appointment_repo, user_repo, staff_
             await callback_query.answer(f"Ошибка создания записи: {e}", show_alert=True)
             return
 
+        # Send notification to client if notification service is available
+        notification_text = "Запись успешно создана!\n\n" + build_appointment_card(appointment)
+        if notification_service:
+            notification_sent = await notification_service.notify_client_appointment(appointment)
+            if notification_sent:
+                notification_text += "\n✅ Уведомление отправлено клиенту"
+            else:
+                notification_text += "\n⚠️ Не удалось отправить уведомление клиенту (нет Telegram ID)"
+
+        # Schedule reminders if scheduler is available
+        if scheduler:
+            await scheduler.schedule_appointment_reminders(appointment)
+            notification_text += "\n⏰ Напоминания запланированы (24ч и 2ч перед приемом)"
+
+        # Schedule completion if scheduler is available
+        if scheduler:
+            await scheduler.schedule_appointment_completion(appointment)
+            notification_text += "\n✅ Автозавершение: через 1ч после приема"
+
         await callback_query.message.edit_text(
-            "Запись успешно создана!\n\n" + build_appointment_card(appointment),
+            notification_text,
             reply_markup=back_to_records_kb(),
         )
         await state.clear()

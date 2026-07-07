@@ -13,11 +13,14 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.admin.record_management.appointment_states import AppointmentDeletionStates
 from bot.utils.role import RoleFilter
 
 
-def create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_repo, clinic_repo):
+def create_admin_appointment_deletion_router(
+    appointment_repo, user_repo, staff_repo, clinic_repo, scheduler=None
+):
     router = Router()
 
     appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
@@ -77,6 +80,11 @@ def create_admin_appointment_deletion_router(appointment_repo, user_repo, staff_
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
+
+        # Cancel reminders and completion when appointment is deleted
+        if scheduler:
+            await scheduler.cancel_appointment_reminders(appointment_id)
+            await scheduler.cancel_appointment_completions(appointment_id)
 
         await callback_query.message.edit_text("Запись удалена.", reply_markup=back_to_records_kb())
         await state.clear()

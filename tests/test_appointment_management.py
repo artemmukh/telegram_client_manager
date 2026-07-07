@@ -49,6 +49,11 @@ class FakeUserRepo:
             return self.client
         return None
 
+    async def get_client_by_id(self, client_id):
+        if self.client and self.client.ID == client_id:
+            return self.client
+        return None
+
 
 class FakeStaffRepo:
     def __init__(self, staff=None):
@@ -189,3 +194,36 @@ async def test_update_datetime_validates_and_persists():
 
     assert appointment.datetime == "2026-08-01 09:00"
     assert appt_repo.updated[0][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_appointment_with_client_info_returns_appointment_and_client():
+    appt_repo = FakeAppointmentRepository([_appointment()])
+    client = _client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment, retrieved_client = await service.get_appointment_with_client_info(1)
+
+    assert appointment.id == 1
+    assert retrieved_client.ID == client.ID
+    assert retrieved_client.full_name == client.full_name
+
+
+@pytest.mark.asyncio
+async def test_get_appointment_with_client_info_returns_none_client_if_not_found():
+    appt_repo = FakeAppointmentRepository([_appointment()])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(None), FakeStaffRepo(None), _clinic_repo())
+
+    appointment, retrieved_client = await service.get_appointment_with_client_info(1)
+
+    assert appointment.id == 1
+    assert retrieved_client is None
+
+
+@pytest.mark.asyncio
+async def test_get_appointment_with_client_info_raises_if_appointment_not_found():
+    appt_repo = FakeAppointmentRepository([])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.get_appointment_with_client_info(999)
