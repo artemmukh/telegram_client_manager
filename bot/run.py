@@ -56,7 +56,7 @@ async def main():
 
     # Create and start scheduler for appointment reminders
     scheduler = dp["scheduler"]
-    await scheduler.start()
+    scheduler.start()
     appointment_scheduler = AppointmentScheduler(
         scheduler=scheduler,
         appointment_repo=appointment_repo,
@@ -116,7 +116,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         # Graceful shutdown of scheduler
-        await scheduler.shutdown()
+        scheduler.shutdown()
         await db.close()
         logger.info("Bot stopped")
 
