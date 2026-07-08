@@ -166,6 +166,31 @@ class AppointmentRepository:
         )
         return await cursor.fetchone() is not None
 
+    async def get_all_appointments(self) -> list[Appointment]:
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + "ORDER BY a.datetime"
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def count_appointments(self) -> int:
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM appointments"
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_appointments_by_client_ids(self, client_ids: list[int]) -> list[Appointment]:
+        if not client_ids:
+            return []
+        placeholders = ",".join("?" * len(client_ids))
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + f"WHERE a.client_id IN ({placeholders}) ORDER BY a.datetime",
+            client_ids,
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
     def _row_to_appointment(self, row) -> Appointment | None:
         if row is None:
             return None

@@ -47,7 +47,7 @@ def create_admin_appointment_update_router(
         data = await state.get_data()
 
         try:
-            appointments = await appt_mng.search_appointments(data["phone"])
+            appointments = await appt_mng.search_appointments(data)
         except ValidationError as e:
             await message.answer(str(e))
             await state.clear()

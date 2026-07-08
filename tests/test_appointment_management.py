@@ -156,7 +156,7 @@ async def test_search_appointments_returns_client_appointments():
         _clinic_repo(),
     )
 
-    appointments = await service.search_appointments("+998901234567")
+    appointments = await service.search_appointments({"phone": "+998901234567"})
 
     assert len(appointments) == 1
     assert appointments[0].id == 1
@@ -172,7 +172,7 @@ async def test_search_appointments_raises_when_empty():
     )
 
     with pytest.raises(AppointmentNotFoundError):
-        await service.search_appointments("+998901234567")
+        await service.search_appointments({"phone": "+998901234567"})
 
 
 @pytest.mark.asyncio

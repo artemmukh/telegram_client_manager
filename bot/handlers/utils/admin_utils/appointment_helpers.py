@@ -48,14 +48,12 @@ def build_appointment_card(appointment: Appointment) -> str:
     return "\n".join(lines)
 
 
-async def show_appointments_list(message: Message, phone: str, appointments: list[Appointment]) -> None:
-    lines = [f"Записи по номеру {phone} (всего: {len(appointments)}):", ""]
-
+def format_appointments_list(title: str, appointments: list[Appointment]) -> str:
+    lines = [f"{title} (всего: {len(appointments)}):", ""]
     for appointment in appointments:
         lines.append(build_appointment_card(appointment))
         lines.append("")
-
-    await message.answer("\n".join(lines).strip(), reply_markup=back_to_records_kb())
+    return "\n".join(lines).strip()
 
 
 async def show_appointments_with_actions(

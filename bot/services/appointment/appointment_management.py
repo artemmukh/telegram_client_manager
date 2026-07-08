@@ -102,14 +102,42 @@ class AppointmentManagement:
 
             return new_client
 
-    async def search_appointments(self, phone: str) -> list[Appointment]:
-        client = await self._resolve_client(phone)
+    async def search_appointments(self, data: dict) -> list[Appointment]:
+        phone = data.get("phone")
+        full_name = data.get("full_name")
 
-        appointments = await self.appointment_repository.get_appointments_by_client_id(client.ID)
-        if not appointments:
-            raise AppointmentNotFoundError("У клиента нет записей.")
+        if phone:
+            phone = normalize_phone(phone.strip())
 
-        return appointments
+            client = await self.user_repository.get_client_by_phone(phone)
+            if client is None:
+                raise UserNotFoundError("Клиент не был найден.")
+
+            appointments = await self.appointment_repository.get_appointments_by_client_id(client.ID)
+            if not appointments:
+                raise AppointmentNotFoundError("У клиента нет записей.")
+
+            return appointments
+
+        if full_name:
+            full_name = full_name.strip()
+
+            clients = await self.user_repository.get_clients_by_name(full_name)
+            if not clients:
+                raise UserNotFoundError("Клиент не был найден.")
+
+            client_ids = [client.ID for client in clients]
+            appointments = await self.appointment_repository.get_appointments_by_client_ids(client_ids)
+
+            if not appointments:
+                raise AppointmentNotFoundError("У найденных клиентов нет записей.")
+
+            return appointments
+
+        raise AppointmentNotFoundError("Укажите телефон или фамилию для поиска.")
+
+    async def get_all_appointments(self) -> list[Appointment]:
+        return await self.appointment_repository.get_all_appointments()
 
     async def delete_appointment(self, appointment_id: int) -> None:
         if not await self.appointment_repository.appointment_exists(appointment_id):

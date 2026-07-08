@@ -14,7 +14,12 @@ class AppointmentCreationStates(StatesGroup):
 
 
 class AppointmentSearchStates(StatesGroup):
-    client_phone = State()
+    appointment_search_variant = State()  # Выбор способа поиска
+    appointment_search_name = State()     # Ввод ФИО
+    appointment_search_phone = State()    # Ввод телефона
+    confirm_search = State()              # Подтверждение перед поиском
+    edit_full_name = State()              # Редактирование ФИО
+    edit_phone = State()                  # Редактирование телефона
 
 
 class AppointmentDeletionStates(StatesGroup):
