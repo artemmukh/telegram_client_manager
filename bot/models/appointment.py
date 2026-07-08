@@ -16,3 +16,5 @@ class Appointment:
     id: int | None = None
     clinic_name: str | None = None
     created_by_telegram_id: int | None = None
+    client_full_name: str | None = None
+    client_phone: str | None = None

@@ -40,11 +40,21 @@ def build_appointment_card(appointment: Appointment) -> str:
     if appointment.clinic_name:
         lines.append(f"Клиника: {appointment.clinic_name}")
 
+    if appointment.client_full_name:
+        lines.append(f"Клиент: {appointment.client_full_name}")
+
+    if appointment.client_phone:
+        lines.append(f"Телефон: {appointment.client_phone}")
+
     lines += [
         f"Дата и время: {appointment.datetime}",
         f"Услуга: {appointment.purpose}",
         f"Статус: {STATUS_LABELS.get(appointment.status, appointment.status.value)}",
     ]
+
+    if appointment.created_at:
+        lines.append(f"Создана: {appointment.created_at}")
+
     return "\n".join(lines)
 
 

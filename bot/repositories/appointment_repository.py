@@ -8,16 +8,19 @@ SELECT
     a.id,
     a.clinic_id,
     a.client_id,
-    a.doctor_id,
+    a.admin_id,
     a.datetime,
     a.purpose,
     a.created_by,
     a.status,
     a.created_at,
     c.name AS clinic_name,
-    a.created_by_telegram_id
+    a.admin_tg_id,
+    u.full_name AS client_full_name,
+    u.phone AS client_phone
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
+LEFT JOIN users u ON u.id = a.client_id
 """
 
 
@@ -26,33 +29,48 @@ class AppointmentRepository:
         self.connection = connection
 
     async def init(self) -> None:
+        # Rename columns if they exist (migration from old schema)
+        try:
+            await self.connection.execute(
+                "ALTER TABLE appointments RENAME COLUMN doctor_id TO admin_id"
+            )
+        except Exception:
+            pass
+        try:
+            await self.connection.execute(
+                "ALTER TABLE appointments RENAME COLUMN created_by_telegram_id TO admin_tg_id"
+            )
+        except Exception:
+            pass
+
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS appointments(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 clinic_id INTEGER NOT NULL,
                 client_id INTEGER NOT NULL,
-                doctor_id INTEGER DEFAULT NULL,
+                admin_id INTEGER DEFAULT NULL,
                 datetime TIMESTAMP NOT NULL,
                 purpose TEXT,
                 created_by TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_by_telegram_id INTEGER DEFAULT NULL,
+                admin_tg_id INTEGER DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
-                FOREIGN KEY(doctor_id) REFERENCES users(id) ON DELETE SET NULL
+                FOREIGN KEY(admin_id) REFERENCES users(id) ON DELETE SET NULL
             )
         """)
 
-        # Ensure created_by_telegram_id column exists for existing databases
+        # Ensure admin_tg_id column exists for existing databases
+        # (covers very old databases that predate this column entirely)
         cursor = await self.connection.execute(
             "PRAGMA table_info(appointments)"
         )
         columns = {row[1] for row in await cursor.fetchall()}
-        if "created_by_telegram_id" not in columns:
+        if "admin_tg_id" not in columns:
             await self.connection.execute(
-                "ALTER TABLE appointments ADD COLUMN created_by_telegram_id INTEGER DEFAULT NULL"
+                "ALTER TABLE appointments ADD COLUMN admin_tg_id INTEGER DEFAULT NULL"
             )
 
         await self.connection.execute("""
@@ -74,7 +92,7 @@ class AppointmentRepository:
 
     async def get_appointments_by_client_id(self, client_id: int) -> list[Appointment]:
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "WHERE a.client_id = ? ORDER BY a.datetime",
+            APPOINTMENT_SELECT + "WHERE a.client_id = ? ORDER BY a.created_at DESC",
             (client_id,),
         )
         rows = await cursor.fetchall()
@@ -84,14 +102,15 @@ class AppointmentRepository:
         cursor = await self.connection.execute(
             """
             SELECT
-                a.id, a.clinic_id, a.client_id, a.doctor_id,
+                a.id, a.clinic_id, a.client_id, a.admin_id,
                 a.datetime, a.purpose, a.created_by, a.status, a.created_at,
-                c.name AS clinic_name, a.created_by_telegram_id
+                c.name AS clinic_name, a.admin_tg_id,
+                u.full_name AS client_full_name, u.phone AS client_phone
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
             WHERE u.telegram_user_id = ?
-            ORDER BY a.datetime
+            ORDER BY a.created_at DESC
             """,
             (telegram_user_id,),
         )
@@ -102,8 +121,8 @@ class AppointmentRepository:
         cursor = await self.connection.execute(
             """
             INSERT INTO appointments(
-                clinic_id, client_id, doctor_id,
-                datetime, purpose, created_by, status, created_by_telegram_id
+                clinic_id, client_id, admin_id,
+                datetime, purpose, created_by, status, admin_tg_id
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -129,7 +148,7 @@ class AppointmentRepository:
             """
             UPDATE appointments
             SET
-                doctor_id = ?,
+                admin_id = ?,
                 datetime = ?,
                 purpose = ?,
                 status = ?
@@ -168,7 +187,7 @@ class AppointmentRepository:
 
     async def get_all_appointments(self) -> list[Appointment]:
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "ORDER BY a.datetime"
+            APPOINTMENT_SELECT + "ORDER BY a.created_at DESC"
         )
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
@@ -185,7 +204,7 @@ class AppointmentRepository:
             return []
         placeholders = ",".join("?" * len(client_ids))
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + f"WHERE a.client_id IN ({placeholders}) ORDER BY a.datetime",
+            APPOINTMENT_SELECT + f"WHERE a.client_id IN ({placeholders}) ORDER BY a.created_at DESC",
             client_ids,
         )
         rows = await cursor.fetchall()
@@ -206,4 +225,6 @@ class AppointmentRepository:
             created_at=row[8],
             clinic_name=row[9],
             created_by_telegram_id=row[10],
+            client_full_name=row[11],
+            client_phone=row[12],
         )
