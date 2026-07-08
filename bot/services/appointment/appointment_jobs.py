@@ -23,13 +23,14 @@ from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 logger = logging.getLogger(__name__)
 
 
-async def send_reminder_job(appointment_id: int) -> None:
-    """Send appointment reminder to client if appointment is still pending.
+async def send_reminder_job(appointment_id: int, hours_before: int = 24) -> None:
+    """Send appointment reminder to client based on time until appointment.
 
     This job is called by APScheduler at scheduled reminder times (24h and 2h before).
 
     Args:
         appointment_id: The ID of the appointment to send reminder for
+        hours_before: Hours before appointment (24 or 2)
     """
     connection = None
     try:
@@ -61,19 +62,62 @@ async def send_reminder_job(appointment_id: int) -> None:
             )
             return
 
-        notification_sent = (
-            await notification_service.notify_client_appointment(appointment)
-        )
+        # Get client info for potential admin notification
+        client = await user_repo.get_client_by_id(appointment.client_id)
+        client_name = client.full_name if client else "Неизвестный клиент"
 
-        if notification_sent:
-            logger.info(
-                f"Reminder sent for appointment {appointment_id}"
-            )
-        else:
+        # Determine reminder type and send to CLIENT
+        reminder_type = None
+        notification_sent = False
+
+        try:
+            if hours_before == 24:
+                # 24h reminder: text only, NO buttons
+                notification_sent = (
+                    await notification_service.notify_client_appointment_without_buttons(appointment)
+                )
+                reminder_type = "24h (no buttons)"
+            elif hours_before == 2:
+                # 2h reminder: text WITH buttons
+                notification_sent = (
+                    await notification_service.notify_client_appointment_with_buttons(appointment)
+                )
+                reminder_type = "2h (with buttons)"
+            else:
+                logger.warning(f"Unknown reminder time: {hours_before}h")
+                return
+
+            if notification_sent:
+                logger.info(
+                    f"Reminder sent for appointment {appointment_id} ({reminder_type})"
+                )
+            else:
+                logger.warning(
+                    f"Failed to send {reminder_type} reminder for appointment {appointment_id} "
+                    f"(client not found or no telegram_id)"
+                )
+        except Exception as e:
             logger.warning(
-                f"Failed to send reminder for appointment {appointment_id} "
-                f"(client not found or no telegram_id)"
+                f"Failed to send client reminder for appointment {appointment_id} ({hours_before}h): {e}"
             )
+            # Still allow admin notification to be sent
+            reminder_type = f"{hours_before}h (failed)"
+
+        # Send reminder to ADMIN (INDEPENDENT, must always attempt)
+        if appointment.created_by_telegram_id and client:
+            try:
+                await notification_service.notify_admin_upcoming_appointment(
+                    appointment.created_by_telegram_id,
+                    appointment,
+                    client_name,
+                )
+                logger.info(
+                    f"Admin reminder sent for appointment {appointment_id} ({reminder_type})"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to send admin reminder for appointment {appointment_id}: {e}"
+                )
 
     except AppointmentNotFoundError as e:
         logger.warning(f"Send reminder job: appointment {appointment_id} not found")

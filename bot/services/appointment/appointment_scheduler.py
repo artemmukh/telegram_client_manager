@@ -72,7 +72,7 @@ class AppointmentScheduler:
                     send_reminder_job,
                     "date",
                     run_date=reminder_dt,
-                    args=(appointment.id,),
+                    args=(appointment.id, hours_before),
                     id=job_id,
                     replace_existing=True,
                 )
@@ -170,9 +170,9 @@ class AppointmentScheduler:
                 f"Failed to cancel completion for appointment {appointment_id}: {e}"
             )
 
-    async def _send_reminder_job(self, appointment_id: int) -> None:
+    async def _send_reminder_job(self, appointment_id: int, hours_before: int = 24) -> None:
         """Wrapper for send_reminder_job - for backward compatibility with tests."""
-        await send_reminder_job(appointment_id)
+        await send_reminder_job(appointment_id, hours_before)
 
     async def _mark_appointment_completed_job(self, appointment_id: int) -> None:
         """Wrapper for mark_appointment_completed_job - for backward compatibility with tests."""

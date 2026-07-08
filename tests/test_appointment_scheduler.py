@@ -28,7 +28,9 @@ def mock_user_repo():
 def mock_notification_service():
     """Mock AppointmentNotificationService."""
     service = AsyncMock()
-    service.notify_client_appointment = AsyncMock(return_value=True)
+    service.notify_client_appointment_without_buttons = AsyncMock(return_value=True)
+    service.notify_client_appointment_with_buttons = AsyncMock(return_value=True)
+    service.notify_admin_upcoming_appointment = AsyncMock()
     return service
 
 
@@ -183,24 +185,48 @@ async def test_cancel_reminders_idempotent_no_error_if_already_cancelled(
 
 @pytest.mark.asyncio
 async def test_send_reminder_job_sends_message_if_pending(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test that reminder job sends message when appointment is PENDING."""
+    """Test that reminder job sends message when appointment is PENDING (24h reminder)."""
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
+    mock_notification_service.notify_client_appointment_without_buttons = AsyncMock(return_value=True)
+    mock_notification_service.notify_admin_upcoming_appointment = AsyncMock()
 
-    await appointment_scheduler._send_reminder_job(sample_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.get_appointment_by_id.assert_called_once_with(sample_appointment.id)
-    mock_notification_service.notify_client_appointment.assert_called_once_with(
-        sample_appointment
-    )
+        # Setup mocks
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await appointment_scheduler._send_reminder_job(sample_appointment.id, hours_before=24)
+
+            mock_appointment_repo.get_appointment_by_id.assert_called_once_with(sample_appointment.id)
+            mock_notification_service.notify_client_appointment_without_buttons.assert_called_once_with(
+                sample_appointment
+            )
 
 
 @pytest.mark.asyncio
 async def test_send_reminder_job_sends_message_if_confirmed(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test that reminder job sends message when appointment is CONFIRMED."""
+    """Test that reminder job sends message when appointment is CONFIRMED (2h reminder with buttons)."""
     confirmed_appointment = Appointment(
         id=1,
         clinic_id=1,
@@ -212,12 +238,35 @@ async def test_send_reminder_job_sends_message_if_confirmed(
         clinic_name="Test Clinic",
     )
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
+    mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
+    mock_notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=True)
+    mock_notification_service.notify_admin_upcoming_appointment = AsyncMock()
 
-    await appointment_scheduler._send_reminder_job(confirmed_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_notification_service.notify_client_appointment.assert_called_once_with(
-        confirmed_appointment
-    )
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await appointment_scheduler._send_reminder_job(confirmed_appointment.id, hours_before=2)
+
+            mock_notification_service.notify_client_appointment_with_buttons.assert_called_once_with(
+                confirmed_appointment
+            )
 
 
 @pytest.mark.asyncio
@@ -237,9 +286,28 @@ async def test_send_reminder_job_skips_if_cancelled(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = cancelled_appointment
 
-    await appointment_scheduler._send_reminder_job(cancelled_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_notification_service.notify_client_appointment.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await appointment_scheduler._send_reminder_job(cancelled_appointment.id)
+
+            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -259,9 +327,28 @@ async def test_send_reminder_job_skips_if_completed(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = completed_appointment
 
-    await appointment_scheduler._send_reminder_job(completed_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_notification_service.notify_client_appointment.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await appointment_scheduler._send_reminder_job(completed_appointment.id)
+
+            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -281,9 +368,28 @@ async def test_send_reminder_job_skips_if_no_show(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = no_show_appointment
 
-    await appointment_scheduler._send_reminder_job(no_show_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_notification_service.notify_client_appointment.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await appointment_scheduler._send_reminder_job(no_show_appointment.id)
+
+            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -293,24 +399,75 @@ async def test_send_reminder_job_handles_missing_appointment(
     """Test that reminder job handles case where appointment is not found."""
     mock_appointment_repo.get_appointment_by_id.return_value = None
 
-    # Should not raise error
-    await appointment_scheduler._send_reminder_job(999)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_notification_service.notify_client_appointment.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            # Should not raise error
+            await appointment_scheduler._send_reminder_job(999)
+
+            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_send_reminder_job_handles_notification_failure(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test that reminder job handles notification service failure gracefully."""
+    """Test that reminder job handles client notification failure gracefully AND sends admin notification."""
+    # Setup appointment with admin telegram ID
+    sample_appointment.created_by_telegram_id = 12345
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_notification_service.notify_client_appointment.return_value = False
+    mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
 
-    # Should not raise error even if notification fails
-    await appointment_scheduler._send_reminder_job(sample_appointment.id)
+    # Client notification fails (exception)
+    mock_notification_service.notify_client_appointment_without_buttons = AsyncMock(
+        side_effect=Exception("Network error")
+    )
+    # But admin notification should still be attempted
+    mock_notification_service.notify_admin_upcoming_appointment = AsyncMock()
 
-    mock_notification_service.notify_client_appointment.assert_called_once()
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            # Should not raise error even if client notification fails
+            await appointment_scheduler._send_reminder_job(sample_appointment.id, hours_before=24)
+
+            # Verify client notification was attempted
+            mock_notification_service.notify_client_appointment_without_buttons.assert_called_once()
+            # Verify admin notification was still attempted despite client failure
+            mock_notification_service.notify_admin_upcoming_appointment.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -456,12 +613,32 @@ async def test_mark_appointment_completed_job_updates_status_if_pending(
     """Test that completion job updates status to COMPLETED if appointment is PENDING."""
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
-    await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        sample_appointment.id,
-        AppointmentStatus.COMPLETED
-    )
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = AsyncMock()
+            mock_notif_class.return_value = AsyncMock()
+
+            await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                sample_appointment.id,
+                AppointmentStatus.COMPLETED
+            )
 
 
 @pytest.mark.asyncio
@@ -481,12 +658,32 @@ async def test_mark_appointment_completed_job_updates_status_if_confirmed(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
 
-    await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        confirmed_appointment.id,
-        AppointmentStatus.COMPLETED
-    )
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = AsyncMock()
+            mock_notif_class.return_value = AsyncMock()
+
+            await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                confirmed_appointment.id,
+                AppointmentStatus.COMPLETED
+            )
 
 
 @pytest.mark.asyncio
@@ -506,9 +703,24 @@ async def test_mark_appointment_completed_job_skips_if_cancelled(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = cancelled_appointment
 
-    await appointment_scheduler._mark_appointment_completed_job(cancelled_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.update_appointment_status.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await appointment_scheduler._mark_appointment_completed_job(cancelled_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -528,9 +740,24 @@ async def test_mark_appointment_completed_job_skips_if_no_show(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = no_show_appointment
 
-    await appointment_scheduler._mark_appointment_completed_job(no_show_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.update_appointment_status.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await appointment_scheduler._mark_appointment_completed_job(no_show_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -550,9 +777,24 @@ async def test_mark_appointment_completed_job_skips_if_already_completed(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = completed_appointment
 
-    await appointment_scheduler._mark_appointment_completed_job(completed_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.update_appointment_status.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await appointment_scheduler._mark_appointment_completed_job(completed_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -562,10 +804,25 @@ async def test_mark_appointment_completed_job_handles_missing_appointment(
     """Test that completion job handles case where appointment is not found."""
     mock_appointment_repo.get_appointment_by_id.return_value = None
 
-    # Should not raise error
-    await appointment_scheduler._mark_appointment_completed_job(999)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
 
-    mock_appointment_repo.update_appointment_status.assert_not_called()
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            # Should not raise error
+            await appointment_scheduler._mark_appointment_completed_job(999)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
 
 
 @pytest.mark.asyncio
