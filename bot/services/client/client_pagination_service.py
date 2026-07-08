@@ -73,7 +73,8 @@ class ClientPaginationService:
         clients: list[User],
         current_page: int,
         total_pages: int,
-        mode: str
+        mode: str,
+        total_count: int = 0
     ) -> str:
         """
         Форматирует текст списка клиентов
@@ -83,14 +84,15 @@ class ClientPaginationService:
             current_page: текущая страница
             total_pages: общее количество страниц
             mode: 'list' или 'search'
+            total_count: общее количество клиентов
 
         Returns:
             str: отформатированный текст
         """
         if mode == "list":
-            title = f"📋 Список всех клиентов ({current_page} из {total_pages})"
+            title = f"📋 Список всех клиентов ({current_page} из {total_pages}) | Всего: {total_count}"
         elif mode == "search":
-            title = f"🔍 Результаты поиска ({current_page} из {total_pages})"
+            title = f"🔍 Результаты поиска ({current_page} из {total_pages}) | Всего: {total_count}"
         else:
             title = f"Клиенты ({current_page} из {total_pages})"
 
@@ -100,8 +102,12 @@ class ClientPaginationService:
             lines.append("Клиентов не найдено")
             return "\n".join(lines)
 
-        for index, user in enumerate(clients, start=1):
-            if index > 1:
+        # Вычисляем глобальный стартовый номер
+        start_index = (current_page - 1) * CLIENTS_PER_PAGE + 1
+
+        # Нумеруем с глобального начального номера
+        for index, user in enumerate(clients, start=start_index):
+            if index > start_index:
                 lines.append("")
             lines.append(f"{index}.")
             if user.ID is not None:

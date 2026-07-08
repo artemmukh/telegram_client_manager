@@ -100,7 +100,8 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
             result.items,
             result.current_page,
             result.total_pages,
-            "list"
+            "list",
+            result.total_count
         )
         keyboard = pagination_keyboard("list", result.current_page, result.total_pages)
 
@@ -132,7 +133,8 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
             result.items,
             result.current_page,
             result.total_pages,
-            "search"
+            "search",
+            result.total_count
         )
         keyboard = pagination_keyboard("search", result.current_page, result.total_pages)
 
@@ -160,7 +162,8 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
                 result.items,
                 result.current_page,
                 result.total_pages,
-                mode
+                mode,
+                result.total_count
             )
             keyboard = pagination_keyboard(mode, result.current_page, result.total_pages)
 
