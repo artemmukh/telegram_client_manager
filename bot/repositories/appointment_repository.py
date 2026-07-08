@@ -122,9 +122,9 @@ class AppointmentRepository:
             """
             INSERT INTO appointments(
                 clinic_id, client_id, admin_id,
-                datetime, purpose, created_by, status, admin_tg_id
+                datetime, purpose, created_by, status, admin_tg_id, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 appointment.clinic_id,
@@ -135,6 +135,7 @@ class AppointmentRepository:
                 appointment.created_by.value,
                 appointment.status.value,
                 appointment.created_by_telegram_id,
+                appointment.created_at,
             ),
         )
         await self.connection.commit()

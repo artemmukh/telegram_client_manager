@@ -1,20 +1,9 @@
 from datetime import datetime
 from typing import Optional
+import pytz
 
 import dateparser
-
-
 import re
-from datetime import datetime
-from typing import Optional
-
-import dateparser
-
-import re
-from datetime import datetime
-from typing import Optional
-
-import dateparser
 
 # 'в 4 часов' по умолчанию трактуется dateparser'ом либо как 4 утра,
 # либо вообще как "4-е число месяца". Нормализуем вручную под контекст
@@ -92,3 +81,14 @@ def format_datetime_for_db(dt: datetime) -> str:
     Returns: YYYY-MM-DD HH:MM format string
     """
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def get_current_tashkent_time() -> str:
+    """
+    Get current time in Asia/Tashkent timezone formatted for database storage.
+
+    Returns: YYYY-MM-DD HH:MM:SS format string
+    """
+    tz = pytz.timezone('Asia/Tashkent')
+    now = datetime.now(tz)
+    return now.strftime("%Y-%m-%d %H:%M:%S")

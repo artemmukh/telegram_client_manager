@@ -8,6 +8,7 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
@@ -46,6 +47,7 @@ class AppointmentManagement:
             status=AppointmentStatus.PENDING,
             clinic_name=clinic.name,
             created_by_telegram_id=doctor_telegram_id,
+            created_at=get_current_tashkent_time(),
         )
 
         return await self.appointment_repository.create_appointment(appointment)
