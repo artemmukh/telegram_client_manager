@@ -1,4 +1,4 @@
-CLIENTS_PER_PAGE = 15
+CLIENTS_PER_PAGE = 10
 
 
 def parse_pagination_callback(callback_data: str) -> tuple[str, int]:

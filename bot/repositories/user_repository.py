@@ -202,7 +202,7 @@ class UserRepository:
         raise UserNotFoundError("User not found")
 
     async def get_clients_page(
-        self, page: int, per_page: int = 15
+        self, page: int, per_page: int = 10
     ) -> list[User]:
         """Получить страницу клиентов (все клиенты)"""
         offset = (page - 1) * per_page
@@ -226,7 +226,7 @@ class UserRepository:
         return row[0] if row else 0
 
     async def get_clients_by_name_page(
-        self, full_name: str, page: int, per_page: int = 15
+        self, full_name: str, page: int, per_page: int = 10
     ) -> list[User]:
         """Получить страницу результатов поиска по имени"""
         parts = full_name.strip().title().split()
