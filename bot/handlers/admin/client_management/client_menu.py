@@ -1,4 +1,5 @@
 from aiogram import Router, F
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.keyboards.admin.client_management_kb.client_main_menu_kb import client_keyboard
@@ -16,8 +17,9 @@ def create_admin_client_menu_router():
         await message.answer(text="Выберите действие над клиентом:", reply_markup=client_keyboard())
 
     @router.callback_query(F.data == "back_to_main_menu")
-    async def client_managing_callback(callback: CallbackQuery):
+    async def client_managing_callback(callback: CallbackQuery, state: FSMContext):
+        await state.clear()
         await callback.answer('')
-        await callback.message.answer(text="Выберите действие над клиентом:", reply_markup=client_keyboard())
+        await callback.message.edit_text(text="Выберите действие над клиентом:", reply_markup=client_keyboard())
 
     return router

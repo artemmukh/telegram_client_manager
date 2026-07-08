@@ -17,7 +17,7 @@ def client_browser_search_kb() -> InlineKeyboardMarkup:
     builder.button(text="👤 Поиск по имени", callback_data="cl_search_name")
     builder.button(text="📞 Поиск по номеру", callback_data="cl_search_phone")
     builder.button(text="👥 Показать всех клиентов", callback_data="cl_search_all")
-    builder.button(text="❌ Отменить", callback_data="cancel")
+    builder.button(text="⬅️ К меню", callback_data="back_to_main_menu")
 
     builder.adjust(2, 1, 1)
     return builder.as_markup()
@@ -28,7 +28,7 @@ def client_browser_confirm_name_kb() -> InlineKeyboardMarkup:
 
     builder.button(text="✅ Подтвердить", callback_data="cl_approve_search")
     builder.button(text="📝 Изменить ФИО", callback_data="cl_edit_search_name")
-    builder.button(text="❌ Отменить", callback_data="cancel")
+    builder.button(text="⬅️ К меню поиска", callback_data="browse_clients")
 
     builder.adjust(1, 1, 1)
     return builder.as_markup()
@@ -39,7 +39,7 @@ def client_browser_confirm_phone_kb() -> InlineKeyboardMarkup:
 
     builder.button(text="✅ Подтвердить", callback_data="cl_approve_search")
     builder.button(text="📲 Изменить номер", callback_data="cl_edit_search_phone")
-    builder.button(text="❌ Отменить", callback_data="cancel")
+    builder.button(text="⬅️ К меню поиска", callback_data="browse_clients")
 
     builder.adjust(1, 1, 1)
     return builder.as_markup()
@@ -79,7 +79,7 @@ def client_list_kb(
         builder.button(text="Страница 1 из 1", callback_data="noop")
         rows += [1]
 
-    builder.button(text="⬅️ К меню", callback_data="back_to_main_menu")
+    builder.button(text="⬅️ К меню поиска", callback_data="browse_clients")
     rows += [1]
 
     builder.adjust(*rows)
