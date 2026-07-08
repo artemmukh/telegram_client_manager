@@ -81,7 +81,7 @@ class UserRepository:
         sql = USER_SELECT + f"""
         WHERE u.role = 'client'
         AND ({conditions})
-        ORDER BY u.full_name
+        ORDER BY u.full_name, u.id
         """
 
         cursor = await self.connection.execute(sql, params)
@@ -93,7 +93,7 @@ class UserRepository:
         cursor = await self.connection.execute(
             USER_SELECT + """
             WHERE u.role = 'client'
-            ORDER BY u.full_name
+            ORDER BY u.full_name, u.id
             """
         )
         rows = await cursor.fetchall()
@@ -209,7 +209,7 @@ class UserRepository:
         cursor = await self.connection.execute(
             USER_SELECT + """
             WHERE u.role = 'client'
-            ORDER BY u.full_name
+            ORDER BY u.full_name, u.id
             LIMIT ? OFFSET ?
             """,
             (per_page, offset)
@@ -238,7 +238,7 @@ class UserRepository:
         sql = USER_SELECT + f"""
         WHERE u.role = 'client'
         AND ({conditions})
-        ORDER BY u.full_name
+        ORDER BY u.full_name, u.id
         LIMIT ? OFFSET ?
         """
         params.extend([per_page, offset])

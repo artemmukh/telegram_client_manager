@@ -17,3 +17,24 @@ def normalize_phone(phone: str) -> str:
         return "+998" + phone
 
     return phone
+
+
+def format_phone_short(phone: str) -> str:
+    """Форматирует номер для отображения на кнопке: код оператора + номер через дефисы.
+
+    +998901234567 -> "90 123-45-67". Возвращает исходный номер без изменений,
+    если формат не соответствует ожидаемому (+998 и 9 цифр после него).
+    """
+    phone = normalize_phone(phone)
+
+    if not phone.startswith("+998"):
+        return phone
+
+    digits = phone[4:]
+
+    if len(digits) != 9:
+        return phone
+
+    operator = digits[:2]
+    rest = digits[2:]
+    return f"{operator} {rest[:3]}-{rest[3:5]}-{rest[5:7]}"

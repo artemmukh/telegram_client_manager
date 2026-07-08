@@ -121,7 +121,7 @@ def create_admin_appointment_search_router(appointment_repo, user_repo, staff_re
             await callback_query.answer("Записей не найдено", show_alert=True)
             return
 
-        text = format_appointments_list("Все записи", appointments)
+        text = format_appointments_list("Все записи (сначала новые)", appointments)
         await callback_query.message.edit_text(text, reply_markup=None)
         await callback_query.answer()
 

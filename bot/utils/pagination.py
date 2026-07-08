@@ -1,33 +1,6 @@
 CLIENTS_PER_PAGE = 10
 
 
-def parse_pagination_callback(callback_data: str) -> tuple[str, int]:
-    """
-    Парсит callback_data вида 'page:list:1' или 'page:search:2'
-    Возвращает кортеж (mode, page_number)
-
-    Args:
-        callback_data: строка вида 'page:mode:page_num'
-
-    Returns:
-        tuple[str, int]: (mode, page_number)
-    """
-    parts = callback_data.split(":")
-    if len(parts) != 3 or parts[0] != "page":
-        raise ValueError(f"Invalid pagination callback: {callback_data}")
-
-    mode = parts[1]  # 'list' или 'search'
-    try:
-        page_num = int(parts[2])
-    except ValueError:
-        raise ValueError(f"Invalid page number in callback: {callback_data}")
-
-    if page_num < 1:
-        page_num = 1
-
-    return mode, page_num
-
-
 def get_circular_page(page: int, total_pages: int, direction: str) -> int:
     """
     Циклическая навигация между страницами.

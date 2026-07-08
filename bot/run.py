@@ -7,9 +7,7 @@ from bot.create_bot import dp, db
 bot = get_bot()
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
-from bot.handlers.admin.client_management.client_search import create_admin_client_search_router
-from bot.handlers.admin.client_management.client_delete import create_admin_client_deletion_router
-from bot.handlers.admin.client_management.client_update import create_admin_client_update_router
+from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
 from bot.handlers.admin.appointment_management.record_menu import create_admin_record_router
 from bot.handlers.admin.appointment_management.appointment_creation import create_admin_appointment_creation_router
 from bot.handlers.admin.appointment_management.appointment_search import create_admin_appointment_search_router
@@ -93,14 +91,8 @@ async def main():
     #create
     dp.include_router(create_admin_client_creation_router(user_repo, staff_repo, clinic_repo))
 
-    #search
-    dp.include_router(create_admin_client_search_router(user_repo, staff_repo, clinic_repo))
-
-    #delete
-    dp.include_router(create_admin_client_deletion_router(user_repo, staff_repo, clinic_repo))
-
-    #update
-    dp.include_router(create_admin_client_update_router(user_repo, staff_repo, clinic_repo))
+    #browse (view/edit/delete)
+    dp.include_router(create_admin_client_browser_router(user_repo, staff_repo, clinic_repo))
 
     #record handlers
     dp.include_router(create_admin_record_router(appointment_repo))
