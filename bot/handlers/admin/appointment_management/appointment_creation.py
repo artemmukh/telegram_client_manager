@@ -139,14 +139,6 @@ def create_admin_appointment_creation_router(
             return
         await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
 
-    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "cancel_client_creation")
-    async def handle_cancel_client_creation(callback_query: CallbackQuery, state: FSMContext):
-        await state.set_state(AppointmentCreationStates.client_full_name)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            "Введите имя клиента:",
-            reply_markup=cancel_kb(),
-        )
 
     @router.message(AppointmentCreationStates.appointment_datetime, F.text)
     async def get_datetime(message: Message, state: FSMContext):

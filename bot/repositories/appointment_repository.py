@@ -14,7 +14,8 @@ SELECT
     a.created_by,
     a.status,
     a.created_at,
-    c.name AS clinic_name
+    c.name AS clinic_name,
+    a.created_by_telegram_id
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 """
@@ -36,12 +37,24 @@ class AppointmentRepository:
                 created_by TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by_telegram_id INTEGER DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(doctor_id) REFERENCES users(id) ON DELETE SET NULL
             )
         """)
+
+        # Ensure created_by_telegram_id column exists for existing databases
+        cursor = await self.connection.execute(
+            "PRAGMA table_info(appointments)"
+        )
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "created_by_telegram_id" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN created_by_telegram_id INTEGER DEFAULT NULL"
+            )
+
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_clinic_datetime
             ON appointments(clinic_id, datetime)
@@ -73,7 +86,7 @@ class AppointmentRepository:
             SELECT
                 a.id, a.clinic_id, a.client_id, a.doctor_id,
                 a.datetime, a.purpose, a.created_by, a.status, a.created_at,
-                c.name AS clinic_name
+                c.name AS clinic_name, a.created_by_telegram_id
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -90,9 +103,9 @@ class AppointmentRepository:
             """
             INSERT INTO appointments(
                 clinic_id, client_id, doctor_id,
-                datetime, purpose, created_by, status
+                datetime, purpose, created_by, status, created_by_telegram_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 appointment.clinic_id,
@@ -102,6 +115,7 @@ class AppointmentRepository:
                 appointment.purpose,
                 appointment.created_by.value,
                 appointment.status.value,
+                appointment.created_by_telegram_id,
             ),
         )
         await self.connection.commit()
@@ -166,4 +180,5 @@ class AppointmentRepository:
             status=AppointmentStatus(row[7]),
             created_at=row[8],
             clinic_name=row[9],
+            created_by_telegram_id=row[10],
         )

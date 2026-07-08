@@ -15,3 +15,4 @@ class Appointment:
     created_at: str | None = None
     id: int | None = None
     clinic_name: str | None = None
+    created_by_telegram_id: int | None = None

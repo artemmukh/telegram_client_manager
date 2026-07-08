@@ -45,6 +45,7 @@ class AppointmentManagement:
             created_by=CreatedBy.ADMIN,
             status=AppointmentStatus.PENDING,
             clinic_name=clinic.name,
+            created_by_telegram_id=doctor_telegram_id,
         )
 
         return await self.appointment_repository.create_appointment(appointment)

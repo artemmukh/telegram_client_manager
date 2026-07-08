@@ -76,6 +76,17 @@ def create_client_appointment_router(
                 await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
                 await callback_query.answer()
 
+                # Notify admin about confirmation
+                if notification_service and appointment.created_by_telegram_id:
+                    try:
+                        await notification_service.notify_admin_confirmation(
+                            appointment.created_by_telegram_id,
+                            appointment,
+                            client.full_name if client else "Неизвестный клиент",
+                        )
+                    except Exception:
+                        pass  # Graceful fail если не получилось отправить
+
             except AppointmentNotFoundError:
                 await callback_query.answer("Запись не найдена", show_alert=True)
             except BotException as e:
@@ -119,6 +130,17 @@ def create_client_appointment_router(
 
                 await callback_query.message.edit_text("✅ Ваша запись отменена")
                 await callback_query.answer()
+
+                # Notify admin about cancellation
+                if notification_service and appointment.created_by_telegram_id:
+                    try:
+                        await notification_service.notify_admin_cancellation(
+                            appointment.created_by_telegram_id,
+                            appointment,
+                            client.full_name if client else "Неизвестный клиент",
+                        )
+                    except Exception:
+                        pass  # Graceful fail если не получилось отправить
 
             except AppointmentNotFoundError:
                 await callback_query.answer("Запись не найдена", show_alert=True)
