@@ -85,14 +85,14 @@ class AppointmentRepository:
 
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "WHERE a.id = ?",
+            APPOINTMENT_SELECT + "\nWHERE a.id = ?",
             (appointment_id,),
         )
         return self._row_to_appointment(await cursor.fetchone())
 
     async def get_appointments_by_client_id(self, client_id: int) -> list[Appointment]:
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "WHERE a.client_id = ? ORDER BY a.created_at DESC",
+            APPOINTMENT_SELECT + "\nWHERE a.client_id = ?\nORDER BY a.created_at DESC",
             (client_id,),
         )
         rows = await cursor.fetchall()
@@ -187,7 +187,7 @@ class AppointmentRepository:
 
     async def get_all_appointments(self) -> list[Appointment]:
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "ORDER BY a.created_at DESC"
+            APPOINTMENT_SELECT + "\nORDER BY a.created_at DESC"
         )
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
@@ -204,7 +204,7 @@ class AppointmentRepository:
             return []
         placeholders = ",".join("?" * len(client_ids))
         cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + f"WHERE a.client_id IN ({placeholders}) ORDER BY a.created_at DESC",
+            APPOINTMENT_SELECT + f"\nWHERE a.client_id IN ({placeholders})\nORDER BY a.created_at DESC",
             client_ids,
         )
         rows = await cursor.fetchall()
