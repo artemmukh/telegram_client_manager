@@ -20,6 +20,7 @@ class FakeAppointmentRepository:
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
+        return appointment
 
     async def get_appointments_by_client_id(self, client_id):
         return [a for a in self.appointments if a.client_id == client_id]

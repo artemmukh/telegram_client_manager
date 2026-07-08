@@ -16,6 +16,7 @@ from bot.services.appointment.appointment_notifications import (
 from bot.services.appointment.appointment_jobs import (
     send_reminder_job,
     mark_appointment_completed_job,
+    complete_appointment,
 )
 from bot.utils.appointment_enums import AppointmentStatus
 
@@ -175,6 +176,17 @@ class AppointmentScheduler:
         await send_reminder_job(appointment_id, hours_before)
 
     async def _mark_appointment_completed_job(self, appointment_id: int) -> None:
-        """Wrapper for mark_appointment_completed_job - for backward compatibility with tests."""
-        await mark_appointment_completed_job(appointment_id)
+        """Mark appointment completed using this scheduler's injected dependencies.
+
+        Unlike mark_appointment_completed_job (which is scheduled by APScheduler
+        via module reference and creates its own bot/repositories), this wrapper
+        reuses appointment_repo, user_repo, and notification_service.bot injected
+        into this AppointmentScheduler instance.
+        """
+        await complete_appointment(
+            self.appointment_repo,
+            self.user_repo,
+            self.notification_service.bot,
+            appointment_id,
+        )
 

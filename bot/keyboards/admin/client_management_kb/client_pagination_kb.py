@@ -26,19 +26,21 @@ def pagination_keyboard(
         next_page = get_circular_page(current_page, total_pages, "next")
 
         builder.button(
-            text="⬅️",
-            callback_data=f"page:{mode}:{prev_page}"
-        )
-        builder.button(
             text=f"{current_page} из {total_pages}",
             callback_data="noop"
         )
+
+        builder.button(
+            text="⬅️",
+            callback_data=f"page:{mode}:{prev_page}"
+        )
+
         builder.button(
             text="➡️",
             callback_data=f"page:{mode}:{next_page}"
         )
         builder.button(text="⬅️ К меню", callback_data="back_to_main_menu")
-        builder.adjust(4)
+        builder.adjust(1, 2, 1)
     else:
         # Одна страница - показываем статус без навигации
         builder.button(
@@ -46,6 +48,6 @@ def pagination_keyboard(
             callback_data="noop"
         )
         builder.button(text="⬅️ К меню", callback_data="back_to_main_menu")
-        builder.adjust(2)
+        builder.adjust(1, 1)
 
     return builder.as_markup()

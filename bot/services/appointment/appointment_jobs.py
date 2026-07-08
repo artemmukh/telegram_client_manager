@@ -130,11 +130,75 @@ async def send_reminder_job(appointment_id: int, hours_before: int = 24) -> None
             await connection.close()
 
 
+async def complete_appointment(
+    appointment_repo: AppointmentRepository,
+    user_repo: UserRepository,
+    bot,
+    appointment_id: int,
+) -> None:
+    """Mark appointment as completed and notify the client.
+
+    Shared by the standalone APScheduler job function and by
+    AppointmentScheduler (for callers that inject repositories/bot directly,
+    e.g. tests).
+
+    Updates status to COMPLETED if appointment is still PENDING or CONFIRMED.
+
+    Args:
+        appointment_repo: Repository used to fetch/update the appointment
+        user_repo: Repository used to fetch the client
+        bot: Bot instance used to notify the client
+        appointment_id: The ID of the appointment to mark as completed
+    """
+    appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+
+    if appointment is None:
+        logger.warning(
+            f"Completion job: appointment {appointment_id} not found"
+        )
+        return
+
+    if appointment.status in (
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.COMPLETED,
+        AppointmentStatus.NO_SHOW,
+    ):
+        logger.info(
+            f"Completion job: skipping appointment {appointment_id} "
+            f"with status {appointment.status.value}"
+        )
+        return
+
+    await appointment_repo.update_appointment_status(
+        appointment_id,
+        AppointmentStatus.COMPLETED
+    )
+
+    logger.info(
+        f"Appointment {appointment_id} auto-completed"
+    )
+
+    try:
+        client = await user_repo.get_client_by_id(appointment.client_id)
+        if client and client.telegram_user_id:
+            await bot.send_message(
+                chat_id=client.telegram_user_id,
+                text="Ваш прием завершен. Спасибо за посещение!"
+            )
+            logger.info(
+                f"Sent completion notification to client {appointment.client_id}"
+            )
+    except Exception as e:
+        logger.warning(
+            f"Failed to send completion notification to client {appointment.client_id}: {e}"
+        )
+
+
 async def mark_appointment_completed_job(appointment_id: int) -> None:
     """Mark appointment as completed (called 1 hour after appointment time).
 
     This job is called by APScheduler 1 hour after the appointment datetime.
-    Updates status to COMPLETED if appointment is still PENDING or CONFIRMED.
+    Creates its own bot/repositories so it can be scheduled by module reference.
 
     Args:
         appointment_id: The ID of the appointment to mark as completed
@@ -149,50 +213,8 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
-
-        if appointment is None:
-            logger.warning(
-                f"Completion job: appointment {appointment_id} not found"
-            )
-            return
-
-        if appointment.status in (
-            AppointmentStatus.CANCELLED,
-            AppointmentStatus.COMPLETED,
-            AppointmentStatus.NO_SHOW,
-        ):
-            logger.info(
-                f"Completion job: skipping appointment {appointment_id} "
-                f"with status {appointment.status.value}"
-            )
-            return
-
-        await appointment_repo.update_appointment_status(
-            appointment_id,
-            AppointmentStatus.COMPLETED
-        )
-
-        logger.info(
-            f"Appointment {appointment_id} auto-completed"
-        )
-
-        try:
-            client = await user_repo.get_client_by_id(appointment.client_id)
-            if client and client.telegram_user_id:
-                await notification_service.bot.send_message(
-                    chat_id=client.telegram_user_id,
-                    text="Ваш прием завершен. Спасибо за посещение!"
-                )
-                logger.info(
-                    f"Sent completion notification to client {appointment.client_id}"
-                )
-        except Exception as e:
-            logger.warning(
-                f"Failed to send completion notification to client {appointment.client_id}: {e}"
-            )
+        await complete_appointment(appointment_repo, user_repo, bot, appointment_id)
 
     except AppointmentNotFoundError as e:
         logger.warning(f"Mark completion job: appointment {appointment_id} not found")
