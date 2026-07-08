@@ -2,6 +2,7 @@ from aiogram import Bot
 
 from bot.keyboards.client.appointment_response_kb import appointment_response_kb
 from bot.models.appointment import Appointment
+from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 
@@ -27,7 +28,8 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = self._build_appointment_message(appointment)
+        admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
+        message_text = self._build_appointment_message(appointment, admin)
 
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
@@ -46,7 +48,8 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = self._build_appointment_message(appointment)
+        admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
+        message_text = self._build_appointment_message(appointment, admin)
 
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
@@ -66,9 +69,13 @@ class AppointmentNotificationService:
 
         Returns True if message sent, False if send failed.
         """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+        client_phone = client.phone if client else "—"
+
         message_text = (
             f"📌 Предстоящая запись:\n\n"
             f"👤 Клиент: {client_name}\n"
+            f"📱 Номер: {client_phone}\n"
             f"📅 Дата и время: {appointment.datetime}\n"
             f"🏥 Услуга: {appointment.purpose}"
         )
@@ -89,8 +96,12 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send cancellation notification to admin."""
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+        client_phone = client.phone if client else "—"
+
         message_text = (
             f"Клиент {client_name} отменил запись\n\n"
+            f"📱 Номер: {client_phone}\n"
             f"Дата и время: {appointment.datetime}\n"
             f"Услуга: {appointment.purpose}"
         )
@@ -107,8 +118,12 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send confirmation notification to admin."""
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+        client_phone = client.phone if client else "—"
+
         message_text = (
             f"Клиент {client_name} подтвердил запись\n\n"
+            f"📱 Номер: {client_phone}\n"
             f"Дата и время: {appointment.datetime}\n"
             f"Услуга: {appointment.purpose}"
         )
@@ -118,10 +133,15 @@ class AppointmentNotificationService:
             text=message_text
         )
 
-    def _build_appointment_message(self, appointment: Appointment) -> str:
+    def _build_appointment_message(self, appointment: Appointment, admin: User | None = None) -> str:
         """Build appointment notification message for client."""
+        admin_info = ""
+        if admin:
+            admin_info = f"👨‍⚕️ Администратор: {admin.full_name}\n📱 Номер: {admin.phone or '—'}\n\n"
+
         return (
             "Вам назначена запись на прием\n\n"
+            f"{admin_info}"
             f"Дата и время: {appointment.datetime}\n"
             f"Услуга: {appointment.purpose}\n"
             f"Клиника: {appointment.clinic_name or 'Информация не доступна'}\n\n"
