@@ -123,7 +123,7 @@ async def send_reminder_job(appointment_id: int, hours_before: int = 24) -> None
                     f"Unexpected error sending admin reminder for appointment {appointment_id}: {e}"
                 )
 
-    except AppointmentNotFoundError as e:
+    except AppointmentNotFoundError:
         logger.warning(f"Send reminder job: appointment {appointment_id} not found")
     except Exception as e:
         logger.exception(
@@ -220,7 +220,7 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
 
         await complete_appointment(appointment_repo, user_repo, bot, appointment_id)
 
-    except AppointmentNotFoundError as e:
+    except AppointmentNotFoundError:
         logger.warning(f"Mark completion job: appointment {appointment_id} not found")
     except Exception as e:
         logger.exception(

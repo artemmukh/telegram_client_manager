@@ -38,9 +38,12 @@ class AppointmentManagement:
         appointment_datetime = validate_datetime(data["appointment_datetime"])
         purpose = validate_purpose(data["purpose"])
 
+        admin = await self.user_repository.get_user_by_telegram_id(doctor_telegram_id)
+
         appointment = Appointment(
             clinic_id=clinic.clinic_id,
             client_id=client.ID,
+            doctor_id=admin.ID if admin else None,
             datetime=appointment_datetime,
             purpose=purpose,
             created_by=CreatedBy.ADMIN,

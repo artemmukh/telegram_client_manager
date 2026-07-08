@@ -12,7 +12,6 @@ from bot.handlers.utils.admin_utils.input_helpers import phone_processing
 from bot.keyboards.admin.record_management_kb.appointment_kb import appointment_update_menu_kb
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.admin.record_management.appointment_states import AppointmentUpdateStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter

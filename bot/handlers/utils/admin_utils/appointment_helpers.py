@@ -3,7 +3,6 @@ from aiogram.fsm.state import State
 from aiogram.types import Message
 
 from bot.exceptions.user_exceptions import ValidationError
-from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_display
 from bot.utils.appointment_enums import AppointmentStatus

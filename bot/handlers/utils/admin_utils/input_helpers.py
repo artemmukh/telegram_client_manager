@@ -4,12 +4,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import Message, CallbackQuery
 
-from bot.create_bot import db
 from bot.exceptions.user_exceptions import InvalidFullNameError, ValidationError
-from bot.repositories.user_repository import UserRepository
 from bot.validators.validators import validate_phone, validate_full_name
-
-user_repo = UserRepository(db)
 
 
 async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup):

@@ -84,46 +84,6 @@ def validate_datetime(value: str) -> str:
     return value
 
 
-def validate_datetime_natural(value: str) -> str:
-    """Validate datetime from natural Russian text or strict format."""
-    from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_db
-
-    value = value.strip()
-
-    if not value:
-        raise InvalidDatetimeError(
-            "Введите дату и время на русском языке.\n\n"
-            "✅ Примеры:\n"
-            "• завтра в 3 часа\n"
-            "• завтра в 2 (→ 14:00, днём)\n"
-            "• среда в 14:00\n"
-            "• 13 сентября 15:30\n"
-            "• через 2 часа\n"
-            "• в 10 часов утра"
-        )
-
-    parsed_dt = parse_ru_datetime(value)
-
-    if parsed_dt is None:
-        raise InvalidDatetimeError(
-            "Не смог распознать дату и время.\n\n"
-            "✅ Правильные форматы:\n"
-            "• завтра в 3 часа\n"
-            "• среда в 14:00\n"
-            "• 13 сентября 15:30\n"
-            "• через 2 часа\n"
-            "• в 10 часов утра\n"
-            "• в 2 часа дня\n"
-            "• в 2 часа ночи\n\n"
-            "❌ Не работает:\n"
-            "• только время без даты\n"
-            "• английский язык\n"
-            "• неправильные падежи"
-        )
-
-    return format_datetime_for_db(parsed_dt)
-
-
 def validate_purpose(value: str) -> str:
     value = value.strip()
 

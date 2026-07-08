@@ -42,8 +42,9 @@ class FakeAppointmentRepository:
 
 
 class FakeUserRepo:
-    def __init__(self, client=None):
+    def __init__(self, client=None, admin=None):
         self.client = client
+        self.admin = admin
 
     async def get_client_by_phone(self, phone):
         if self.client and self.client.phone == phone:
@@ -53,6 +54,11 @@ class FakeUserRepo:
     async def get_client_by_id(self, client_id):
         if self.client and self.client.ID == client_id:
             return self.client
+        return None
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        if self.admin and self.admin.telegram_user_id == telegram_user_id:
+            return self.admin
         return None
 
 

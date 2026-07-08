@@ -18,7 +18,6 @@ from bot.services.appointment.appointment_jobs import (
     mark_appointment_completed_job,
     complete_appointment,
 )
-from bot.utils.appointment_enums import AppointmentStatus
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +68,19 @@ class AppointmentScheduler:
             for reminder_dt, hours_before in reminder_times:
                 job_id = f"appt_{appointment.id}_{hours_before}h"
 
-                self.scheduler.add_job(
-                    send_reminder_job,
-                    "date",
-                    run_date=reminder_dt,
-                    args=(appointment.id, hours_before),
-                    id=job_id,
-                    replace_existing=True,
-                )
+                try:
+                    self.scheduler.add_job(
+                        send_reminder_job,
+                        "date",
+                        run_date=reminder_dt,
+                        args=(appointment.id, hours_before),
+                        id=job_id,
+                        replace_existing=True,
+                    )
+                except Exception as exc:
+                    raise JobSchedulingError(
+                        f"Failed to schedule reminder job {job_id}: {exc}"
+                    ) from exc
 
                 logger.info(
                     f"Scheduled reminder for appointment {appointment.id} "
@@ -106,8 +110,10 @@ class AppointmentScheduler:
                     logger.info(f"Cancelled reminder job: {job_id}")
                 except JobLookupError:
                     logger.debug(f"Job {job_id} does not exist (already ran or cancelled)")
-                except JobCancellationError as e:
-                    logger.warning(f"Failed to remove job {job_id}: {e}")
+                except Exception as exc:
+                    raise JobCancellationError(
+                        f"Failed to remove job {job_id}: {exc}"
+                    ) from exc
         except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel reminders for appointment {appointment_id}: {e}"
@@ -131,14 +137,19 @@ class AppointmentScheduler:
 
             job_id = f"appt_{appointment.id}_complete"
 
-            self.scheduler.add_job(
-                mark_appointment_completed_job,
-                "date",
-                run_date=completion_time,
-                args=(appointment.id,),
-                id=job_id,
-                replace_existing=True,
-            )
+            try:
+                self.scheduler.add_job(
+                    mark_appointment_completed_job,
+                    "date",
+                    run_date=completion_time,
+                    args=(appointment.id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule completion job {job_id}: {exc}"
+                ) from exc
 
             logger.info(
                 f"Scheduled completion for appointment {appointment.id} "
@@ -164,8 +175,10 @@ class AppointmentScheduler:
                 logger.info(f"Cancelled completion job: {job_id}")
             except JobLookupError:
                 logger.debug(f"Completion job {job_id} does not exist (already ran or cancelled)")
-            except JobCancellationError as e:
-                logger.warning(f"Failed to remove completion job {job_id}: {e}")
+            except Exception as exc:
+                raise JobCancellationError(
+                    f"Failed to remove completion job {job_id}: {exc}"
+                ) from exc
         except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel completion for appointment {appointment_id}: {e}"

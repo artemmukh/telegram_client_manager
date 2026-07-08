@@ -1,4 +1,3 @@
-from aiogram.types import InlineKeyboardMarkup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 def start_admin_keyboard() -> ReplyKeyboardMarkup:

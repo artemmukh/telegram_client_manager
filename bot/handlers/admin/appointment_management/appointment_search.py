@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError
-from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, format_appointments_list
+from bot.handlers.utils.admin_utils.appointment_helpers import format_appointments_list
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     ask_full_name,

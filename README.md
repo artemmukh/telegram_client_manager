@@ -172,7 +172,7 @@ Create a `.env` file:
 
 ```env
 BOT_TOKEN=your_bot_token
-ADMIN_IDS=123456789,987654321
+DATA_BASE=data/data_base.db
 ```
 
 Run the bot:

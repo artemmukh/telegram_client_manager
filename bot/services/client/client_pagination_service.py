@@ -14,8 +14,6 @@ class PaginationResult:
     current_page: int
     total_pages: int
     total_count: int
-    has_prev: bool
-    has_next: bool
 
 
 class ClientPaginationService:
@@ -65,6 +63,4 @@ class ClientPaginationService:
             current_page=page,
             total_pages=total_pages,
             total_count=total_count,
-            has_prev=page > 1,
-            has_next=page < total_pages,
         )

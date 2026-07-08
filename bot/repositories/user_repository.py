@@ -89,16 +89,6 @@ class UserRepository:
 
         return [self._row_to_user(row) for row in rows]
 
-    async def get_all_clients(self) -> list[User] | None:
-        cursor = await self.connection.execute(
-            USER_SELECT + """
-            WHERE u.role = 'client'
-            ORDER BY u.full_name, u.id
-            """
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_user(row) for row in rows]
-
     async def get_client_by_phone(self, phone: str) -> User | None:
         cursor = await self.connection.execute(
             USER_SELECT + """
@@ -155,6 +145,15 @@ class UserRepository:
             USER_SELECT + """
             WHERE u.role = 'client'
             AND u.id = ?
+            """,
+            (user_id,)
+        )
+        return self._row_to_user(await cursor.fetchone())
+
+    async def get_user_by_id(self, user_id: int) -> User | None:
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.id = ?
             """,
             (user_id,)
         )

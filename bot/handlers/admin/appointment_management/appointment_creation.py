@@ -105,7 +105,7 @@ def create_admin_appointment_creation_router(
         data = await state.get_data()
 
         try:
-            client = await appt_mng.check_or_create_client(
+            await appt_mng.check_or_create_client(
                 callback_query.from_user.id,
                 full_name=data['full_name'],
                 phone=data['phone'],

@@ -8,7 +8,7 @@ from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
+from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 
 class ClientManagement:

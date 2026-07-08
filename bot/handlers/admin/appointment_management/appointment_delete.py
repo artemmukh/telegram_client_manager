@@ -13,7 +13,6 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.admin.record_management.appointment_states import AppointmentDeletionStates
 from bot.utils.role import RoleFilter
 

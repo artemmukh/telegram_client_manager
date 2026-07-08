@@ -24,11 +24,6 @@ data_dir.mkdir(exist_ok=True)
 jobstore_db_url = f"sqlite:///{data_dir}/reminders.db"
 jobstore_engine = create_engine(jobstore_db_url)
 
-# Create job store tables
-from sqlalchemy.orm import declarative_base
-Base = declarative_base()
-Base.metadata.create_all(jobstore_engine)
-
 # Create scheduler with timezone support for Asia/Tashkent and persistent job store
 scheduler = AsyncIOScheduler(
     timezone='Asia/Tashkent',

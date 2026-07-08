@@ -19,6 +19,8 @@ from bot.handlers.common.help import create_help_router
 from bot.handlers.common.profile import create_profile_router
 from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
+from bot.middlewares.error import ErrorMiddleware
+from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.user import UserContextMiddleware
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.appointment_repository import AppointmentRepository
@@ -48,6 +50,12 @@ async def main():
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["appointment_repo"] = appointment_repo
+
+    dp.message.middleware(LoggingMiddleware())
+    dp.callback_query.middleware(LoggingMiddleware())
+
+    dp.message.middleware(ErrorMiddleware())
+    dp.callback_query.middleware(ErrorMiddleware())
 
     dp.message.middleware(UserContextMiddleware(user_repo))
     dp.callback_query.middleware(UserContextMiddleware(user_repo))
@@ -95,7 +103,7 @@ async def main():
     dp.include_router(create_admin_client_browser_router(user_repo, staff_repo, clinic_repo))
 
     #record handlers
-    dp.include_router(create_admin_record_router(appointment_repo))
+    dp.include_router(create_admin_record_router())
     dp.include_router(create_admin_appointment_creation_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service, appointment_scheduler
     ))
@@ -109,7 +117,7 @@ async def main():
 
     #client handlers
     dp.include_router(create_client_appointment_router(
-        bot, user_repo, appointment_repo, appointment_management_service, notification_service
+        appointment_management_service, notification_service
     ))
 
     try:

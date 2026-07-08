@@ -1,4 +1,4 @@
-from aiogram import Router, F, Bot
+from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
@@ -9,8 +9,6 @@ from bot.keyboards.client.appointment_response_kb import (
     appointment_response_kb,
     cancel_confirmation_kb,
 )
-from bot.repositories.appointment_repository import AppointmentRepository
-from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
@@ -21,9 +19,6 @@ from bot.utils.role import RoleFilter
 
 
 def create_client_appointment_router(
-    bot: Bot = None,
-    user_repo: UserRepository = None,
-    appointment_repo: AppointmentRepository = None,
     appointment_management_service: AppointmentManagement = None,
     notification_service: AppointmentNotificationService = None,
 ) -> Router:
