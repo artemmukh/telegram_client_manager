@@ -1,18 +1,26 @@
+import logging
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError
-from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_all_clients
+from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
     full_name_processing, edit_phone, ask_phone
 from bot.keyboards.admin.client_management_kb.client_search_kb import client_search_kb, \
     client_search_phone_kb, client_search_name_kb
+from bot.keyboards.admin.client_management_kb.client_pagination_kb import pagination_keyboard
 from bot.utils.role import RoleFilter
+from bot.utils.pagination import parse_pagination_callback
 from bot.validators.validators import SEARCH_NAME_PATTERN
 from bot.services.client.client_management import ClientManagement
+from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.states.admin.client_management.client_search_states import ClientSearchStates
+
+logger = logging.getLogger(__name__)
 
 
 def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
@@ -84,13 +92,24 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
 
     @router.callback_query(F.data == "get_all_clients")
     async def get_all_clients(callback_query: CallbackQuery, state: FSMContext):
-        found_clients = await user_repo.get_all_clients()
-        await show_all_clients(callback_query, f"Список всех клиентов (всего: {len(found_clients)}): "
-                               , users=found_clients)
+        """Показать всех клиентов с пагинацией"""
+        pagination_service = ClientPaginationService(user_repo)
+        result = await pagination_service.paginate_clients("list", 1)
+
+        text = pagination_service.format_clients_text(
+            result.items,
+            result.current_page,
+            result.total_pages,
+            "list"
+        )
+        keyboard = pagination_keyboard("list", result.current_page, result.total_pages)
+
+        await callback_query.message.edit_text(text, reply_markup=keyboard)
+        await callback_query.answer()
 
     @router.callback_query(F.data == "approve_client_search")
     async def client_search_finish(callback_query: CallbackQuery, state: FSMContext):
-
+        """Завершить поиск и показать результаты с пагинацией"""
         data = await state.get_data()
 
         try:
@@ -102,15 +121,66 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
             await callback_query.answer(f"Ошибка поиска клиента: {e}", show_alert=True)
             return
 
+        # Сохраняем search_data в state для пагинации
+        await state.update_data(search_data=data)
 
+        # Показываем первую страницу результатов поиска с пагинацией
+        pagination_service = ClientPaginationService(user_repo)
+        result = await pagination_service.paginate_clients("search", 1, data)
 
-        await show_all_clients(
-            callback_query,
-            f"Клиентов найдено: {len(found)}",
-            users=found,
+        text = pagination_service.format_clients_text(
+            result.items,
+            result.current_page,
+            result.total_pages,
+            "search"
         )
+        keyboard = pagination_keyboard("search", result.current_page, result.total_pages)
 
+        await callback_query.message.edit_text(text, reply_markup=keyboard)
+        await callback_query.answer()
 
-        await state.clear()
+    @router.callback_query(F.data.startswith("page:"))
+    async def paginate_clients(callback_query: CallbackQuery, state: FSMContext):
+        """Обработчик пагинации для поиска и полного листинга"""
+        try:
+            mode, page_num = parse_pagination_callback(callback_query.data)
+
+            # Для search режима извлекаем search_data из state
+            search_data = None
+            if mode == "search":
+                data = await state.get_data()
+                search_data = data.get("search_data") or {"full_name": data.get("full_name", "")}
+
+            # Получаем пагинированные результаты
+            pagination_service = ClientPaginationService(user_repo)
+            result = await pagination_service.paginate_clients(mode, page_num, search_data)
+
+            # Форматируем текст и показываем
+            text = pagination_service.format_clients_text(
+                result.items,
+                result.current_page,
+                result.total_pages,
+                mode
+            )
+            keyboard = pagination_keyboard(mode, result.current_page, result.total_pages)
+
+            await callback_query.message.edit_text(text, reply_markup=keyboard)
+            await callback_query.answer()
+
+        except TelegramBadRequest as e:
+            # "message is not modified" — обычная ситуация, просто закрыть спиннер
+            if "message is not modified" in str(e):
+                await callback_query.answer()
+            else:
+                logger.warning(f"TelegramBadRequest in paginate_clients: {e}")
+                await callback_query.answer("Ошибка редактирования сообщения", show_alert=False)
+        except Exception as e:
+            logger.exception(f"Error in paginate_clients: {e}")
+            await callback_query.answer(f"Ошибка: {str(e)}", show_alert=True)
+
+    @router.callback_query(F.data == "noop")
+    async def noop_button(callback_query: CallbackQuery):
+        """Обработчик для неактивных кнопок (например, показатель страницы)"""
+        await callback_query.answer()
 
     return router

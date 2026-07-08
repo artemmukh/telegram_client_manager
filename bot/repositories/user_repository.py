@@ -200,3 +200,60 @@ class UserRepository:
         if row:
             return row[0]
         raise UserNotFoundError("User not found")
+
+    async def get_clients_page(
+        self, page: int, per_page: int = 15
+    ) -> list[User]:
+        """Получить страницу клиентов (все клиенты)"""
+        offset = (page - 1) * per_page
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            ORDER BY u.full_name
+            LIMIT ? OFFSET ?
+            """,
+            (per_page, offset)
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_user(row) for row in rows]
+
+    async def count_all_clients(self) -> int:
+        """Получить общее количество клиентов"""
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'client'"
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_clients_by_name_page(
+        self, full_name: str, page: int, per_page: int = 15
+    ) -> list[User]:
+        """Получить страницу результатов поиска по имени"""
+        parts = full_name.strip().title().split()
+        conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        offset = (page - 1) * per_page
+
+        sql = USER_SELECT + f"""
+        WHERE u.role = 'client'
+        AND ({conditions})
+        ORDER BY u.full_name
+        LIMIT ? OFFSET ?
+        """
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_user(row) for row in rows]
+
+    async def count_clients_by_name(self, full_name: str) -> int:
+        """Получить количество результатов поиска по имени"""
+        parts = full_name.strip().title().split()
+        conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        sql = f"SELECT COUNT(*) FROM users WHERE role = 'client' AND ({conditions})"
+        cursor = await self.connection.execute(sql, params)
+        row = await cursor.fetchone()
+        return row[0] if row else 0
