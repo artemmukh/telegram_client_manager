@@ -11,7 +11,7 @@ def create_profile_router():
 
     router.message.filter(RoleFilter("*"))
 
-    @router.message(F.text.in_({"/profile", "⚙️ Мой профиль"}), RoleFilter("*"))
+    @router.message(F.text.in_({"/profile", "⚙️ Мой профиль", "👤 Профиль"}), RoleFilter("*"))
     async def profile(message: Message, current_user: User | None = None):
 
         if current_user.role == "admin":
@@ -24,7 +24,8 @@ def create_profile_router():
             f"ФИО: {current_user.full_name}\n"
             f"ID клиента: {current_user.ID}\n"
             f"Номер телефона: {current_user.phone}\n"
-            f"Тип пользователя: {role} {current_user.clinic_name}"
+            f"Тип пользователя: {role}\n"
+            f"Клиника: {current_user.clinic_name}"
         )
 
 
