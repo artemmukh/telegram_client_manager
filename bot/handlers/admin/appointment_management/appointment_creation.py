@@ -208,7 +208,7 @@ def create_admin_appointment_creation_router(
 
         notification_text = "Запись успешно создана!\n\n" + build_appointment_card(appointment)
         if notification_service:
-            notification_sent = await notification_service.notify_client_appointment(appointment)
+            notification_sent = await notification_service.notify_client_appointment_with_buttons(appointment)
             if notification_sent:
                 notification_text += "\n✅ Уведомление отправлено клиенту"
             else:

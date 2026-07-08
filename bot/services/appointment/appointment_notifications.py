@@ -17,26 +17,6 @@ class AppointmentNotificationService:
         self.user_repo = user_repo
         self.appointment_repo = appointment_repo
 
-    async def notify_client_appointment(self, appointment: Appointment) -> bool:
-        """Send appointment notification to client.
-
-        Returns True if message sent, False if user not found or no telegram_id.
-        """
-        client = await self.user_repo.get_client_by_id(appointment.client_id)
-
-        if client is None or client.telegram_user_id is None:
-            return False
-
-        message_text = self._build_appointment_message(appointment)
-
-        await self.bot.send_message(
-            chat_id=client.telegram_user_id,
-            text=message_text,
-            reply_markup=appointment_response_kb(appointment.id)
-        )
-
-        return True
-
     async def notify_client_appointment_without_buttons(self, appointment: Appointment) -> bool:
         """Send appointment reminder to client WITHOUT confirmation buttons (for 24h reminder).
 

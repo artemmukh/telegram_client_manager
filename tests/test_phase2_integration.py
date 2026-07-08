@@ -122,7 +122,7 @@ async def test_phase2_complete_workflow():
     await appt_repo.create_appointment(appointment)
 
     # Step 2: Notify client
-    notification_sent = await notification_svc.notify_client_appointment(appointment)
+    notification_sent = await notification_svc.notify_client_appointment_with_buttons(appointment)
     assert notification_sent is True
     assert len(bot.sent_messages) == 1
     assert bot.sent_messages[0]['chat_id'] == 12345

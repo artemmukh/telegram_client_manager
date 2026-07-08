@@ -70,7 +70,7 @@ async def test_notify_client_appointment_sends_message_with_buttons():
     service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     appointment = _appointment()
 
-    result = await service.notify_client_appointment(appointment)
+    result = await service.notify_client_appointment_with_buttons(appointment)
 
     assert result is True
     assert len(bot.sent_messages) == 1
@@ -91,7 +91,7 @@ async def test_notify_client_appointment_returns_false_when_user_not_found():
     service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     appointment = _appointment()
 
-    result = await service.notify_client_appointment(appointment)
+    result = await service.notify_client_appointment_with_buttons(appointment)
 
     assert result is False
     assert len(bot.sent_messages) == 0
@@ -108,7 +108,7 @@ async def test_notify_client_appointment_returns_false_when_telegram_id_missing(
     service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     appointment = _appointment()
 
-    result = await service.notify_client_appointment(appointment)
+    result = await service.notify_client_appointment_with_buttons(appointment)
 
     assert result is False
     assert len(bot.sent_messages) == 0
