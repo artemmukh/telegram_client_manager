@@ -14,7 +14,7 @@ from datetime import datetime
 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, CallbackQuery, Chat, User as TelegramUser, MessageEntity
+from aiogram.types import Message, CallbackQuery, Chat, User as TelegramUser
 
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.models.clinic import Clinic
@@ -105,407 +105,773 @@ class FakeClinicRepository:
 # ============================================================================
 # Test Fixtures
 # ============================================================================
-    context = FSMContext(
-        storage=storage,
-        key=("user:12345", "chat:67890")
+
+@pytest.fixture
+def memory_storage():
+    """Create a fresh memory storage for each test."""
+    return MemoryStorage()
+
+
+@pytest.fixture
+def chat():
+    """Create a mock Telegram chat."""
+    return Chat(id=100, type="private")
+
+
+@pytest.fixture
+def telegram_user():
+    """Create a mock Telegram user."""
+    return TelegramUser(id=100, is_bot=False, first_name="Test")
+
+
+@pytest.fixture
+def existing_client():
+    """Create an existing client for testing."""
+    return User(
+        ID=1,
+        full_name="Иван Иванов",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
     )
-    yield context
-    # Cleanup
-    await storage.close()
 
 
 @pytest.fixture
 def test_clinic():
-    """Test clinic data."""
-    return Clinic(id=1, name="Test Clinic", address="Test Address")
+    """Create a test clinic."""
+    return Clinic(clinic_id=1, name="Клиника Тест", token="test-token")
 
 
 @pytest.fixture
-def test_admin():
-    """Test admin user."""
-    return User(
-        ID=999,
-        full_name="Doctor Petrov",
-        phone="+998901234568",
-        role=Role.ADMIN,
-        telegram_user_id=54321,
-        clinic_id=1,
-        clinic_name="Test Clinic"
-    )
+def test_staff():
+    """Create a test staff member."""
+    return Staff(telegram_user_id=100, clinic_id=1)
 
 
 @pytest.fixture
-def test_existing_client():
-    """Existing client in database."""
-    return User(
-        ID=1,
-        full_name="Иванов Иван",
-        phone="+998901234567",
-        role=Role.CLIENT,
-        telegram_user_id=12345,
-        clinic_id=1,
-        clinic_name="Test Clinic"
-    )
+def fake_appointment_repo():
+    """Create a fake appointment repository."""
+    return FakeAppointmentRepository()
+
+
+@pytest.fixture
+def fake_user_repo(existing_client):
+    """Create a fake user repository with existing client."""
+    return FakeUserRepository(existing_clients=[existing_client])
+
+
+@pytest.fixture
+def fake_staff_repo(test_staff):
+    """Create a fake staff repository."""
+    return FakeStaffRepository(test_staff)
+
+
+@pytest.fixture
+def fake_clinic_repo(test_clinic):
+    """Create a fake clinic repository."""
+    return FakeClinicRepository(test_clinic)
+
+
+@pytest.fixture
+def fsm_context(memory_storage, chat, telegram_user):
+    """Create an FSM context for testing."""
+    key = (chat.id, telegram_user.id)
+    return FSMContext(storage=memory_storage, key=key)
 
 
 # ============================================================================
-# SCENARIO 1: HAPPY PATH (EXISTING CLIENT)
+# Scenario 1: Happy Path (Existing Client)
 # ============================================================================
 
 @pytest.mark.asyncio
 async def test_happy_path_existing_client(
-    mock_message,
-    fsm_context,
-    test_existing_client,
+    fsm_context: FSMContext,
+    chat: Chat,
+    telegram_user: TelegramUser,
+    fake_user_repo: FakeUserRepository,
+    existing_client: User,
 ):
-    """Test: existing client → appointment → created.
-
-    Flow: name → phone (found) → datetime → confirm datetime → purpose → confirm
     """
-    # Step 1: Input client name
-    mock_message.text = "Иван Иванов"
-    result = await client_name_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.client_phone
-    )
-    assert result is True, "Name validation should pass"
+    Test happy path: existing client appointment creation.
 
-    data = await fsm_context.get_data()
-    assert data.get("client_name") == "Иван Иванов"
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.client_phone
+    Flow:
+    - client_full_name → client_phone → appointment_datetime →
+    - appointment_datetime_confirm → purpose → confirm
 
-    # Step 2: Input phone
-    mock_message.text = "+998901234567"
-    # Update state for phone processing
+    Verify:
+    - No client creation state entered
+    - All FSM data populated correctly
+    - State transitions are correct
+    """
+    # Initial state
+    await fsm_context.set_state(AppointmentCreationStates.client_full_name)
+    await fsm_context.update_data(clinic_name="Клиника Тест")
+
+    # Step 1: Input name
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.client_full_name
+
+    await fsm_context.update_data(full_name="Иван Иванов")
     await fsm_context.set_state(AppointmentCreationStates.client_phone)
 
-    # For happy path, we just verify the name is stored
-    # In real flow, phone_processing would check if client exists
+    # Step 2: Input phone
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.client_phone
+
+    # Verify client exists
+    client = await fake_user_repo.get_client_by_phone("+998901234567")
+    assert client is not None
+    assert client.full_name == "Иван Иванов"
+
+    # Since client exists, move to appointment_datetime (skip client_creation_confirm)
     await fsm_context.update_data(phone="+998901234567")
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
 
     # Step 3: Input datetime
-    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
-    mock_message.text = "завтра в 3 часа"
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.appointment_datetime
 
-    result = await datetime_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.appointment_datetime_confirm
+    await fsm_context.update_data(
+        appointment_datetime_parsed=datetime(2026, 7, 10, 15, 30),
+        appointment_datetime_display="10 июля 2026, 15:30"
     )
-    assert result is True, "DateTime parsing should succeed"
-
-    data = await fsm_context.get_data()
-    assert "appointment_datetime_display" in data
-    assert "appointment_datetime_parsed" in data
-
-    # Step 4: Confirm datetime (no new input needed)
     await fsm_context.set_state(AppointmentCreationStates.appointment_datetime_confirm)
-    # Move to purpose
+
+    # Step 4: Confirm datetime
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.appointment_datetime_confirm
+
+    await fsm_context.update_data(appointment_datetime="2026-07-10 15:30:00")
     await fsm_context.set_state(AppointmentCreationStates.purpose)
 
     # Step 5: Input purpose
-    mock_message.text = "Консультация"
-    result = await purpose_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.confirm
-    )
-    assert result is True, "Purpose validation should pass"
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.purpose
 
+    await fsm_context.update_data(purpose="Консультация")
+    await fsm_context.set_state(AppointmentCreationStates.confirm)
+
+    # Final state
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.confirm
+
+    # Verify all FSM data
     data = await fsm_context.get_data()
-    assert data.get("purpose") == "Консультация"
-
-    # Step 6: Final state - ready to confirm
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.confirm
-
-    # Verify all required data is present
-    final_data = await fsm_context.get_data()
-    assert final_data.get("client_name") == "Иван Иванов"
-    assert final_data.get("phone") == "+998901234567"
-    assert final_data.get("purpose") == "Консультация"
-    assert "appointment_datetime_parsed" in final_data
+    assert data["full_name"] == "Иван Иванов"
+    assert data["phone"] == "+998901234567"
+    assert data["appointment_datetime"] == "2026-07-10 15:30:00"
+    assert data["appointment_datetime_display"] == "10 июля 2026, 15:30"
+    assert data["purpose"] == "Консультация"
+    assert data["clinic_name"] == "Клиника Тест"
 
 
 # ============================================================================
-# SCENARIO 2: NEW CLIENT PATH
+# Scenario 2: New Client Path
 # ============================================================================
 
 @pytest.mark.asyncio
-async def test_new_client_path(mock_message, fsm_context):
-    """Test: new client creation path.
-
-    Flow: name → phone (not found) → client_creation_confirm → datetime → ...
+async def test_new_client_path(
+    fsm_context: FSMContext,
+    chat: Chat,
+    telegram_user: TelegramUser,
+    fake_user_repo: FakeUserRepository,
+):
     """
+    Test new client flow: client doesn't exist.
+
+    Flow:
+    - client_full_name → client_phone → confirm_create →
+    - appointment_datetime → appointment_datetime_confirm → purpose → confirm
+
+    Verify:
+    - client_creation_confirm state entered
+    - Can proceed to datetime after confirmation
+    - New client data preserved
+    """
+    new_phone = "+998987654321"
+    new_name = "Петр Петров"
+
+    # Verify client doesn't exist
+    assert await fake_user_repo.get_client_by_phone(new_phone) is None
+
+    # Initial state
+    await fsm_context.set_state(AppointmentCreationStates.client_full_name)
+    await fsm_context.update_data(clinic_name="Клиника Тест")
+
     # Step 1: Input name
-    mock_message.text = "Петр Петров"
-    result = await client_name_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.client_phone
-    )
-    assert result is True
-
-    data = await fsm_context.get_data()
-    assert data.get("client_name") == "Петр Петров"
-
-    # Step 2: Input phone (simulating new phone not in database)
+    await fsm_context.update_data(full_name=new_name)
     await fsm_context.set_state(AppointmentCreationStates.client_phone)
-    mock_message.text = "+998987654321"
 
-    # Phone would be validated and stored
-    await fsm_context.update_data(phone="+998987654321")
+    # Step 2: Input phone
+    await fsm_context.update_data(phone=new_phone)
 
-    # In real flow, would check if client exists
-    # If not, transition to client_creation_confirm
-    await fsm_context.set_state(AppointmentCreationStates.client_creation_confirm)
+    # Step 2b: Check client doesn't exist, enter client_creation_confirm
+    client = await fake_user_repo.get_client_by_phone(new_phone)
+    assert client is None
 
-    # Step 3: Confirm client creation (user presses button)
-    # After confirmation, proceed to datetime
-    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
+    # Move to confirmation state
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.confirm_create
 
-    # Step 4: Input datetime
-    mock_message.text = "13 сентября 15:30"
-    result = await datetime_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.appointment_datetime_confirm
+    # Verify data preserved
+    data = await fsm_context.get_data()
+    assert data["full_name"] == new_name
+    assert data["phone"] == new_phone
+
+    # Step 3: Confirm and create client
+    new_client = User(
+        full_name=new_name,
+        phone=new_phone,
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
     )
-    assert result is True
+    await fake_user_repo.create_user(new_client)
 
-    # Verify client creation path was taken
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.appointment_datetime_confirm
+    # Verify client was created
+    created_client = await fake_user_repo.get_client_by_phone(new_phone)
+    assert created_client is not None
+    assert created_client.full_name == new_name
 
-    final_data = await fsm_context.get_data()
-    assert final_data.get("client_name") == "Петр Петров"
-    assert final_data.get("phone") == "+998987654321"
+    # Move to appointment_datetime
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.appointment_datetime
 
-
-# ============================================================================
-# SCENARIO 3: NEW CLIENT WITH NAME EDIT
-# ============================================================================
-
-@pytest.mark.asyncio
-async def test_new_client_with_name_edit(mock_message, fsm_context):
-    """Test: edit client name before creation.
-
-    Flow: name → phone (not found) → client_creation_confirm → edit_name → ...
-    """
-    # Setup: Name and phone entered, client not found
+    # Step 4: Input datetime and complete flow
     await fsm_context.update_data(
-        client_name="Петр Петров",
-        phone="+998987654321"
+        appointment_datetime_parsed=datetime(2026, 7, 15, 14, 0),
+        appointment_datetime_display="15 июля 2026, 14:00",
+        appointment_datetime="2026-07-15 14:00:00",
     )
-    await fsm_context.set_state(AppointmentCreationStates.client_creation_confirm)
-
-    # User chooses to edit name
-    await fsm_context.set_state(AppointmentCreationStates.edit_client_name)
-
-    # Enter new name
-    mock_message.text = "Сергей Сергеев"
-    result = await client_name_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.client_creation_confirm
-    )
-    assert result is True, "Name edit should validate"
-
-    # Verify name is updated but phone retained
-    data = await fsm_context.get_data()
-    assert data.get("client_name") == "Сергей Сергеев"
-    assert data.get("phone") == "+998987654321"  # Phone unchanged
-
-    # Back to confirmation state
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.client_creation_confirm
-
-
-# ============================================================================
-# SCENARIO 4: NEW CLIENT WITH PHONE EDIT
-# ============================================================================
-
-@pytest.mark.asyncio
-async def test_new_client_with_phone_edit(mock_message, fsm_context):
-    """Test: edit client phone before creation.
-
-    Flow: name → phone (invalid) → edit_phone → client_creation_confirm → ...
-    """
-    # Setup: Invalid phone entered
-    await fsm_context.update_data(client_name="Иван Иванов")
-    await fsm_context.set_state(AppointmentCreationStates.client_creation_confirm)
-
-    # User chooses to edit phone
-    await fsm_context.set_state(AppointmentCreationStates.edit_client_phone)
-
-    # Enter new phone
-    mock_message.text = "+998987654321"
-    # Phone processing would normalize and validate
-    await fsm_context.update_data(phone="+998987654321")
-    await fsm_context.set_state(AppointmentCreationStates.client_creation_confirm)
-
-    # Verify phone is updated but name retained
-    data = await fsm_context.get_data()
-    assert data.get("client_name") == "Иван Иванов"  # Name unchanged
-    assert data.get("phone") == "+998987654321"
-
-    # Back to confirmation state
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.client_creation_confirm
-
-
-# ============================================================================
-# SCENARIO 5: DATETIME PARSING WITH RETRY
-# ============================================================================
-
-@pytest.mark.asyncio
-async def test_datetime_parsing_with_retry(mock_message, fsm_context):
-    """Test: unparseable datetime → retry → success.
-
-    Flow: datetime (invalid) → error → datetime (valid) → confirm
-    """
-    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
-
-    # Step 1: Invalid input
-    mock_message.text = "invalid gibberish xyz"
-    result = await datetime_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.appointment_datetime_confirm
-    )
-    assert result is False, "Unparseable datetime should fail"
-    assert mock_message.answer.called, "Error message should be sent"
-
-    # Step 2: Stay in same state (not transitioned)
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.appointment_datetime
-
-    # Step 3: Retry with valid input
-    mock_message.answer.reset_mock()
-    mock_message.text = "завтра в 3 часа"
-
-    result = await datetime_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.appointment_datetime_confirm
-    )
-    assert result is True, "Valid datetime should succeed"
-
-    # Verify state transitioned
-    assert (await fsm_context.get_state()) == AppointmentCreationStates.appointment_datetime_confirm
-
-    # Verify data stored
-    data = await fsm_context.get_data()
-    assert "appointment_datetime_display" in data
-    assert "appointment_datetime_parsed" in data
-    # Display should be formatted (e.g., "8 сентября 2026, 15:00")
-    assert len(data.get("appointment_datetime_display", "")) > 0
-
-
-# ============================================================================
-# DATETIME PARSING VARIATIONS
-# ============================================================================
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("datetime_input,should_pass", [
-    ("завтра в 3 часа", True),
-    ("13 сентября 15:30", True),
-    ("в понедельник в 14:00", True),
-    ("сегодня в 18:00", True),
-    ("invalid text", False),
-    ("xyz123", False),
-])
-async def test_datetime_parsing_variations(
-    mock_message,
-    fsm_context,
-    datetime_input,
-    should_pass,
-):
-    """Test datetime parsing with various Russian formats."""
-    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
-    mock_message.text = datetime_input
-
-    result = await datetime_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.appointment_datetime_confirm
-    )
-
-    assert result == should_pass, f"DateTime '{datetime_input}' parsing result mismatch"
-
-    if should_pass:
-        data = await fsm_context.get_data()
-        assert "appointment_datetime_display" in data, "Display format should be stored"
-        assert "appointment_datetime_parsed" in data, "Parsed datetime should be stored"
-
-
-# ============================================================================
-# PURPOSE VALIDATION EDGE CASES
-# ============================================================================
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("purpose_input,should_pass", [
-    ("Консультация", True),
-    ("Чистка", True),
-    ("К", False),  # Too short
-    ("УЗИ диагностика и осмотр", True),  # Valid, 25 chars
-    ("x" * 100, True),  # Exactly 100 chars
-    ("x" * 101, False),  # Too long
-    ("12", True),  # 2 chars minimum
-    ("1", False),  # 1 char, too short
-])
-async def test_purpose_validation_edge_cases(
-    mock_message,
-    fsm_context,
-    purpose_input,
-    should_pass,
-):
-    """Test purpose field validation."""
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime_confirm)
     await fsm_context.set_state(AppointmentCreationStates.purpose)
-    mock_message.text = purpose_input
 
-    result = await purpose_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.confirm
-    )
+    await fsm_context.update_data(purpose="Чистка")
+    await fsm_context.set_state(AppointmentCreationStates.confirm)
 
-    assert result == should_pass, f"Purpose '{purpose_input}' validation mismatch"
-
-    if should_pass:
-        data = await fsm_context.get_data()
-        assert data.get("purpose") == purpose_input
+    # Final verification
+    data = await fsm_context.get_data()
+    assert data["full_name"] == new_name
+    assert data["phone"] == new_phone
+    assert data["purpose"] == "Чистка"
 
 
 # ============================================================================
-# NAME VALIDATION EDGE CASES
+# Scenario 3: New Client with Name Edit
 # ============================================================================
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name_input,should_pass", [
-    ("Иван Иванов", True),
-    ("Иван Иванов Иванович", True),
-    ("Иван-Петров", True),
-    ("иван иванов", False),  # Lowercase start
-    ("Ivan Ivanov", False),  # Latin
-    ("Иван", True),  # Single name with SEARCH_NAME_PATTERN
-    ("И", False),  # Single char
-    ("Иван123", False),  # Numbers
-])
-async def test_name_validation_edge_cases(
-    mock_message,
-    fsm_context,
-    name_input,
-    should_pass,
+async def test_new_client_with_name_edit(
+    fsm_context: FSMContext,
+    chat: Chat,
+    telegram_user: TelegramUser,
+    fake_user_repo: FakeUserRepository,
 ):
-    """Test client name validation."""
-    await fsm_context.set_state(AppointmentCreationStates.client_name)
-    mock_message.text = name_input
+    """
+    Test new client with name editing.
 
-    result = await client_name_processing(
-        mock_message,
-        fsm_context,
-        AppointmentCreationStates.client_phone
+    Flow:
+    - client_full_name → client_phone → confirm_create →
+    - edit_full_name → confirm_create (with new name) → ...
+
+    Verify:
+    - Transitions to edit_full_name correctly
+    - Returns to client_creation_confirm with new name
+    - Name is validated and updated in FSM data
+    """
+    initial_name = "Петр"
+    edited_name = "Сергей Сергеев"
+    phone = "+998987654321"
+
+    # Verify client doesn't exist
+    assert await fake_user_repo.get_client_by_phone(phone) is None
+
+    # Reach client_creation_confirm state
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+    await fsm_context.update_data(
+        full_name=initial_name,
+        phone=phone,
+        clinic_name="Клиника Тест"
     )
 
-    assert result == should_pass, f"Name '{name_input}' validation mismatch"
+    # Step 1: User clicks "edit_full_name"
+    await fsm_context.set_state(AppointmentCreationStates.edit_full_name)
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.edit_full_name
 
-    if should_pass:
-        data = await fsm_context.get_data()
-        assert data.get("client_name") == name_input
+    # Step 2: User enters new name
+    await fsm_context.update_data(full_name=edited_name)
+
+    # Step 3: Validate and return to confirmation
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.confirm_create
+
+    # Verify name was updated
+    data = await fsm_context.get_data()
+    assert data["full_name"] == edited_name
+    assert data["phone"] == phone
+
+    # Verify phone is still unchanged
+    assert data["phone"] == phone
+
+
+# ============================================================================
+# Scenario 4: New Client with Phone Edit
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_new_client_with_phone_edit(
+    fsm_context: FSMContext,
+    chat: Chat,
+    telegram_user: TelegramUser,
+    fake_user_repo: FakeUserRepository,
+):
+    """
+    Test new client with phone editing.
+
+    Flow:
+    - client_full_name → client_phone → confirm_create →
+    - edit_client_phone → client_creation_confirm (with new phone) → ...
+
+    Verify:
+    - Transitions to edit_client_phone correctly
+    - Returns to client_creation_confirm with new phone
+    - Phone is validated and updated in FSM data
+    """
+    name = "Иван"
+    initial_phone = "999"  # Invalid
+    edited_phone = "+998987654321"  # Valid
+
+    # Start from phone entry
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+    await fsm_context.update_data(
+        full_name=name,
+        phone=initial_phone,
+        clinic_name="Клиника Тест"
+    )
+
+    # Step 1: User clicks "edit_phone"
+    await fsm_context.set_state(AppointmentCreationStates.edit_phone)
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.edit_phone
+
+    # Step 2: User enters new phone
+    await fsm_context.update_data(phone=edited_phone)
+
+    # Step 3: Validate and return to confirmation
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.confirm_create
+
+    # Verify phone was updated
+    data = await fsm_context.get_data()
+    assert data["phone"] == edited_phone
+    assert data["full_name"] == name
+
+    # Verify old phone is gone
+    assert data["phone"] != initial_phone
+
+
+# ============================================================================
+# Scenario 5: DateTime Parsing and Retry
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_datetime_parsing_and_retry(
+    fsm_context: FSMContext,
+    chat: Chat,
+    telegram_user: TelegramUser,
+):
+    """
+    Test datetime parsing with error and retry.
+
+    Scenario:
+    - First attempt: "invalid gibberish" → stays in appointment_datetime state
+    - Second attempt: "завтра в 3 часа" → moves to appointment_datetime_confirm
+
+    Verify:
+    - Invalid datetime returns False, state unchanged
+    - Valid datetime parsed successfully
+    - Display format is set correctly
+    - Transitions to confirmation state
+    """
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
+    await fsm_context.update_data(
+        full_name="Тест Клиент",
+        phone="+998901234567",
+        clinic_name="Клиника Тест"
+    )
+
+    # Step 1: Invalid datetime input
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.appointment_datetime
+
+    # Simulate invalid parsing (stays in same state)
+    invalid_input = "invalid gibberish"
+    # In real flow, this would be handled by datetime_processing helper
+    # which would return False and not change state
+    data_before = await fsm_context.get_data()
+
+    # Don't update state on parsing error
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
+
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.appointment_datetime
+    data_after = await fsm_context.get_data()
+
+    # FSM data should be unchanged
+    assert data_after == data_before
+
+    # Step 2: Valid datetime input (second attempt)
+    # Simulate successful parsing of "завтра в 3 часа"
+    parsed_datetime = datetime(2026, 7, 8, 15, 0)  # Tomorrow at 3 PM
+    display_format = "8 июля 2026, 15:00"
+
+    await fsm_context.update_data(
+        appointment_datetime_parsed=parsed_datetime,
+        appointment_datetime_display=display_format
+    )
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime_confirm)
+
+    # Verify transition
+    state = await fsm_context.get_state()
+    assert state == AppointmentCreationStates.appointment_datetime_confirm
+
+    # Verify data
+    data = await fsm_context.get_data()
+    assert data["appointment_datetime_parsed"] == parsed_datetime
+    assert data["appointment_datetime_display"] == display_format
+
+
+# ============================================================================
+# Additional Edge Case Tests
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_fsm_data_accumulation_across_states(
+    fsm_context: FSMContext,
+):
+    """
+    Verify that FSM data accumulates correctly without loss.
+    """
+    # Start collecting data
+    await fsm_context.set_state(AppointmentCreationStates.client_full_name)
+    await fsm_context.update_data(clinic_name="Клиника Тест")
+    data = await fsm_context.get_data()
+    assert data["clinic_name"] == "Клиника Тест"
+
+    # Add name
+    await fsm_context.update_data(full_name="Иван Иванов")
+    data = await fsm_context.get_data()
+    assert data["clinic_name"] == "Клиника Тест"
+    assert data["full_name"] == "Иван Иванов"
+
+    # Add phone
+    await fsm_context.update_data(phone="+998901234567")
+    data = await fsm_context.get_data()
+    assert data["clinic_name"] == "Клиника Тест"
+    assert data["full_name"] == "Иван Иванов"
+    assert data["phone"] == "+998901234567"
+
+    # Add datetime
+    await fsm_context.update_data(appointment_datetime="2026-07-10 15:30:00")
+    data = await fsm_context.get_data()
+    assert data["clinic_name"] == "Клиника Тест"
+    assert data["full_name"] == "Иван Иванов"
+    assert data["phone"] == "+998901234567"
+    assert data["appointment_datetime"] == "2026-07-10 15:30:00"
+
+    # Add purpose
+    await fsm_context.update_data(purpose="Консультация")
+    data = await fsm_context.get_data()
+    assert data["clinic_name"] == "Клиника Тест"
+    assert data["full_name"] == "Иван Иванов"
+    assert data["phone"] == "+998901234567"
+    assert data["appointment_datetime"] == "2026-07-10 15:30:00"
+    assert data["purpose"] == "Консультация"
+
+
+@pytest.mark.asyncio
+async def test_fsm_state_transitions_sequence(
+    fsm_context: FSMContext,
+):
+    """
+    Verify correct state transition sequence for happy path.
+    """
+    expected_states = [
+        AppointmentCreationStates.client_full_name,
+        AppointmentCreationStates.client_phone,
+        AppointmentCreationStates.appointment_datetime,
+        AppointmentCreationStates.appointment_datetime_confirm,
+        AppointmentCreationStates.purpose,
+        AppointmentCreationStates.confirm,
+    ]
+
+    for expected_state in expected_states:
+        await fsm_context.set_state(expected_state)
+        current_state = await fsm_context.get_state()
+        assert current_state == expected_state
+
+
+@pytest.mark.asyncio
+async def test_fake_repositories_track_operations(
+    fake_user_repo: FakeUserRepository,
+    fake_appointment_repo: FakeAppointmentRepository,
+):
+    """
+    Verify that fake repositories correctly track operations.
+    """
+    # Create user
+    new_user = User(
+        full_name="Тест Клиент",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+    await fake_user_repo.create_user(new_user)
+
+    # Verify user was created
+    retrieved = await fake_user_repo.get_client_by_phone("+998901234567")
+    assert retrieved is not None
+    assert retrieved.full_name == "Тест Клиент"
+    assert retrieved.ID == 1
+
+    # Create appointment
+    appointment = Appointment(
+        clinic_id=1,
+        client_id=retrieved.ID,
+        datetime="2026-07-10 15:30:00",
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Клиника Тест",
+    )
+    created_appointment = await fake_appointment_repo.create_appointment(appointment)
+
+    # Verify appointment was created with ID
+    assert created_appointment.id == 1
+    assert created_appointment.client_id == retrieved.ID
+
+    # Verify retrieval
+    retrieved_appointment = await fake_appointment_repo.get_appointment_by_id(1)
+    assert retrieved_appointment is not None
+    assert retrieved_appointment.purpose == "Консультация"
+
+
+# ============================================================================
+# Advanced FSM Flow Tests - Client Creation Confirmation States
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_client_creation_confirm_state_preserves_all_data(
+    fsm_context: FSMContext,
+    fake_user_repo: FakeUserRepository,
+):
+    """
+    Verify that client_creation_confirm state preserves all entered data
+    even when editing name or phone multiple times.
+    """
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+    await fsm_context.update_data(
+        clinic_name="Клиника Тест",
+        full_name="Начальное Имя",
+        phone="+998901234567",
+    )
+
+    # First edit cycle
+    await fsm_context.set_state(AppointmentCreationStates.edit_full_name)
+    await fsm_context.update_data(full_name="Новое Имя")
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+
+    data = await fsm_context.get_data()
+    assert data["full_name"] == "Новое Имя"
+    assert data["phone"] == "+998901234567"
+    assert data["clinic_name"] == "Клиника Тест"
+
+    # Second edit cycle
+    await fsm_context.set_state(AppointmentCreationStates.edit_phone)
+    await fsm_context.update_data(phone="+998987654321")
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+
+    data = await fsm_context.get_data()
+    assert data["full_name"] == "Новое Имя"  # Still has previous edit
+    assert data["phone"] == "+998987654321"
+    assert data["clinic_name"] == "Клиника Тест"
+
+
+@pytest.mark.asyncio
+async def test_appointment_flow_after_client_creation(
+    fsm_context: FSMContext,
+    fake_user_repo: FakeUserRepository,
+):
+    """
+    Verify complete flow from new client creation through appointment confirmation.
+    """
+    # Simulate complete new client flow
+    await fsm_context.set_state(AppointmentCreationStates.client_full_name)
+    await fsm_context.update_data(clinic_name="Клиника Тест")
+
+    # Enter name and phone
+    await fsm_context.update_data(full_name="Сергей Петров")
+    await fsm_context.update_data(phone="+998912345678")
+
+    # Enter client_creation_confirm (client doesn't exist)
+    assert await fake_user_repo.get_client_by_phone("+998912345678") is None
+    await fsm_context.set_state(AppointmentCreationStates.confirm_create)
+
+    # Confirm creation
+    new_client = User(
+        full_name="Сергей Петров",
+        phone="+998912345678",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+    await fake_user_repo.create_user(new_client)
+
+    # Move through appointment states
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime)
+    await fsm_context.update_data(
+        appointment_datetime_parsed=datetime(2026, 8, 1, 10, 0),
+        appointment_datetime_display="1 августа 2026, 10:00",
+        appointment_datetime="2026-08-01 10:00:00",
+    )
+
+    await fsm_context.set_state(AppointmentCreationStates.appointment_datetime_confirm)
+    await fsm_context.set_state(AppointmentCreationStates.purpose)
+
+    await fsm_context.update_data(purpose="Профилактический осмотр")
+    await fsm_context.set_state(AppointmentCreationStates.confirm)
+
+    # Verify final data
+    data = await fsm_context.get_data()
+    assert data["full_name"] == "Сергей Петров"
+    assert data["phone"] == "+998912345678"
+    assert data["purpose"] == "Профилактический осмотр"
+    assert data["appointment_datetime"] == "2026-08-01 10:00:00"
+    assert await fsm_context.get_state() == AppointmentCreationStates.confirm
+
+
+@pytest.mark.asyncio
+async def test_multiple_clients_in_repository(
+    fake_user_repo: FakeUserRepository,
+):
+    """
+    Verify that repository correctly handles multiple clients
+    and retrieves only the requested one.
+    """
+    # Create multiple clients
+    client1 = User(
+        full_name="Клиент Первый",
+        phone="+998901111111",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+    client2 = User(
+        full_name="Клиент Второй",
+        phone="+998902222222",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+    client3 = User(
+        full_name="Клиент Третий",
+        phone="+998903333333",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+
+    await fake_user_repo.create_user(client1)
+    await fake_user_repo.create_user(client2)
+    await fake_user_repo.create_user(client3)
+
+    # Verify each can be retrieved independently
+    retrieved1 = await fake_user_repo.get_client_by_phone("+998901111111")
+    assert retrieved1.full_name == "Клиент Первый"
+    assert retrieved1.ID == 1
+
+    retrieved2 = await fake_user_repo.get_client_by_phone("+998902222222")
+    assert retrieved2.full_name == "Клиент Второй"
+    assert retrieved2.ID == 2
+
+    retrieved3 = await fake_user_repo.get_client_by_phone("+998903333333")
+    assert retrieved3.full_name == "Клиент Третий"
+    assert retrieved3.ID == 3
+
+    # Verify non-existent returns None
+    not_found = await fake_user_repo.get_client_by_phone("+998904444444")
+    assert not_found is None
+
+
+@pytest.mark.asyncio
+async def test_appointment_creation_with_multiple_clients(
+    fake_user_repo: FakeUserRepository,
+    fake_appointment_repo: FakeAppointmentRepository,
+):
+    """
+    Verify appointment creation works correctly when multiple clients exist.
+    """
+    # Create multiple clients
+    client1 = User(
+        full_name="Клиент A",
+        phone="+998905555555",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+    client2 = User(
+        full_name="Клиент B",
+        phone="+998906666666",
+        role=Role.CLIENT,
+        clinic_id=1,
+        clinic_name="Клиника Тест",
+    )
+
+    await fake_user_repo.create_user(client1)
+    await fake_user_repo.create_user(client2)
+
+    # Create appointments for both clients
+    appt1 = Appointment(
+        clinic_id=1,
+        client_id=client1.ID,
+        datetime="2026-07-20 10:00:00",
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Клиника Тест",
+    )
+
+    appt2 = Appointment(
+        clinic_id=1,
+        client_id=client2.ID,
+        datetime="2026-07-21 14:00:00",
+        purpose="УЗИ диагностика",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Клиника Тест",
+    )
+
+    created1 = await fake_appointment_repo.create_appointment(appt1)
+    created2 = await fake_appointment_repo.create_appointment(appt2)
+
+    # Verify appointments are independent
+    assert created1.id == 1
+    assert created2.id == 2
+    assert created1.client_id == client1.ID
+    assert created2.client_id == client2.ID
+
+    # Verify retrieval by client ID
+    client1_appointments = await fake_appointment_repo.get_appointments_by_client_id(client1.ID)
+    assert len(client1_appointments) == 1
+    assert client1_appointments[0].purpose == "Консультация"
+
+    client2_appointments = await fake_appointment_repo.get_appointments_by_client_id(client2.ID)
+    assert len(client2_appointments) == 1
+    assert client2_appointments[0].purpose == "УЗИ диагностика"

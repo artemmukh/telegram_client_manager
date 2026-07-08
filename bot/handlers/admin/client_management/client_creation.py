@@ -8,9 +8,7 @@ from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameErr
 from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name,
-    edit_phone,
-    process_edit_full_name,
-    process_edit_phone, ask_full_name, full_name_processing, phone_processing
+    edit_phone, ask_full_name, full_name_processing, phone_processing
 )
 from bot.utils.role import RoleFilter
 from bot.validators.validators import FULL_NAME_PATTERN
@@ -68,9 +66,9 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientCreationStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
-        if not await process_edit_full_name(
+        if not await full_name_processing(
             message, state,
-            final_state=ClientCreationStates.confirm_create, re_pattern=FULL_NAME_PATTERN
+            next_state=ClientCreationStates.confirm_create, re_pattern=FULL_NAME_PATTERN
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb())
@@ -84,7 +82,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientCreationStates.edit_phone, F.text)
     async def process_phone_edition(message: Message, state: FSMContext):
-        if not await process_edit_phone(message,
+        if not await phone_processing(message,
                 state,
                 validator=lambda phone: validate_phone_available(user_repo, phone),final_state=ClientCreationStates.confirm_create
         ):

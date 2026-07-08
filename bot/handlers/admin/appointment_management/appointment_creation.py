@@ -26,17 +26,18 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
 )
 from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.role import RoleFilter
-from bot.validators.validators import validate_full_name, SEARCH_NAME_PATTERN
+from bot.validators.validators import SEARCH_NAME_PATTERN, FULL_NAME_PATTERN
 
 
 def create_admin_appointment_creation_router(
-    appointment_repo, user_repo, staff_repo, clinic_repo, notification_service=None, scheduler=None
+    appointment_repo, user_repo, staff_repo, clinic_repo, client_management=None, notification_service=None, scheduler=None
 ):
     router = Router()
 
-    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo, client_management)
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
@@ -52,7 +53,7 @@ def create_admin_appointment_creation_router(
         await state.update_data(clinic_name=clinic.name)
         await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name)
 
-    @router.callback_query(F.data == "restart_appointment_create")
+    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "restart_appointment_create")
     async def restart_create(callback_query: CallbackQuery, state: FSMContext):
         await state.set_state(AppointmentCreationStates.client_full_name)
         await callback_query.answer('')
@@ -60,7 +61,7 @@ def create_admin_appointment_creation_router(
 
     @router.message(AppointmentCreationStates.client_full_name, F.text)
     async def get_name(message: Message, state: FSMContext):
-        if not await full_name_processing(message, state, AppointmentCreationStates.client_phone, re_pattern=SEARCH_NAME_PATTERN):
+        if not await full_name_processing(message, state, AppointmentCreationStates.client_phone, re_pattern=FULL_NAME_PATTERN):
             return
         await message.answer("Введите номер телефона клиента:", reply_markup=cancel_kb())
 
@@ -74,13 +75,14 @@ def create_admin_appointment_creation_router(
         data = await state.get_data()
         phone = data.get('phone')
 
-        client = await user_repo.get_client_by_phone(phone)
+        client = await appt_mng.find_client_by_phone(phone)
 
         if client:
             await state.set_state(AppointmentCreationStates.appointment_datetime)
             await message.answer(
                 "Введите дату и время на русском языке:\n"
-                "Например: завтра в 3 часа, 13 сентября 15:30, в понедельник в 14:00, сегодня в 18:00",
+                     "Например: завтра в 3 часа, среда в 14:00, "
+                     "через 2 часа, 13 сентября 15:30",
                 reply_markup=cancel_kb(),
             )
         else:
@@ -158,8 +160,6 @@ def create_admin_appointment_creation_router(
 
     @router.callback_query(AppointmentCreationStates.appointment_datetime_confirm, F.data == "approve_datetime")
     async def confirm_datetime(callback_query: CallbackQuery, state: FSMContext):
-        from bot.services.date_parser import format_datetime_for_db
-
         data = await state.get_data()
         parsed_dt = data.get('appointment_datetime_parsed')
 

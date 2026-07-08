@@ -3,8 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
-    edit_full_name,
-    process_edit_full_name, full_name_processing
+    edit_full_name, full_name_processing
 
 )
 from bot.keyboards.utils.utils_kb import contact_keyboard, reg_confirm_kb
@@ -87,9 +86,9 @@ def create_reg_router(user_repo, clinic_repo, staff_repo) -> Router:
     @router.message(
         RegisterStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
-        if not await process_edit_full_name(
+        if not await full_name_processing(
 
-                message, state, final_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
+                message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
             return
         await show_confirmation(message, state, reg_confirm_kb())
 

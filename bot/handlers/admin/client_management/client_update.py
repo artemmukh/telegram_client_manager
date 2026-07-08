@@ -8,8 +8,8 @@ from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameErr
     PhoneAlreadyExistsError, ValidationError, SamePhoneError
 from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_clients_one_be_one, \
     build_client_text
-from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
-    full_name_processing, process_edit_full_name, edit_phone, process_edit_phone, ask_phone
+from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, edit_phone, \
+    ask_phone, full_name_processing
 from bot.keyboards.admin.client_management_kb.client_update_kb import (
     client_update_kb,
     client_search_to_update_name_kb,
@@ -86,9 +86,9 @@ def create_admin_client_update_router(user_repo, staff_repo, clinic_repo,):
 
     @router.message(ClientUpdateStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
-        if not await process_edit_full_name(
+        if not await full_name_processing(
             message, state,
-            final_state=ClientUpdateStates.confirm_search,
+            next_state=ClientUpdateStates.confirm_search,
             re_pattern=SEARCH_NAME_PATTERN,
         ):
             return
@@ -103,7 +103,7 @@ def create_admin_client_update_router(user_repo, staff_repo, clinic_repo,):
 
     @router.message(ClientUpdateStates.edit_phone, F.text)
     async def process_phone_edition(message: Message, state: FSMContext):
-        if not await process_edit_phone(
+        if not await phone_processing(
             message,
             state,
             final_state=ClientUpdateStates.confirm_search,

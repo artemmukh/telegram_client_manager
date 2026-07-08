@@ -6,8 +6,7 @@ from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError
 from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_all_clients
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
-    full_name_processing, \
-    process_edit_full_name, edit_phone, process_edit_phone, ask_phone
+    full_name_processing, edit_phone, ask_phone
 from bot.keyboards.admin.client_management_kb.client_search_kb import client_search_kb, \
     client_search_phone_kb, client_search_name_kb
 from bot.utils.role import RoleFilter
@@ -59,9 +58,9 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientSearchStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
-        if not await process_edit_full_name(
+        if not await full_name_processing(
                 message, state,
-                final_state=ClientSearchStates.confirm_search, re_pattern=SEARCH_NAME_PATTERN
+                next_state=ClientSearchStates.confirm_search, re_pattern=SEARCH_NAME_PATTERN
         ):
             return
         await show_confirmation(message, state, reply_markup=client_search_name_kb())
@@ -75,7 +74,7 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientSearchStates.edit_phone, F.text)
     async def process_phone_edition(message: Message, state: FSMContext):
-        if not await process_edit_phone(
+        if not await phone_processing(
             message,
             state,
             final_state=ClientSearchStates.confirm_search,

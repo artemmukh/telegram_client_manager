@@ -6,8 +6,7 @@ from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError, RoleError
 from bot.handlers.utils.admin_utils.confirmations import show_success, show_confirmation, show_clients_one_be_one
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
-    full_name_processing, \
-    process_edit_full_name, edit_phone, process_edit_phone, ask_phone
+    full_name_processing, edit_phone, ask_phone
 from bot.keyboards.admin.client_management_kb.client_deletion_kb import client_deletion_kb, \
     client_deletion_proceeding_kb, client_search_to_delete_phone_kb, \
     client_search_to_delete_name_kb, choose_to_delete_user_kb
@@ -63,9 +62,9 @@ def create_admin_client_deletion_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientDeletionStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
-        if not await process_edit_full_name(
+        if not await full_name_processing(
                 message, state,
-                final_state=ClientDeletionStates.confirm_deletion, re_pattern=SEARCH_NAME_PATTERN
+                next_state=ClientDeletionStates.confirm_deletion, re_pattern=SEARCH_NAME_PATTERN
         ):
             return
         await show_confirmation(message, state, reply_markup=client_search_to_delete_name_kb())
@@ -79,7 +78,7 @@ def create_admin_client_deletion_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientDeletionStates.edit_phone, F.text)
     async def process_phone_edition(message: Message, state: FSMContext):
-        if not await process_edit_phone(
+        if not await phone_processing(
                 message,
                 state,
                 final_state=ClientDeletionStates.confirm_deletion,

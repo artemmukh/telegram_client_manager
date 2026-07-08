@@ -29,6 +29,7 @@ from bot.repositories.staff_repository import StaffRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
+from bot.services.client.client_management import ClientManagement
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ async def main():
     dp.callback_query.middleware(UserContextMiddleware(user_repo))
 
     # Create services
+    client_management_service = ClientManagement(user_repo, staff_repo, clinic_repo)
     appointment_management_service = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
     notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
@@ -103,7 +105,7 @@ async def main():
     #record handlers
     dp.include_router(create_admin_record_router(appointment_repo))
     dp.include_router(create_admin_appointment_creation_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+        appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service, appointment_scheduler
     ))
     dp.include_router(create_admin_appointment_search_router(appointment_repo, user_repo, staff_repo, clinic_repo))
     dp.include_router(create_admin_appointment_deletion_router(

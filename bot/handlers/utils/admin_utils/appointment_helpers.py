@@ -2,14 +2,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import Message
 
-from bot.exceptions.user_exceptions import ValidationError, InvalidFullNameError
+from bot.exceptions.user_exceptions import ValidationError
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.models.appointment import Appointment
+from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_display
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.validators.validators import (
-    validate_full_name,
     validate_purpose,
-    SEARCH_NAME_PATTERN,
 )
 
 STATUS_LABELS = {
@@ -27,7 +26,7 @@ def build_appointment_confirmation(data: dict) -> str:
         "Проверьте данные записи:",
         "",
         f"Клиника: {data.get('clinic_name', '')}",
-        f"Имя клиента: {data.get('client_name', '')}",
+        f"Имя клиента: {data.get('full_name', '')}",
         f"Телефон: {data.get('phone', '')}",
         f"Дата и время: {display_datetime}",
         f"Услуга: {data.get('purpose', '')}",
@@ -74,21 +73,7 @@ async def show_appointments_with_actions(
         )
 
 
-async def client_name_processing(message: Message, state: FSMContext, next_state: State) -> bool:
-    try:
-        name = validate_full_name(message.text, SEARCH_NAME_PATTERN)
-    except InvalidFullNameError as e:
-        await message.answer(str(e))
-        return False
-
-    await state.update_data(client_name=name)
-    await state.set_state(next_state)
-    return True
-
-
 async def datetime_processing(message: Message, state: FSMContext, next_state: State) -> bool:
-    from bot.exceptions.user_exceptions import ValidationError
-    from bot.services.date_parser import parse_ru_datetime, format_datetime_for_display, format_datetime_for_db
 
     parsed_dt = parse_ru_datetime(message.text.strip())
 

@@ -26,8 +26,7 @@ def validate_full_name(full_name: str, pattern) -> str:
         raise InvalidFullNameError(
             "Введите ФИО корректно.\n\n"
             "Например:\n"
-            "Для создания и регистрации: Иванов Иван (Иванович).\n"
-            "Для поиска: Иван, Иван Иванов, Иван Иванов Иванович."
+            "Иван, Иван Иванов, Иван Иванов Иванович."
         )
     return full_name
 
@@ -84,7 +83,7 @@ def validate_datetime(value: str) -> str:
 
 def validate_datetime_natural(value: str) -> str:
     """Validate datetime from natural Russian text or strict format."""
-    from bot.services.date_parser import parse_ru_datetime, format_datetime_for_db
+    from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_db
 
     value = value.strip()
 

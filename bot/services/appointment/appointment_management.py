@@ -21,11 +21,13 @@ class AppointmentManagement:
         user_repository: UserRepository,
         staff_repository: StaffRepository,
         clinic_repository: ClinicRepository,
+        client_management=None,
     ):
         self.appointment_repository = appointment_repository
         self.user_repository = user_repository
         self.staff_repository = staff_repository
         self.clinic_repository = clinic_repository
+        self.client_management = client_management
 
     async def create_appointment(self, doctor_telegram_id: int, data: dict) -> Appointment:
         clinic = await self.get_admin_clinic(doctor_telegram_id)
@@ -52,40 +54,52 @@ class AppointmentManagement:
             self.staff_repository, self.clinic_repository, doctor_telegram_id
         )
 
+    async def find_client_by_phone(self, phone: str) -> User | None:
+        """Find existing client by phone. Returns None if not found."""
+        phone = normalize_phone(phone.strip())
+        return await self.user_repository.get_client_by_phone(phone)
+
     async def check_or_create_client(
         self,
         admin_telegram_id: int,
         full_name: str,
         phone: str,
     ) -> User:
-        """Check if client exists by phone. If not, create new client."""
+        """Check if client exists by phone. If not, create new client via ClientManagement."""
         phone = normalize_phone(phone.strip())
 
         client = await self.user_repository.get_client_by_phone(phone)
         if client is not None:
             return client
 
-        # Validate before creating
-        full_name = full_name.strip()
-        validate_full_name(full_name, FULL_NAME_PATTERN)
-        validate_phone(phone)
+        if self.client_management:
+            return await self.client_management.create_client(
+                admin_telegram_id,
+                {"full_name": full_name, "phone": phone}
+            )
+        else:
+            # Fallback: inline creation if ClientManagement not injected
+            # This shouldn't happen in production
+            full_name = full_name.strip()
+            validate_full_name(full_name, FULL_NAME_PATTERN)
+            validate_phone(phone)
 
-        clinic = await self.get_admin_clinic(admin_telegram_id)
+            clinic = await self.get_admin_clinic(admin_telegram_id)
 
-        if await self.user_repository.phone_exists(phone):
-            raise PhoneAlreadyExistsError()
+            if await self.user_repository.phone_exists(phone):
+                raise PhoneAlreadyExistsError()
 
-        new_client = User(
-            full_name=full_name,
-            phone=phone,
-            role=Role.CLIENT,
-            clinic_id=clinic.clinic_id,
-            clinic_name=clinic.name,
-        )
+            new_client = User(
+                full_name=full_name,
+                phone=phone,
+                role=Role.CLIENT,
+                clinic_id=clinic.clinic_id,
+                clinic_name=clinic.name,
+            )
 
-        await self.user_repository.create_user(new_client)
+            await self.user_repository.create_user(new_client)
 
-        return new_client
+            return new_client
 
     async def search_appointments(self, phone: str) -> list[Appointment]:
         client = await self._resolve_client(phone)
