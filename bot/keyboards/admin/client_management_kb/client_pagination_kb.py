@@ -37,17 +37,15 @@ def pagination_keyboard(
             text="➡️",
             callback_data=f"page:{mode}:{next_page}"
         )
-        builder.adjust(3)
+        builder.button(text="⬅️ К меню", callback_data="back_to_main_menu")
+        builder.adjust(4)
     else:
         # Одна страница - показываем статус без навигации
         builder.button(
             text="Страница 1 из 1",
             callback_data="noop"
         )
-        builder.adjust(1)
-
-    # Кнопка "Назад в меню"
-    builder.button(text="⬅️ К меню", callback_data="cancel")
-    builder.adjust(1)
+        builder.button(text="⬅️ К меню", callback_data="back_to_main_menu")
+        builder.adjust(2)
 
     return builder.as_markup()
