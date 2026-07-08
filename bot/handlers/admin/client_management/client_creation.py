@@ -12,8 +12,7 @@ from bot.handlers.utils.admin_utils.input_helpers import (
 )
 from bot.utils.role import RoleFilter
 from bot.validators.validators import FULL_NAME_PATTERN
-from bot.keyboards.admin.client_management_kb.client_creation_kb import client_creation_kb
-from bot.keyboards.utils.utils_kb import cancel_kb
+from bot.keyboards.admin.client_management_kb.client_creation_kb import client_creation_back_kb, client_creation_kb
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_creation_states import ClientCreationStates
 from bot.validators.validators import validate_fields_filled, validate_phone_available
@@ -39,13 +38,17 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
             return
 
         await state.update_data(clinic_id=clinic.clinic_id, clinic_name=clinic.name)
-        await ask_full_name(callback_query, state, next_state=ClientCreationStates.client_full_name)
+        await ask_full_name(
+            callback_query, state,
+            next_state=ClientCreationStates.client_full_name,
+            reply_markup=client_creation_back_kb(),
+        )
 
     @router.message(ClientCreationStates.client_full_name, F.text)
     async def create_client_phone(message: Message, state: FSMContext):
        if not await full_name_processing(message, state, next_state=ClientCreationStates.client_phone, re_pattern=FULL_NAME_PATTERN):
            return
-       await message.answer(text="Введите номер телефона:", reply_markup=cancel_kb())
+       await message.answer(text="Введите номер телефона:", reply_markup=client_creation_back_kb())
 
     @router.message(ClientCreationStates.client_phone, F.text)
     async def confirm(message: Message, state: FSMContext):
@@ -62,7 +65,11 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
         F.data == "client_creation_edit_full_name"
     )
     async def full_name_edition(callback: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback, state, edit_state=ClientCreationStates.edit_full_name)
+        await edit_full_name(
+            callback, state,
+            edit_state=ClientCreationStates.edit_full_name,
+            reply_markup=client_creation_back_kb(),
+        )
 
     @router.message(ClientCreationStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
@@ -78,7 +85,11 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
         F.data == "client_creation_edit_phone"
     )
     async def phone_edition(callback: CallbackQuery, state: FSMContext):
-        await edit_phone(callback, state, edit_state=ClientCreationStates.edit_phone)
+        await edit_phone(
+            callback, state,
+            edit_state=ClientCreationStates.edit_phone,
+            reply_markup=client_creation_back_kb(),
+        )
 
     @router.message(ClientCreationStates.edit_phone, F.text)
     async def process_phone_edition(message: Message, state: FSMContext):

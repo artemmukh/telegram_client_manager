@@ -51,7 +51,7 @@ def create_admin_appointment_creation_router(
             return
 
         await state.update_data(clinic_name=clinic.name)
-        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name)
+        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=cancel_kb())
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "restart_appointment_create")
     async def restart_create(callback_query: CallbackQuery, state: FSMContext):
@@ -144,7 +144,7 @@ def create_admin_appointment_creation_router(
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "edit_client_name_in_appointment")
     async def handle_edit_client_name(callback_query: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback_query, state, AppointmentCreationStates.edit_full_name)
+        await edit_full_name(callback_query, state, AppointmentCreationStates.edit_full_name, reply_markup=cancel_kb())
 
     @router.message(AppointmentCreationStates.edit_full_name, F.text)
     async def process_edit_client_name(message: Message, state: FSMContext):
@@ -154,7 +154,7 @@ def create_admin_appointment_creation_router(
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "edit_client_phone_in_appointment")
     async def handle_edit_client_phone(callback_query: CallbackQuery, state: FSMContext):
-        await edit_phone(callback_query, state, AppointmentCreationStates.edit_phone)
+        await edit_phone(callback_query, state, AppointmentCreationStates.edit_phone, reply_markup=cancel_kb())
 
     @router.message(AppointmentCreationStates.edit_phone, F.text)
     async def process_edit_client_phone(message: Message, state: FSMContext):

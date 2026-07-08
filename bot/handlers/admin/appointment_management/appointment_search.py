@@ -22,6 +22,7 @@ from bot.keyboards.admin.record_management_kb.appointment_search_kb import (
     appointment_search_phone_kb,
     appointment_search_name_kb,
 )
+from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.states.admin.record_management.appointment_states import AppointmentSearchStates
 from bot.utils.role import RoleFilter
@@ -49,7 +50,11 @@ def create_admin_appointment_search_router(appointment_repo, user_repo, staff_re
 
     @router.callback_query(F.data == "appointment_full_name_search")
     async def appointment_full_name_search(callback_query: CallbackQuery, state: FSMContext):
-        await ask_full_name(callback_query, state, next_state=AppointmentSearchStates.appointment_search_name)
+        await ask_full_name(
+            callback_query, state,
+            next_state=AppointmentSearchStates.appointment_search_name,
+            reply_markup=cancel_kb(),
+        )
 
     @router.message(AppointmentSearchStates.appointment_search_name, F.text)
     async def process_appointment_full_name_search(message: Message, state: FSMContext):
@@ -64,7 +69,11 @@ def create_admin_appointment_search_router(appointment_repo, user_repo, staff_re
 
     @router.callback_query(F.data == "appointment_phone_search")
     async def appointment_phone_search(callback_query: CallbackQuery, state: FSMContext):
-        await ask_phone(callback_query, state, AppointmentSearchStates.appointment_search_phone)
+        await ask_phone(
+            callback_query, state,
+            AppointmentSearchStates.appointment_search_phone,
+            reply_markup=cancel_kb(),
+        )
 
     @router.message(AppointmentSearchStates.appointment_search_phone, F.text)
     async def process_appointment_phone_search(message: Message, state: FSMContext):
@@ -78,7 +87,7 @@ def create_admin_appointment_search_router(appointment_repo, user_repo, staff_re
 
     @router.callback_query(AppointmentSearchStates.confirm_search, F.data == "appointment_search_edit_full_name")
     async def appointment_search_edit_full_name(callback: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback, state, edit_state=AppointmentSearchStates.edit_full_name)
+        await edit_full_name(callback, state, edit_state=AppointmentSearchStates.edit_full_name, reply_markup=cancel_kb())
 
     @router.message(AppointmentSearchStates.edit_full_name, F.text)
     async def process_edit_full_name(message: Message, state: FSMContext):
@@ -96,7 +105,7 @@ def create_admin_appointment_search_router(appointment_repo, user_repo, staff_re
         F.data == "appointment_search_edit_phone"
     )
     async def appointment_search_edit_phone(callback: CallbackQuery, state: FSMContext):
-        await edit_phone(callback, state, edit_state=AppointmentSearchStates.edit_phone)
+        await edit_phone(callback, state, edit_state=AppointmentSearchStates.edit_phone, reply_markup=cancel_kb())
 
     @router.message(AppointmentSearchStates.edit_phone, F.text)
     async def process_edit_phone(message: Message, state: FSMContext):

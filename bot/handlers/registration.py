@@ -6,7 +6,7 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name, full_name_processing
 
 )
-from bot.keyboards.utils.utils_kb import contact_keyboard, reg_confirm_kb
+from bot.keyboards.utils.utils_kb import cancel_kb, contact_keyboard, reg_confirm_kb
 
 from bot.services.utils.auth import AuthService
 from bot.services.utils.registration import RegistrationService
@@ -81,7 +81,7 @@ def create_reg_router(user_repo, clinic_repo, staff_repo) -> Router:
         F.data == "reg_edit"
     )
     async def edit_name(callback: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback, state, RegisterStates.edit_full_name)
+        await edit_full_name(callback, state, RegisterStates.edit_full_name, reply_markup=cancel_kb())
 
     @router.message(
         RegisterStates.edit_full_name, F.text)

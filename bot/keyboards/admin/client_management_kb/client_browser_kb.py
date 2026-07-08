@@ -11,6 +11,23 @@ from bot.models.user import User
 from bot.utils.pagination import get_circular_page
 
 
+def client_browser_back_to_search_kb() -> InlineKeyboardMarkup:
+    """Единственная кнопка "к меню поиска" - для экранов ввода (ФИО/телефон)."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ К меню поиска", callback_data="browse_clients")
+    return builder.as_markup()
+
+
+def client_browser_cancel_edit_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+    """Единственная кнопка "отменить" - возврат к карточке клиента без изменений."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="❌ Отменить",
+        callback_data=ClientActionCB(action="cancel_edit", client_id=client_id, mode=mode, page=page).pack(),
+    )
+    return builder.as_markup()
+
+
 def client_browser_search_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 

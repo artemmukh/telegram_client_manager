@@ -34,6 +34,8 @@ from bot.keyboards.admin.client_management_kb.client_browser_cb import (
     ClientPageCB,
 )
 from bot.keyboards.admin.client_management_kb.client_browser_kb import (
+    client_browser_back_to_search_kb,
+    client_browser_cancel_edit_kb,
     client_browser_confirm_name_kb,
     client_browser_confirm_phone_kb,
     client_browser_search_kb,
@@ -78,7 +80,11 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
 
     @router.callback_query(F.data == "cl_search_name")
     async def search_by_name(callback_query: CallbackQuery, state: FSMContext):
-        await ask_full_name(callback_query, state, next_state=ClientBrowserStates.search_name)
+        await ask_full_name(
+            callback_query, state,
+            next_state=ClientBrowserStates.search_name,
+            reply_markup=client_browser_back_to_search_kb(),
+        )
 
     @router.message(ClientBrowserStates.search_name, F.text)
     async def process_search_name(message: Message, state: FSMContext):
@@ -92,7 +98,11 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
 
     @router.callback_query(ClientBrowserStates.confirm_search, F.data == "cl_edit_search_name")
     async def edit_search_name(callback_query: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback_query, state, edit_state=ClientBrowserStates.edit_search_full_name)
+        await edit_full_name(
+            callback_query, state,
+            edit_state=ClientBrowserStates.edit_search_full_name,
+            reply_markup=client_browser_back_to_search_kb(),
+        )
 
     @router.message(ClientBrowserStates.edit_search_full_name, F.text)
     async def process_edit_search_name(message: Message, state: FSMContext):
@@ -108,7 +118,11 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
 
     @router.callback_query(F.data == "cl_search_phone")
     async def search_by_phone(callback_query: CallbackQuery, state: FSMContext):
-        await ask_phone(callback_query, state, ClientBrowserStates.search_phone)
+        await ask_phone(
+            callback_query, state,
+            ClientBrowserStates.search_phone,
+            reply_markup=client_browser_back_to_search_kb(),
+        )
 
     @router.message(ClientBrowserStates.search_phone, F.text)
     async def process_search_phone(message: Message, state: FSMContext):
@@ -118,7 +132,11 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
 
     @router.callback_query(ClientBrowserStates.confirm_search, F.data == "cl_edit_search_phone")
     async def edit_search_phone(callback_query: CallbackQuery, state: FSMContext):
-        await edit_phone(callback_query, state, edit_state=ClientBrowserStates.edit_search_phone)
+        await edit_phone(
+            callback_query, state,
+            edit_state=ClientBrowserStates.edit_search_phone,
+            reply_markup=client_browser_back_to_search_kb(),
+        )
 
     @router.message(ClientBrowserStates.edit_search_phone, F.text)
     async def process_edit_search_phone(message: Message, state: FSMContext):
@@ -180,14 +198,26 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
         await state.update_data(
             client_id=callback_data.client_id, mode=callback_data.mode, page=callback_data.page,
         )
-        await edit_full_name(callback_query, state, edit_state=ClientBrowserStates.new_full_name)
+        await edit_full_name(
+            callback_query, state,
+            edit_state=ClientBrowserStates.new_full_name,
+            reply_markup=client_browser_cancel_edit_kb(
+                callback_data.client_id, callback_data.mode, callback_data.page,
+            ),
+        )
 
     @router.callback_query(ClientActionCB.filter(F.action == "edit_phone"))
     async def start_edit_phone(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
         await state.update_data(
             client_id=callback_data.client_id, mode=callback_data.mode, page=callback_data.page,
         )
-        await edit_phone(callback_query, state, edit_state=ClientBrowserStates.new_phone)
+        await edit_phone(
+            callback_query, state,
+            edit_state=ClientBrowserStates.new_phone,
+            reply_markup=client_browser_cancel_edit_kb(
+                callback_data.client_id, callback_data.mode, callback_data.page,
+            ),
+        )
 
     @router.callback_query(ClientActionCB.filter(F.action == "delete"))
     async def start_delete(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
@@ -261,8 +291,14 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
         )
 
     @router.callback_query(ClientActionCB.filter(F.action == "retry_new_name"))
-    async def retry_new_name(callback_query: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback_query, state, edit_state=ClientBrowserStates.new_full_name)
+    async def retry_new_name(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
+        await edit_full_name(
+            callback_query, state,
+            edit_state=ClientBrowserStates.new_full_name,
+            reply_markup=client_browser_cancel_edit_kb(
+                callback_data.client_id, callback_data.mode, callback_data.page,
+            ),
+        )
 
     @router.callback_query(ClientActionCB.filter(F.action == "approve_new_name"))
     async def approve_new_name(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
@@ -314,8 +350,14 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
         )
 
     @router.callback_query(ClientActionCB.filter(F.action == "retry_new_phone"))
-    async def retry_new_phone(callback_query: CallbackQuery, state: FSMContext):
-        await edit_phone(callback_query, state, edit_state=ClientBrowserStates.new_phone)
+    async def retry_new_phone(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
+        await edit_phone(
+            callback_query, state,
+            edit_state=ClientBrowserStates.new_phone,
+            reply_markup=client_browser_cancel_edit_kb(
+                callback_data.client_id, callback_data.mode, callback_data.page,
+            ),
+        )
 
     @router.callback_query(ClientActionCB.filter(F.action == "approve_new_phone"))
     async def approve_new_phone(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):

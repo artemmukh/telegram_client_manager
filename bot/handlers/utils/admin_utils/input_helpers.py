@@ -6,28 +6,27 @@ from aiogram.types import Message, CallbackQuery
 
 from bot.create_bot import db
 from bot.exceptions.user_exceptions import InvalidFullNameError, ValidationError
-from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.repositories.user_repository import UserRepository
 from bot.validators.validators import validate_phone, validate_full_name
 
 user_repo = UserRepository(db)
 
 
-async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State):
+async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup):
     await state.set_state(next_state)
     await callback.answer('')
     await callback.message.edit_text(
         "Введите ФИО:",
-        reply_markup=cancel_kb()
+        reply_markup=reply_markup
     )
 
 
-async def ask_phone(callback: CallbackQuery, state: FSMContext, next_state: State):
+async def ask_phone(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup):
     await state.set_state(next_state)
     await callback.answer('')
     await callback.message.edit_text(
         "Введите номер телефона:",
-        reply_markup=cancel_kb()
+        reply_markup=reply_markup
     )
 
 
@@ -67,19 +66,19 @@ async def phone_processing(message: Message,
     return True
 
 
-async def edit_full_name(callback: CallbackQuery, state: FSMContext, edit_state: State):
+async def edit_full_name(callback: CallbackQuery, state: FSMContext, edit_state: State, reply_markup):
     await state.set_state(edit_state)
     await callback.answer('')
     await callback.message.edit_text(
         "Введите новое ФИО:",
-        reply_markup=cancel_kb()
+        reply_markup=reply_markup
     )
 
 
-async def edit_phone(callback: CallbackQuery, state: FSMContext, edit_state: State):
+async def edit_phone(callback: CallbackQuery, state: FSMContext, edit_state: State, reply_markup):
     await state.set_state(edit_state)
     await callback.answer('')
     await callback.message.edit_text(
         "Введите новый номер телефона:",
-        reply_markup=cancel_kb()
+        reply_markup=reply_markup
     )

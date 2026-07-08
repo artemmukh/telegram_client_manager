@@ -6,7 +6,7 @@ from bot.keyboards.client.client_main_keyboard import start_client_keyboard
 
 async def show_main_admin_menu(message: Message, full_name: str):
     await message.answer(f"Здравствуйте, {full_name}.\n\n"
-                         "Это бот для учета клиентов. С помощью ручного или голосового ввода с ИИ расшифровкой ведется учет клиентской базы.\n\n"
+                         "Это бот для учета клиентов и записей на прием.\n\n"
                          'Для ознакомления с функционалом нажмите "Справка".')
 
     await message.answer(text='Выберите вариант: ', reply_markup=start_admin_keyboard())
@@ -15,7 +15,7 @@ async def show_main_admin_menu(message: Message, full_name: str):
 async def show_main_client_menu(message: Message, full_name: str):
     await message.answer(f"Здравствуйте, {full_name}.\n\n"
                         f'Это бот для учета записей на прием в стоматологию "Зуб Мудрости".\n'
-                         f'Вы можете просматривать историю записей, записать на прием и отслеживать его, получая напоминания.\n\n'
+                         f'Вы будете получать напоминания о предстоящих записях с возможностью подтвердить или отменить их.\n\n'
                          'Для ознакомления с функционалом нажмите "Справка".')
 
     await message.answer(text='Выберите вариант: ', reply_markup=start_client_keyboard())
@@ -23,10 +23,10 @@ async def show_main_client_menu(message: Message, full_name: str):
 async def display_admin_help_msg(message: Message):
     text = ("Справочное меню.\n\n\n"
             "/client_managing:\n\n"
-            "  1. Создание нового клиента.\n"
-            "  2. Удаление клиента.\n"
-            "  3. Поиск клиента.\n"
-            "  4. Обновления данных клиента.\n\n\n"
+            "  1. Добавить клиента.\n"
+            "  2. Клиенты - поиск по имени или номеру телефона, либо список "
+            "всех клиентов; в карточке клиента доступны изменение ФИО/телефона "
+            "и удаление.\n\n\n"
             "/record_managing:\n\n"
             "1. Создать запись клиента.\n"
             "2. Удалить запись клиента.\n"
@@ -39,10 +39,12 @@ async def display_admin_help_msg(message: Message):
 
 async def display_client_help_msg(message: Message):
     text = ("Справочное меню.\n\n\n"
-            "/create_an_appointment:\n\n"
-            "  1. Записаться на прием.\n\n\n"
-            "/history:\n\n"
-            "1. Просмотр последних записей.\n\n\n"
+            "📋 Управление записями:\n\n"
+            "  1. Записаться на прием - в разработке.\n"
+            "  2. История записей - в разработке.\n"
+            "  3. Управление записью - в разработке.\n\n"
+            "О предстоящих записях бот присылает отдельные напоминания с "
+            "кнопками подтверждения и отмены.\n\n\n"
             "/start - запуск бота.\n"
             "/help - справка.\n"
             "/profile - личные данные.")
