@@ -18,7 +18,7 @@ from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
 from bot.utils.appointment_enums import AppointmentStatus
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
+from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +114,13 @@ async def send_reminder_job(appointment_id: int, hours_before: int = 24) -> None
                 logger.info(
                     f"Admin reminder sent for appointment {appointment_id} ({reminder_type})"
                 )
-            except Exception as e:
+            except NotificationDeliveryError as e:
                 logger.warning(
                     f"Failed to send admin reminder for appointment {appointment_id}: {e}"
+                )
+            except Exception as e:
+                logger.exception(
+                    f"Unexpected error sending admin reminder for appointment {appointment_id}: {e}"
                 )
 
     except AppointmentNotFoundError as e:

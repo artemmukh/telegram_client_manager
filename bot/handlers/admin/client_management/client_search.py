@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
-from bot.exceptions.exceptions import BotException
+from bot.exceptions.exceptions import BotException, PaginationError
 from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, UserNotFoundError
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name, edit_full_name, phone_processing, \
@@ -177,9 +177,12 @@ def create_admin_client_search_router(user_repo, staff_repo, clinic_repo):
             else:
                 logger.warning(f"TelegramBadRequest in paginate_clients: {e}")
                 await callback_query.answer("Ошибка редактирования сообщения", show_alert=False)
+        except PaginationError as e:
+            logger.warning(f"Pagination error in paginate_clients: {e}")
+            await callback_query.answer(str(e), show_alert=True)
         except Exception as e:
-            logger.exception(f"Error in paginate_clients: {e}")
-            await callback_query.answer(f"Ошибка: {str(e)}", show_alert=True)
+            logger.exception(f"Unexpected error in paginate_clients: {e}")
+            await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
 
     @router.callback_query(F.data == "noop")
     async def noop_button(callback_query: CallbackQuery):

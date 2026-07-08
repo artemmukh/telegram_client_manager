@@ -1,5 +1,6 @@
 from aiogram import Bot
 
+from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.keyboards.client.appointment_response_kb import appointment_response_kb
 from bot.models.appointment import Appointment
 from bot.models.user import User
@@ -64,10 +65,10 @@ class AppointmentNotificationService:
         admin_telegram_id: int,
         appointment: Appointment,
         client_name: str,
-    ) -> bool:
+    ) -> None:
         """Send reminder to admin about upcoming appointment WITHOUT buttons.
 
-        Returns True if message sent, False if send failed.
+        Raises NotificationDeliveryError if the message could not be sent.
         """
         client = await self.user_repo.get_client_by_id(appointment.client_id)
         client_phone = client.phone if client else "—"
@@ -85,9 +86,10 @@ class AppointmentNotificationService:
                 chat_id=admin_telegram_id,
                 text=message_text,
             )
-            return True
-        except Exception:
-            return False
+        except Exception as e:
+            raise NotificationDeliveryError(
+                f"Не удалось отправить напоминание администратору {admin_telegram_id}: {e}"
+            ) from e
 
     async def notify_admin_cancellation(
         self,

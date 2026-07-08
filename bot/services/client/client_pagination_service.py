@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from math import ceil
 
+from bot.exceptions.exceptions import PaginationError
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.utils.pagination import CLIENTS_PER_PAGE
@@ -52,7 +53,7 @@ class ClientPaginationService:
                 full_name, page, CLIENTS_PER_PAGE
             )
         else:
-            raise ValueError(f"Unknown mode: {mode}")
+            raise PaginationError(f"Неизвестный режим пагинации: {mode}")
 
         total_pages = ceil(total_count / CLIENTS_PER_PAGE) if total_count > 0 else 1
 

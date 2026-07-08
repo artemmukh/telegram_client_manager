@@ -40,3 +40,8 @@ class JobSchedulingError(SchedulerError):
 class JobCancellationError(SchedulerError):
     """Ошибка при отмене job'а."""
     pass
+
+
+class NotificationDeliveryError(BotException):
+    """Не удалось доставить уведомление в Telegram."""
+    pass
