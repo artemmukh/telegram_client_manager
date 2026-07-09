@@ -250,9 +250,8 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
             await callback_query.answer(str(e), show_alert=True)
             return
 
-        await state.clear()
-
         if callback_data.mode == "direct":
+            await state.clear()
             await callback_query.answer("Клиент удалён.", show_alert=True)
             await callback_query.message.edit_text(
                 "Клиент удалён.", reply_markup=client_browser_search_kb(),

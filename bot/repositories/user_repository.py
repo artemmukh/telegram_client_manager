@@ -74,6 +74,8 @@ class UserRepository:
 
     async def get_clients_by_name(self, full_name: str) -> list[User]:
         parts = full_name.strip().title().split()
+        if not parts:
+            return []
 
         conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
         params = [f"%{part}%" for part in parts]
@@ -229,6 +231,9 @@ class UserRepository:
     ) -> list[User]:
         """Получить страницу результатов поиска по имени"""
         parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
         conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
         params = [f"%{part}%" for part in parts]
 
@@ -249,6 +254,9 @@ class UserRepository:
     async def count_clients_by_name(self, full_name: str) -> int:
         """Получить количество результатов поиска по имени"""
         parts = full_name.strip().title().split()
+        if not parts:
+            return 0
+
         conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
         params = [f"%{part}%" for part in parts]
 

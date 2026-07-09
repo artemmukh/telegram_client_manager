@@ -1,3 +1,4 @@
+import aiosqlite
 import pytest
 import pytest_asyncio
 
@@ -119,3 +120,31 @@ async def test_user_repository_enforces_unique_phone(user_repo):
                 telegram_user_id=1002,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_get_clients_by_name_page_empty_full_name_is_defensive_guard():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="\u0418\u0432\u0430\u043d\u043e\u0432 \u0418\u0432\u0430\u043d",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+
+        assert await user_repo.get_clients_by_name_page("", 1, per_page=10) == []
+        assert await user_repo.count_clients_by_name("") == 0
+
+        # Whitespace-only input also strips down to an empty token list.
+        assert await user_repo.get_clients_by_name_page("   ", 1, per_page=10) == []
+        assert await user_repo.count_clients_by_name("   ") == 0
+
+        assert await user_repo.get_clients_by_name("") == []
+    finally:
+        await connection.close()
