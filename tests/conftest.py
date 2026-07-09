@@ -40,3 +40,16 @@ def fake_user_repo() -> FakeUserRepository:
 @pytest.fixture
 def fake_user_repo_factory():
     return FakeUserRepository
+
+
+class FakeClinicRepository:
+    def __init__(self, clinics_by_token=None):
+        self.clinics_by_token = dict(clinics_by_token or {})
+
+    async def get_clinic_by_token(self, token: str):
+        return self.clinics_by_token.get(token)
+
+
+@pytest.fixture
+def fake_clinic_repo() -> FakeClinicRepository:
+    return FakeClinicRepository()

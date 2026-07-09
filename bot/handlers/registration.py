@@ -23,7 +23,7 @@ from bot.validators.validators import FULL_NAME_PATTERN
 
 def create_reg_router(user_repo, clinic_repo, staff_repo) -> Router:
     router = Router()
-    reg = RegistrationService(user_repo)
+    reg = RegistrationService(user_repo, clinic_repo)
 
     auth = AuthService(staff_repo)
 
@@ -41,7 +41,7 @@ def create_reg_router(user_repo, clinic_repo, staff_repo) -> Router:
             await message.answer("Пожалуйста, отсканируйте QR-код клиники.")
             return
 
-        clinic = await clinic_repo.get_clinic_by_token(token)
+        clinic = await reg.get_clinic_by_token(token)
 
         if clinic is None:
             await message.answer("QR-код недействителен.")

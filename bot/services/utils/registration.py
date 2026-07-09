@@ -1,15 +1,21 @@
 
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
+from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
+from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 
 class RegistrationService:
-    def __init__(self, user_repository: UserRepository):
+    def __init__(self, user_repository: UserRepository, clinic_repository: ClinicRepository):
         self.user_repository = user_repository
+        self.clinic_repository = clinic_repository
+
+    async def get_clinic_by_token(self, token: str) -> Clinic | None:
+        return await self.clinic_repository.get_clinic_by_token(token)
 
     async def register(
             self,

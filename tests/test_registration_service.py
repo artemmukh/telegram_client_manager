@@ -7,8 +7,8 @@ from bot.utils.role import Role
 
 
 @pytest.mark.asyncio
-async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo):
-    service = RegistrationService(fake_user_repo)
+async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo, fake_clinic_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -24,7 +24,7 @@ async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo
 
 
 @pytest.mark.asyncio
-async def test_registration_links_existing_user_without_telegram(fake_user_repo_factory):
+async def test_registration_links_existing_user_without_telegram(fake_user_repo_factory, fake_clinic_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -33,7 +33,7 @@ async def test_registration_links_existing_user_without_telegram(fake_user_repo_
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo)
+    service = RegistrationService(repo, fake_clinic_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -50,7 +50,7 @@ async def test_registration_links_existing_user_without_telegram(fake_user_repo_
 
 
 @pytest.mark.asyncio
-async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_factory):
+async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_factory, fake_clinic_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -59,7 +59,7 @@ async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_f
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo)
+    service = RegistrationService(repo, fake_clinic_repo)
 
     with pytest.raises(PhoneAlreadyExistsError):
         await service.register(
@@ -72,9 +72,9 @@ async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_f
 
 
 @pytest.mark.asyncio
-async def test_registration_rejects_when_telegram_already_registered(fake_user_repo_factory):
+async def test_registration_rejects_when_telegram_already_registered(fake_user_repo_factory, fake_clinic_repo):
     repo = fake_user_repo_factory(existing_telegram_ids={1001})
-    service = RegistrationService(repo)
+    service = RegistrationService(repo, fake_clinic_repo)
 
     with pytest.raises(UserAlreadyExistsError):
         await service.register(
