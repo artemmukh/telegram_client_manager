@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
+    AwaitingClinicDecisionError,
     CancellationWindowExpiredError,
 )
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
@@ -58,6 +59,40 @@ class AppointmentManagement:
             status=AppointmentStatus.PENDING,
             clinic_name=clinic.name,
             created_by_telegram_id=doctor_telegram_id,
+            created_at=get_current_tashkent_time(),
+        )
+
+        return await self.appointment_repository.create_appointment(appointment)
+
+    async def list_bookable_staff(self, client_telegram_id: int) -> list[User]:
+        client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
+        if client is None or client.clinic_id is None:
+            raise UserNotFoundError("Клиент не найден или не привязан к клинике.")
+
+        return await self.user_repository.get_staff_users_by_clinic_id(client.clinic_id)
+
+    async def create_self_booking(self, client_telegram_id: int, data: dict) -> Appointment:
+        client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
+        if client is None:
+            raise UserNotFoundError("Клиент не найден.")
+
+        staff = await self.user_repository.get_user_by_id(data["staff_user_id"])
+        if staff is None:
+            raise UserNotFoundError("Специалист не найден.")
+
+        appointment_datetime = validate_datetime(data["appointment_datetime"])
+        purpose = validate_purpose(data["complaint"])
+
+        appointment = Appointment(
+            clinic_id=client.clinic_id,
+            client_id=client.ID,
+            doctor_id=staff.ID,
+            datetime=appointment_datetime,
+            purpose=purpose,
+            created_by=CreatedBy.CLIENT,
+            status=AppointmentStatus.PENDING,
+            clinic_name=client.clinic_name,
+            created_by_telegram_id=staff.telegram_user_id,
             created_at=get_current_tashkent_time(),
         )
 
@@ -180,6 +215,9 @@ class AppointmentManagement:
             "Эта запись больше недоступна для подтверждения. "
             "Возможно, она была отменена или уже завершена. Обновите список записей.",
         )
+
+        if appointment.created_by == CreatedBy.CLIENT and appointment.status == AppointmentStatus.PENDING:
+            raise AwaitingClinicDecisionError("Дождитесь решения клиники по вашей заявке.")
 
         return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
 

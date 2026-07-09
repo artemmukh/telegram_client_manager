@@ -1,6 +1,7 @@
 import pytest
 from aiogram.types import ReplyParameters
 
+from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.services.appointment.appointment_notifications import (
@@ -42,6 +43,11 @@ class FakeUserRepo:
 
 class FakeAppointmentRepo:
     pass
+
+
+class FailingBot:
+    async def send_message(self, *args, **kwargs):
+        raise RuntimeError("Telegram API error")
 
 
 def _client():
@@ -384,6 +390,89 @@ async def test_notify_client_appointment_changed_returns_false_when_no_telegram_
     appointment = _appointment()
 
     result = await service.notify_client_appointment_changed(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_new_booking_request_sends_message():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    await service.notify_staff_new_booking_request(67890, appointment, "Иванов Иван")
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 67890
+    assert "Новая заявка на запись" in msg['text']
+    assert "Иванов Иван" in msg['text']
+    assert "2026-07-10 14:30" in msg['text']
+    assert "Консультация" in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_new_booking_request_raises_on_send_failure():
+    bot = FailingBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    with pytest.raises(NotificationDeliveryError):
+        await service.notify_staff_new_booking_request(67890, appointment, "Иванов Иван")
+
+
+@pytest.mark.asyncio
+async def test_notify_client_pending_request_expired_sends_message():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_pending_request_expired(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "истекла" in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_pending_request_expired_returns_false_when_user_not_found():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(None)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_pending_request_expired(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_pending_request_expired_returns_false_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_pending_request_expired(appointment)
 
     assert result is False
     assert len(bot.sent_messages) == 0

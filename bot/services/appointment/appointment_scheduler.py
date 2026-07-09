@@ -17,6 +17,7 @@ from bot.services.appointment.appointment_jobs import (
     send_reminder_job,
     mark_appointment_completed_job,
     complete_appointment,
+    expire_pending_request_job,
 )
 from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 
@@ -198,6 +199,78 @@ class AppointmentScheduler:
         except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel completion for appointment {appointment_id}: {e}"
+            )
+
+    async def schedule_pending_expiry(self, appointment: Appointment) -> None:
+        """Schedule an expiry job for a client self-booking request.
+
+        Runs at the appointment's requested datetime; if the clinic has not
+        responded by then, the request auto-expires.
+
+        Job ID: appt_{appointment_id}_expire
+        """
+        if not appointment.id:
+            logger.warning("Cannot schedule pending expiry for appointment without ID")
+            return
+
+        try:
+            appointment_dt = datetime.fromisoformat(appointment.datetime)
+            now = _current_tashkent_time()
+
+            if appointment_dt <= now:
+                logger.info(
+                    f"Skipping past-due pending expiry for appointment {appointment.id} "
+                    f"(would have run at {appointment_dt.isoformat()})"
+                )
+                return
+
+            job_id = f"appt_{appointment.id}_expire"
+
+            try:
+                self.scheduler.add_job(
+                    expire_pending_request_job,
+                    "date",
+                    run_date=appointment_dt,
+                    args=(appointment.id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule pending expiry job {job_id}: {exc}"
+                ) from exc
+
+            logger.info(
+                f"Scheduled pending expiry for appointment {appointment.id} "
+                f"at {appointment_dt.isoformat()}"
+            )
+        except JobSchedulingError as e:
+            logger.error(
+                f"Failed to schedule pending expiry for appointment {appointment.id}: {e}"
+            )
+
+    async def cancel_pending_expiry(self, appointment_id: int) -> None:
+        """Cancel the pending expiry job for an appointment.
+
+        Removes job with ID: appt_{appointment_id}_expire
+        """
+        from apscheduler.jobstores.base import JobLookupError
+
+        try:
+            job_id = f"appt_{appointment_id}_expire"
+
+            try:
+                self.scheduler.remove_job(job_id)
+                logger.info(f"Cancelled pending expiry job: {job_id}")
+            except JobLookupError:
+                logger.debug(f"Pending expiry job {job_id} does not exist (already ran or cancelled)")
+            except Exception as exc:
+                raise JobCancellationError(
+                    f"Failed to remove pending expiry job {job_id}: {exc}"
+                ) from exc
+        except JobCancellationError as e:
+            logger.error(
+                f"Failed to cancel pending expiry for appointment {appointment_id}: {e}"
             )
 
     async def _send_reminder_job(self, appointment_id: int, hours_before: int = 24) -> None:

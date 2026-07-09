@@ -5,6 +5,7 @@ import pytest
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
+    AwaitingClinicDecisionError,
     CancellationWindowExpiredError,
 )
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
@@ -49,9 +50,11 @@ class FakeAppointmentRepository:
 
 
 class FakeUserRepo:
-    def __init__(self, client=None, admin=None):
+    def __init__(self, client=None, admin=None, staff_by_clinic=None, users_by_id=None):
         self.client = client
         self.admin = admin
+        self.staff_by_clinic = staff_by_clinic or {}
+        self.users_by_id = users_by_id or {}
 
     async def get_client_by_phone(self, phone):
         if self.client and self.client.phone == phone:
@@ -69,6 +72,12 @@ class FakeUserRepo:
         if self.client and self.client.telegram_user_id == telegram_user_id:
             return self.client
         return None
+
+    async def get_staff_users_by_clinic_id(self, clinic_id):
+        return self.staff_by_clinic.get(clinic_id, [])
+
+    async def get_user_by_id(self, user_id):
+        return self.users_by_id.get(user_id)
 
 
 class FakeStaffRepo:
@@ -162,6 +171,104 @@ async def test_create_appointment_rejects_non_staff():
         )
 
 
+def _staff_member(staff_id=99, telegram_user_id=999, clinic_id=1, full_name="Петров Петр"):
+    return User(
+        full_name=full_name,
+        phone="+998907654321",
+        role=Role.ADMIN,
+        telegram_user_id=telegram_user_id,
+        ID=staff_id,
+        clinic_id=clinic_id,
+        clinic_name="Зуб Мудрости",
+    )
+
+
+def _booking_client(telegram_user_id=555, clinic_id=1):
+    return User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=telegram_user_id,
+        ID=7,
+        clinic_id=clinic_id,
+        clinic_name="Зуб Мудрости",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_bookable_staff_returns_clinic_staff():
+    client = _booking_client()
+    staff = _staff_member()
+    user_repo = FakeUserRepo(client=client, staff_by_clinic={1: [staff]})
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    staff_list = await service.list_bookable_staff(client.telegram_user_id)
+
+    assert staff_list == [staff]
+
+
+@pytest.mark.asyncio
+async def test_list_bookable_staff_raises_when_client_not_found():
+    user_repo = FakeUserRepo(client=None)
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(UserNotFoundError):
+        await service.list_bookable_staff(555)
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_creates_pending_client_appointment():
+    client = _booking_client()
+    staff = _staff_member()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.create_self_booking(
+        client.telegram_user_id,
+        {
+            "staff_user_id": staff.ID,
+            "appointment_datetime": "2026-07-10 14:30",
+            "complaint": "Болит зуб",
+        },
+    )
+
+    assert appt_repo.created == [appointment]
+    assert appointment.clinic_id == client.clinic_id
+    assert appointment.client_id == client.ID
+    assert appointment.doctor_id == staff.ID
+    assert appointment.created_by_telegram_id == staff.telegram_user_id
+    assert appointment.created_by is CreatedBy.CLIENT
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appointment.purpose == "Болит зуб"
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_raises_when_client_not_found():
+    staff = _staff_member()
+    user_repo = FakeUserRepo(client=None, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(UserNotFoundError):
+        await service.create_self_booking(
+            555,
+            {"staff_user_id": staff.ID, "appointment_datetime": "2026-07-10 14:30", "complaint": "Болит зуб"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_raises_when_staff_not_found():
+    client = _booking_client()
+    user_repo = FakeUserRepo(client=client, users_by_id={})
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(UserNotFoundError):
+        await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": 12345, "appointment_datetime": "2026-07-10 14:30", "complaint": "Болит зуб"},
+        )
+
+
 @pytest.mark.asyncio
 async def test_search_appointments_returns_client_appointments():
     service = AppointmentManagement(
@@ -245,13 +352,15 @@ async def test_get_appointment_with_client_info_raises_if_appointment_not_found(
         await service.get_appointment_with_client_info(999)
 
 
-def _appointment_at(appointment_id, dt, client_id=7, status=AppointmentStatus.PENDING):
+def _appointment_at(
+    appointment_id, dt, client_id=7, status=AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT
+):
     return Appointment(
         clinic_id=1,
         client_id=client_id,
         datetime=dt.strftime("%Y-%m-%d %H:%M:%S"),
         purpose="Консультация",
-        created_by=CreatedBy.CLIENT,
+        created_by=created_by,
         status=status,
         id=appointment_id,
     )
@@ -270,7 +379,9 @@ def _owning_client(telegram_user_id=555):
 @pytest.mark.asyncio
 async def test_confirm_appointment_by_client_updates_status_for_owner():
     now = get_current_tashkent_datetime()
-    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(days=1))])
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), created_by=CreatedBy.ADMIN)]
+    )
     client = _owning_client()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
@@ -292,10 +403,10 @@ async def test_confirm_appointment_by_client_raises_not_found_for_wrong_owner():
 
 
 @pytest.mark.asyncio
-async def test_confirm_appointment_by_client_succeeds_from_pending():
+async def test_confirm_appointment_by_client_succeeds_from_pending_when_admin_created():
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
-        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING)]
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.ADMIN)]
     )
     client = _owning_client()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
@@ -304,6 +415,21 @@ async def test_confirm_appointment_by_client_succeeds_from_pending():
 
     assert appointment.status is AppointmentStatus.CONFIRMED
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_raises_when_self_booked_and_pending():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AwaitingClinicDecisionError):
+        await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appt_repo.status_updates == []
 
 
 @pytest.mark.asyncio

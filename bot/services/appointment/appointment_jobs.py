@@ -17,7 +17,7 @@ from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
-from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
 logger = logging.getLogger(__name__)
@@ -196,6 +196,65 @@ async def complete_appointment(
         logger.warning(
             f"Failed to send completion notification to client {appointment.client_id}: {e}"
         )
+
+
+async def expire_pending_request_job(appointment_id: int) -> None:
+    """Expire an unanswered client self-booking request once its requested time passes.
+
+    This job is called by APScheduler at the appointment's requested datetime.
+
+    NOTE (provisional): this sets status to CANCELLED, not a dedicated EXPIRED
+    status, since AppointmentStatus.EXPIRED does not exist yet. A later pass
+    (negotiation flow) is expected to introduce a proper EXPIRED status and
+    proposal-aware messaging; the client-facing text below is written to make
+    sense for a plain "clinic did not respond" outcome only.
+
+    Args:
+        appointment_id: The ID of the appointment/request to expire
+    """
+    connection = None
+    try:
+        bot = get_bot()
+        config = load_config()
+
+        db = Database(config.database_path)
+        connection = await db.connect()
+
+        appointment_repo = AppointmentRepository(connection)
+        user_repo = UserRepository(connection)
+        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+
+        if appointment is None:
+            logger.warning(f"Expire pending job: appointment {appointment_id} not found")
+            return
+
+        if appointment.status != AppointmentStatus.PENDING or appointment.created_by != CreatedBy.CLIENT:
+            logger.info(
+                f"Expire pending job: skipping appointment {appointment_id} "
+                f"(status={appointment.status.value}, created_by={appointment.created_by.value})"
+            )
+            return
+
+        await appointment_repo.update_appointment_status(appointment_id, AppointmentStatus.CANCELLED)
+
+        logger.info(f"Appointment {appointment_id} self-booking request expired (unanswered)")
+
+        try:
+            await notification_service.notify_client_pending_request_expired(appointment)
+        except Exception as e:
+            logger.warning(
+                f"Failed to send expiry notification to client for appointment {appointment_id}: {e}"
+            )
+
+    except AppointmentNotFoundError:
+        logger.warning(f"Expire pending job: appointment {appointment_id} not found")
+    except Exception as e:
+        logger.exception(f"Error in expire_pending_request_job({appointment_id}): {e}")
+    finally:
+        if connection is not None:
+            await connection.close()
 
 
 async def mark_appointment_completed_job(appointment_id: int) -> None:

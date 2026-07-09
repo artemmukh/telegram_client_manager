@@ -12,6 +12,11 @@ class AppointmentAlreadyFinalizedError(ValidationError):
     pass
 
 
+class AwaitingClinicDecisionError(ValidationError):
+    """Заявка на самозапись ещё не рассмотрена клиникой."""
+    pass
+
+
 class CancellationWindowExpiredError(ValidationError):
     """Отмена записи менее чем за 2 часа до приёма."""
     pass

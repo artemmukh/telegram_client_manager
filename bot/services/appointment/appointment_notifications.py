@@ -207,6 +207,51 @@ class AppointmentNotificationService:
             text=message_text
         )
 
+    async def notify_staff_new_booking_request(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        client_name: str,
+    ) -> None:
+        """Notify the chosen staff member about a new client self-booking request.
+
+        Informational only (no action buttons yet - those arrive in a later pass).
+        Raises NotificationDeliveryError if the message could not be sent.
+        """
+        message_text = (
+            f"🆕 Новая заявка на запись\n\n"
+            f"👤 Клиент: {client_name}\n"
+            f"📅 Дата и время: {appointment.datetime}\n"
+            f"📝 Жалоба: {appointment.purpose}"
+        )
+
+        try:
+            await self.bot.send_message(
+                chat_id=staff_telegram_id,
+                text=message_text,
+            )
+        except Exception as e:
+            raise NotificationDeliveryError(
+                f"Не удалось отправить уведомление специалисту {staff_telegram_id}: {e}"
+            ) from e
+
+    async def notify_client_pending_request_expired(self, appointment: Appointment) -> bool:
+        """Notify client that their unanswered self-booking request has expired.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text="⌛ Ваша заявка на запись истекла без ответа клиники.",
+        )
+
+        return True
+
     def _build_appointment_message(
         self,
         appointment: Appointment,

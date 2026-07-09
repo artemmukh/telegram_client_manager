@@ -60,11 +60,6 @@ def create_client_appointment_router(
             reply_markup=client_appointment_management_kb()
         )
 
-    @router.callback_query(F.data == "client_book_appointment")
-    async def book_appointment(callback_query: CallbackQuery):
-        await callback_query.answer()
-        await callback_query.message.answer("Функция записи скоро будет доступна...")
-
     @router.callback_query(F.data == "client_appointment_history")
     async def appointment_history(callback_query: CallbackQuery):
         await render_history_list(callback_query, tab="all", page=1)
@@ -166,6 +161,7 @@ def create_client_appointment_router(
                     if appointment_scheduler:
                         await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                         await appointment_scheduler.cancel_appointment_completions(appointment_id)
+                        await appointment_scheduler.cancel_pending_expiry(appointment_id)
 
                     await callback_query.message.edit_text("✅ Ваша запись отменена")
                     await callback_query.answer()
@@ -268,6 +264,7 @@ def create_client_appointment_router(
                 if appointment_scheduler:
                     await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                     await appointment_scheduler.cancel_appointment_completions(appointment_id)
+                    await appointment_scheduler.cancel_pending_expiry(appointment_id)
 
                 await callback_query.message.edit_text("✅ Ваша запись отменена")
                 await callback_query.answer()
