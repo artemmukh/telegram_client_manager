@@ -7,6 +7,11 @@ class AppointmentNotFoundError(ValidationError):
     pass
 
 
+class CancellationWindowExpiredError(ValidationError):
+    """Отмена записи менее чем за 2 часа до приёма."""
+    pass
+
+
 class InvalidDatetimeError(ValidationError):
     """Некорректная дата или время."""
     pass

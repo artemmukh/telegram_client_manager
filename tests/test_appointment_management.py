@@ -1,12 +1,15 @@
+from datetime import timedelta
+
 import pytest
 
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
+from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, CancellationWindowExpiredError
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
@@ -59,6 +62,8 @@ class FakeUserRepo:
     async def get_user_by_telegram_id(self, telegram_user_id):
         if self.admin and self.admin.telegram_user_id == telegram_user_id:
             return self.admin
+        if self.client and self.client.telegram_user_id == telegram_user_id:
+            return self.client
         return None
 
 
@@ -234,3 +239,109 @@ async def test_get_appointment_with_client_info_raises_if_appointment_not_found(
 
     with pytest.raises(AppointmentNotFoundError):
         await service.get_appointment_with_client_info(999)
+
+
+def _appointment_at(appointment_id, dt, client_id=7, status=AppointmentStatus.PENDING):
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        datetime=dt.strftime("%Y-%m-%d %H:%M:%S"),
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=status,
+        id=appointment_id,
+    )
+
+
+def _owning_client(telegram_user_id=555):
+    return User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=telegram_user_id,
+        ID=7,
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_updates_status_for_owner():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(days=1))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_raises_not_found_for_wrong_owner():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(days=1))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.confirm_appointment_by_client(1, telegram_user_id=999)
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_by_client_blocked_within_2h_when_cutoff_enforced():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(hours=1))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(CancellationWindowExpiredError):
+        await service.cancel_appointment_by_client(1, client.telegram_user_id, enforce_cutoff=True)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_by_client_blocked_for_past_appointment_when_cutoff_enforced():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now - timedelta(hours=1))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(CancellationWindowExpiredError):
+        await service.cancel_appointment_by_client(1, client.telegram_user_id, enforce_cutoff=True)
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_by_client_allowed_outside_2h_window():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(hours=3))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.cancel_appointment_by_client(1, client.telegram_user_id, enforce_cutoff=True)
+
+    assert appointment.status is AppointmentStatus.CANCELLED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_by_client_bypasses_cutoff_when_disabled():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(minutes=30))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.cancel_appointment_by_client(1, client.telegram_user_id, enforce_cutoff=False)
+
+    assert appointment.status is AppointmentStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_by_client_raises_not_found_for_wrong_owner():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(days=1))])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.cancel_appointment_by_client(1, telegram_user_id=999, enforce_cutoff=True)

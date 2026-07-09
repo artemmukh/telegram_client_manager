@@ -13,6 +13,16 @@ from bot.keyboards.client.appointment_history_kb import (
     appointment_history_card_kb,
     appointment_history_list_kb,
 )
+from bot.keyboards.client.appointment_manage_cb import (
+    ClientManageActionCB,
+    ClientManageCardCB,
+    ClientManagePageCB,
+)
+from bot.keyboards.client.appointment_manage_kb import (
+    appointment_manage_card_kb,
+    appointment_manage_empty_kb,
+    appointment_manage_list_kb,
+)
 from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
 from bot.keyboards.client.appointment_response_kb import (
     appointment_response_kb,
@@ -25,7 +35,6 @@ from bot.services.appointment.appointment_notifications import (
 )
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
 from bot.states.client.appointment_states import AppointmentResponseStates
-from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
@@ -82,13 +91,104 @@ def create_client_appointment_router(
     async def noop_button(callback_query: CallbackQuery):
         await callback_query.answer()
 
-    @router.callback_query(F.data == "client_manage_appointment")
-    async def manage_appointment(callback_query: CallbackQuery):
-        await callback_query.answer()
-        await callback_query.message.answer("Функция управления скоро будет доступна...")
-
     # Handler for appointment confirmation
     if appointment_management_service and notification_service:
+        @router.callback_query(F.data == "client_manage_appointment")
+        async def manage_appointment(callback_query: CallbackQuery):
+            await render_manage_list(callback_query, page=1)
+
+        @router.callback_query(ClientManagePageCB.filter())
+        async def manage_paginate(callback_query: CallbackQuery, callback_data: ClientManagePageCB):
+            await render_manage_list(callback_query, callback_data.page)
+
+        @router.callback_query(ClientManageCardCB.filter())
+        async def manage_open_card(callback_query: CallbackQuery, callback_data: ClientManageCardCB):
+            await render_manage_card(callback_query, callback_data.appointment_id, callback_data.page)
+
+        @router.callback_query(ClientManageActionCB.filter())
+        async def manage_action(callback_query: CallbackQuery, callback_data: ClientManageActionCB):
+            appointment_id = callback_data.appointment_id
+            page = callback_data.page
+
+            if callback_data.action == "confirm":
+                try:
+                    await appointment_management_service.confirm_appointment_by_client(
+                        appointment_id, callback_query.from_user.id
+                    )
+
+                    appointment, client = await appointment_management_service.get_appointment_with_client_info(
+                        appointment_id
+                    )
+
+                    await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
+                    await callback_query.answer()
+
+                    if notification_service and appointment.created_by_telegram_id:
+                        try:
+                            await notification_service.notify_admin_confirmation(
+                                appointment.created_by_telegram_id,
+                                appointment,
+                                client.full_name if client else "Неизвестный клиент",
+                            )
+                        except Exception:
+                            pass  # Graceful fail если не получилось отправить
+                except AppointmentNotFoundError:
+                    await callback_query.answer("Запись не найдена", show_alert=True)
+                except BotException as e:
+                    await callback_query.answer(str(e), show_alert=True)
+                return
+
+            if callback_data.action == "cancel_ask":
+                await callback_query.message.edit_text(
+                    "Вы уверены? Это действие нельзя отменить.",
+                    reply_markup=cancel_confirmation_kb(
+                        yes_callback=ClientManageActionCB(
+                            action="cancel_yes", appointment_id=appointment_id, page=page
+                        ).pack(),
+                        no_callback=ClientManageActionCB(
+                            action="cancel_no", appointment_id=appointment_id, page=page
+                        ).pack(),
+                    ),
+                )
+                await callback_query.answer()
+                return
+
+            if callback_data.action == "cancel_yes":
+                try:
+                    await appointment_management_service.cancel_appointment_by_client(
+                        appointment_id, callback_query.from_user.id, enforce_cutoff=True
+                    )
+
+                    appointment, client = await appointment_management_service.get_appointment_with_client_info(
+                        appointment_id
+                    )
+
+                    if appointment_scheduler:
+                        await appointment_scheduler.cancel_appointment_reminders(appointment_id)
+                        await appointment_scheduler.cancel_appointment_completions(appointment_id)
+
+                    await callback_query.message.edit_text("✅ Ваша запись отменена")
+                    await callback_query.answer()
+
+                    if notification_service and appointment.created_by_telegram_id:
+                        try:
+                            await notification_service.notify_admin_cancellation(
+                                appointment.created_by_telegram_id,
+                                appointment,
+                                client.full_name if client else "Неизвестный клиент",
+                            )
+                        except Exception:
+                            pass  # Graceful fail если не получилось отправить
+                except AppointmentNotFoundError:
+                    await callback_query.answer("Запись не найдена", show_alert=True)
+                except BotException as e:
+                    await callback_query.answer(str(e), show_alert=True)
+                return
+
+            if callback_data.action == "cancel_no":
+                await render_manage_card(callback_query, appointment_id, page)
+                return
+
         @router.callback_query(F.data.startswith("appt_confirm:"))
         async def handle_appointment_confirm(callback_query: CallbackQuery):
             """Handle appointment confirmation button."""
@@ -96,8 +196,8 @@ def create_client_appointment_router(
                 appointment_id = int(callback_query.data.split(":")[1])
 
                 # Update status to CONFIRMED
-                appointment = await appointment_management_service.update_status(
-                    appointment_id, AppointmentStatus.CONFIRMED
+                appointment = await appointment_management_service.confirm_appointment_by_client(
+                    appointment_id, callback_query.from_user.id
                 )
 
                 # Get appointment and client info for notification
@@ -137,7 +237,10 @@ def create_client_appointment_router(
 
                 await callback_query.message.edit_text(
                     "Вы уверены? Это действие нельзя отменить.",
-                    reply_markup=cancel_confirmation_kb(),
+                    reply_markup=cancel_confirmation_kb(
+                        yes_callback="appt_cancel_confirm_yes",
+                        no_callback="appt_cancel_confirm_no",
+                    ),
                 )
                 await callback_query.answer()
             except BotException as e:
@@ -151,9 +254,10 @@ def create_client_appointment_router(
                 data = await state.get_data()
                 appointment_id = data.get("appointment_id")
 
-                # Update status to CANCELLED
-                appointment = await appointment_management_service.update_status(
-                    appointment_id, AppointmentStatus.CANCELLED
+                # Update status to CANCELLED (2h cutoff does not apply to the
+                # reminder-triggered flow)
+                appointment = await appointment_management_service.cancel_appointment_by_client(
+                    appointment_id, callback_query.from_user.id, enforce_cutoff=False
                 )
 
                 # Get appointment and client info for notification
@@ -248,6 +352,56 @@ def create_client_appointment_router(
         await callback_query.message.edit_text(
             build_history_card_text(appointment),
             reply_markup=appointment_history_card_kb(tab, page),
+        )
+
+    async def render_manage_list(callback_query: CallbackQuery, page: int) -> None:
+        try:
+            result = await pagination_service.paginate_active_client_appointments(
+                callback_query.from_user.id, page,
+            )
+
+            if result.total_count == 0:
+                await callback_query.message.edit_text(
+                    "У вас нет активных записей.",
+                    reply_markup=appointment_manage_empty_kb(),
+                )
+                await callback_query.answer()
+                return
+
+            text = f"🔧 Активные записи ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"
+
+            await callback_query.message.edit_text(
+                text,
+                reply_markup=appointment_manage_list_kb(
+                    result.items, result.current_page, result.total_pages,
+                ),
+            )
+            await callback_query.answer()
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                await callback_query.answer()
+            else:
+                logger.warning(f"TelegramBadRequest in render_manage_list: {e}")
+                await callback_query.answer("Ошибка редактирования сообщения", show_alert=False)
+        except PaginationError as e:
+            logger.warning(f"Pagination error in render_manage_list: {e}")
+            await callback_query.answer(str(e), show_alert=True)
+        except Exception as e:
+            logger.exception(f"Unexpected error in render_manage_list: {e}")
+            await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
+
+    async def render_manage_card(callback_query: CallbackQuery, appointment_id: int, page: int) -> None:
+        appointment = await appointment_management_service.get_appointment_for_client(
+            appointment_id, callback_query.from_user.id,
+        )
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_history_card_text(appointment),
+            reply_markup=appointment_manage_card_kb(appointment_id, page),
         )
 
     return router

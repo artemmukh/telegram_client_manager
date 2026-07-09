@@ -7,6 +7,7 @@ from bot.exceptions.exceptions import PaginationError
 from bot.models.appointment import Appointment
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.services.utils.date_parser import get_current_tashkent_datetime
+from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.pagination import APPOINTMENTS_PER_PAGE
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,14 @@ class AppointmentPaginationService:
 
     def __init__(self, appointment_repository: AppointmentRepository):
         self.appointment_repo = appointment_repository
+
+    @staticmethod
+    def _paginate_math(total_count: int, page: int, per_page: int) -> tuple[int, int]:
+        """Вычислить total_pages и склэмпленный page для набора из total_count элементов."""
+        total_pages = ceil(total_count / per_page) if total_count > 0 else 1
+        page = max(1, min(page, total_pages))
+
+        return page, total_pages
 
     async def paginate_appointments(
         self,
@@ -66,9 +75,7 @@ class AppointmentPaginationService:
         else:
             raise PaginationError(f"Неизвестный режим пагинации: {mode}")
 
-        total_pages = ceil(total_count / APPOINTMENTS_PER_PAGE) if total_count > 0 else 1
-
-        page = max(1, min(page, total_pages))
+        page, total_pages = self._paginate_math(total_count, page, APPOINTMENTS_PER_PAGE)
 
         return AppointmentPaginationResult(
             items=items,
@@ -135,9 +142,56 @@ class AppointmentPaginationService:
             raise PaginationError(f"Неизвестная вкладка истории: {tab}")
 
         total_count = len(filtered)
-        total_pages = ceil(total_count / per_page) if total_count > 0 else 1
+        page, total_pages = self._paginate_math(total_count, page, per_page)
 
-        page = max(1, min(page, total_pages))
+        items = filtered[(page - 1) * per_page: page * per_page]
+
+        return AppointmentPaginationResult(
+            items=items,
+            current_page=page,
+            total_pages=total_pages,
+            total_count=total_count,
+        )
+
+    async def paginate_active_client_appointments(
+        self,
+        telegram_id: int,
+        page: int,
+        per_page: int | None = None,
+    ) -> AppointmentPaginationResult:
+        """
+        Получить страницу активных (будущих, PENDING/CONFIRMED) записей клиента
+        для сценария управления записью.
+        """
+        per_page = per_page or APPOINTMENTS_PER_PAGE
+
+        appointments = await self.appointment_repo.get_appointments_by_telegram_id(telegram_id)
+        now = get_current_tashkent_datetime()
+
+        active = []
+
+        for appointment in appointments:
+            try:
+                appointment_dt = datetime.fromisoformat(appointment.datetime)
+            except ValueError:
+                logger.warning(
+                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
+                )
+                continue
+
+            if appointment_dt < now:
+                continue
+
+            if appointment.status not in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                continue
+
+            active.append((appointment_dt, appointment))
+
+        active.sort(key=lambda pair: (pair[0], pair[1].id))
+        filtered = [appointment for _, appointment in active]
+
+        total_count = len(filtered)
+        page, total_pages = self._paginate_math(total_count, page, per_page)
 
         items = filtered[(page - 1) * per_page: page * per_page]
 

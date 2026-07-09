@@ -13,12 +13,12 @@ def appointment_response_kb(appointment_id: int):
     return builder.as_markup()
 
 
-def cancel_confirmation_kb():
+def cancel_confirmation_kb(yes_callback: str, no_callback: str):
     """Keyboard for cancellation confirmation dialog."""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="✅ Да, отменить", callback_data="appt_cancel_confirm_yes")
-    builder.button(text="❌ Нет, вернуться", callback_data="appt_cancel_confirm_no")
+    builder.button(text="✅ Да, отменить", callback_data=yes_callback)
+    builder.button(text="❌ Нет, вернуться", callback_data=no_callback)
 
     builder.adjust(1, 1)
 

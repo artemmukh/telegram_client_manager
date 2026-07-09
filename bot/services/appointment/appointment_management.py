@@ -1,4 +1,6 @@
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
+from datetime import datetime, timedelta
+
+from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, CancellationWindowExpiredError
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
@@ -8,11 +10,13 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
-from bot.services.utils.date_parser import get_current_tashkent_time
+from bot.services.utils.date_parser import get_current_tashkent_time, get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_datetime, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
+
+CANCELLATION_CUTOFF_HOURS = 2
 
 
 class AppointmentManagement:
@@ -162,6 +166,27 @@ class AppointmentManagement:
 
         return appointment
 
+    async def confirm_appointment_by_client(self, appointment_id: int, telegram_user_id: int) -> Appointment:
+        appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
+
+        return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
+
+    async def cancel_appointment_by_client(
+        self, appointment_id: int, telegram_user_id: int, enforce_cutoff: bool = True
+    ) -> Appointment:
+        appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
+
+        if enforce_cutoff and self._is_within_cancellation_cutoff(appointment):
+            raise CancellationWindowExpiredError(
+                "Отмена возможна не позднее чем за 2 часа, свяжитесь с клиникой"
+            )
+
+        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
 
@@ -224,3 +249,9 @@ class AppointmentManagement:
             raise AppointmentNotFoundError()
 
         return appointment
+
+    def _is_within_cancellation_cutoff(self, appointment: Appointment) -> bool:
+        appointment_dt = datetime.fromisoformat(appointment.datetime)
+        now = get_current_tashkent_datetime()
+
+        return appointment_dt - now < timedelta(hours=CANCELLATION_CUTOFF_HOURS)
