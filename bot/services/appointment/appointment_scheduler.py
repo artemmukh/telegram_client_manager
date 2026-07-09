@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta
 
+import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.exceptions.appointment_exceptions import (
@@ -20,6 +21,11 @@ from bot.services.appointment.appointment_jobs import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _current_tashkent_time() -> datetime:
+    """Current time in Asia/Tashkent as a naive datetime, comparable to appointment.datetime."""
+    return datetime.now(pytz.timezone("Asia/Tashkent")).replace(tzinfo=None)
 
 
 class AppointmentScheduler:
@@ -59,6 +65,7 @@ class AppointmentScheduler:
 
         try:
             appointment_dt = datetime.fromisoformat(appointment.datetime)
+            now = _current_tashkent_time()
 
             reminder_times = [
                 (appointment_dt - timedelta(hours=24), 24),
@@ -66,6 +73,13 @@ class AppointmentScheduler:
             ]
 
             for reminder_dt, hours_before in reminder_times:
+                if reminder_dt <= now:
+                    logger.info(
+                        f"Skipping past-due {hours_before}h reminder for appointment "
+                        f"{appointment.id} (would have run at {reminder_dt.isoformat()})"
+                    )
+                    continue
+
                 job_id = f"appt_{appointment.id}_{hours_before}h"
 
                 try:
@@ -134,6 +148,13 @@ class AppointmentScheduler:
         try:
             appointment_dt = datetime.fromisoformat(appointment.datetime)
             completion_time = appointment_dt + timedelta(hours=1)
+
+            if completion_time <= _current_tashkent_time():
+                logger.info(
+                    f"Skipping past-due completion for appointment {appointment.id} "
+                    f"(would have run at {completion_time.isoformat()})"
+                )
+                return
 
             job_id = f"appt_{appointment.id}_complete"
 

@@ -106,12 +106,12 @@ async def main():
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service, appointment_scheduler
     ))
     dp.include_router(create_admin_appointment_browser_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler
+        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service
     ))
 
     #client handlers
     dp.include_router(create_client_appointment_router(
-        appointment_management_service, notification_service
+        appointment_management_service, notification_service, appointment_scheduler
     ))
 
     try:

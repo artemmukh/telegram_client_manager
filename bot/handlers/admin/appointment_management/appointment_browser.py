@@ -40,6 +40,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_confirm_new_datetime_kb,
     appointment_confirm_new_purpose_kb,
     appointment_delete_confirm_kb,
+    appointment_delete_notify_kb,
     appointment_list_kb,
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_admin_appointment_browser_router(
-    appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None
+    appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None, notification_service=None
 ):
     router = Router()
 
@@ -214,6 +215,14 @@ def create_admin_appointment_browser_router(
             elif new_status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
                 await appointment_scheduler.schedule_appointment_completion(appointment)
 
+        if notification_service and new_status == AppointmentStatus.CANCELLED:
+            try:
+                await notification_service.notify_client_appointment_cancelled_by_admin(appointment)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to notify client about cancellation for appointment {callback_data.appointment_id}: {e}"
+                )
+
         await callback_query.answer("Статус обновлён")
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
@@ -248,6 +257,32 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "confirm_delete"))
     async def confirm_delete(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Уведомить клиента об удалении записи?",
+            reply_markup=appointment_delete_notify_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+            ),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "confirm_delete_notify"))
+    async def confirm_delete_notify(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await finish_delete(callback_query, callback_data, state, notify=True)
+
+    @router.callback_query(ApptActionCB.filter(F.action == "confirm_delete_silent"))
+    async def confirm_delete_silent(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await finish_delete(callback_query, callback_data, state, notify=False)
+
+    async def finish_delete(
+        callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext, *, notify: bool,
+    ) -> None:
+        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+
         try:
             await appt_mng.delete_appointment(callback_data.appointment_id)
         except BotException as e:
@@ -257,6 +292,14 @@ def create_admin_appointment_browser_router(
         if appointment_scheduler:
             await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
             await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
+
+        if notify and notification_service and appointment:
+            try:
+                await notification_service.notify_client_appointment_cancelled_by_admin(appointment)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to notify client about deletion for appointment {callback_data.appointment_id}: {e}"
+                )
 
         await render_list(
             callback_query, state,
@@ -338,6 +381,8 @@ def create_admin_appointment_browser_router(
             await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
             await appointment_scheduler.schedule_appointment_completion(appointment)
 
+        await notify_appointment_changed(appointment, callback_data.appointment_id)
+
         await render_card(
             callback_query, state,
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
@@ -396,6 +441,8 @@ def create_admin_appointment_browser_router(
             await callback_query.answer(f"Ошибка обновления записи: {e}", show_alert=True)
             return
 
+        await notify_appointment_changed(appointment, callback_data.appointment_id)
+
         await render_card(
             callback_query, state,
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
@@ -406,6 +453,17 @@ def create_admin_appointment_browser_router(
         await callback_query.answer()
 
     # --- Shared renderers ---
+
+    async def notify_appointment_changed(appointment, appointment_id: int) -> None:
+        if not notification_service:
+            return
+
+        try:
+            await notification_service.notify_client_appointment_changed(appointment)
+        except Exception as e:
+            logger.warning(
+                f"Failed to notify client about changes for appointment {appointment_id}: {e}"
+            )
 
     async def render_list(
         callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, prefix: str = "",

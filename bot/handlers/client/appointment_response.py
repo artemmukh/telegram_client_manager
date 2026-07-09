@@ -21,6 +21,7 @@ from bot.utils.role import RoleFilter
 def create_client_appointment_router(
     appointment_management_service: AppointmentManagement = None,
     notification_service: AppointmentNotificationService = None,
+    appointment_scheduler=None,
 ) -> Router:
     router = Router()
 
@@ -122,6 +123,10 @@ def create_client_appointment_router(
                 appointment, client = await appointment_management_service.get_appointment_with_client_info(
                     appointment_id
                 )
+
+                if appointment_scheduler:
+                    await appointment_scheduler.cancel_appointment_reminders(appointment_id)
+                    await appointment_scheduler.cancel_appointment_completions(appointment_id)
 
                 await callback_query.message.edit_text("✅ Ваша запись отменена")
                 await callback_query.answer()

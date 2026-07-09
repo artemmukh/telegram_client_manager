@@ -17,7 +17,8 @@ SELECT
     c.name AS clinic_name,
     a.admin_tg_id,
     u.full_name AS client_full_name,
-    u.phone AS client_phone
+    u.phone AS client_phone,
+    a.notification_message_id
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
@@ -55,6 +56,7 @@ class AppointmentRepository:
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 admin_tg_id INTEGER DEFAULT NULL,
+                notification_message_id INTEGER DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -71,6 +73,12 @@ class AppointmentRepository:
         if "admin_tg_id" not in columns:
             await self.connection.execute(
                 "ALTER TABLE appointments ADD COLUMN admin_tg_id INTEGER DEFAULT NULL"
+            )
+
+        # Ensure notification_message_id column exists for existing databases
+        if "notification_message_id" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN notification_message_id INTEGER DEFAULT NULL"
             )
 
         await self.connection.execute("""
@@ -105,7 +113,8 @@ class AppointmentRepository:
                 a.id, a.clinic_id, a.client_id, a.admin_id,
                 a.datetime, a.purpose, a.created_by, a.status, a.created_at,
                 c.name AS clinic_name, a.admin_tg_id,
-                u.full_name AS client_full_name, u.phone AS client_phone
+                u.full_name AS client_full_name, u.phone AS client_phone,
+                a.notification_message_id
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -122,9 +131,10 @@ class AppointmentRepository:
             """
             INSERT INTO appointments(
                 clinic_id, client_id, admin_id,
-                datetime, purpose, created_by, status, admin_tg_id, created_at
+                datetime, purpose, created_by, status, admin_tg_id, created_at,
+                notification_message_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 appointment.clinic_id,
@@ -136,6 +146,7 @@ class AppointmentRepository:
                 appointment.status.value,
                 appointment.created_by_telegram_id,
                 appointment.created_at,
+                appointment.notification_message_id,
             ),
         )
         await self.connection.commit()
@@ -169,6 +180,13 @@ class AppointmentRepository:
         await self.connection.execute(
             "UPDATE appointments SET status = ? WHERE id = ?",
             (status.value, appointment_id),
+        )
+        await self.connection.commit()
+
+    async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
+        await self.connection.execute(
+            "UPDATE appointments SET notification_message_id = ? WHERE id = ?",
+            (message_id, appointment_id),
         )
         await self.connection.commit()
 
@@ -309,4 +327,5 @@ class AppointmentRepository:
             created_by_telegram_id=row[10],
             client_full_name=row[11],
             client_phone=row[12],
+            notification_message_id=row[13],
         )

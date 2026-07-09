@@ -245,8 +245,9 @@ def create_admin_appointment_creation_router(
 
         notification_text = "Запись успешно создана!\n\n" + build_appointment_card(appointment)
         if notification_service:
-            notification_sent = await notification_service.notify_client_appointment_with_buttons(appointment)
-            if notification_sent:
+            message_id = await notification_service.notify_client_appointment_with_buttons(appointment)
+            if message_id:
+                await appt_mng.update_notification_message_id(appointment.id, message_id)
                 notification_text += "\n✅ Уведомление отправлено клиенту"
             else:
                 notification_text += "\n⚠️ Не удалось отправить уведомление клиенту (нет Telegram ID)"

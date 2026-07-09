@@ -11,16 +11,23 @@ from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
 
+class FakeBotMessage:
+    def __init__(self, message_id=777):
+        self.message_id = message_id
+
+
 class FakeBotForIntegration:
     def __init__(self):
         self.sent_messages = []
 
-    async def send_message(self, chat_id, text, reply_markup=None):
+    async def send_message(self, chat_id, text, reply_markup=None, reply_parameters=None):
         self.sent_messages.append({
             'chat_id': chat_id,
             'text': text,
-            'reply_markup': reply_markup
+            'reply_markup': reply_markup,
+            'reply_parameters': reply_parameters,
         })
+        return FakeBotMessage()
 
 
 class FakeAppointmentRepoForIntegration:
@@ -123,7 +130,7 @@ async def test_phase2_complete_workflow():
 
     # Step 2: Notify client
     notification_sent = await notification_svc.notify_client_appointment_with_buttons(appointment)
-    assert notification_sent is True
+    assert notification_sent == 777
     assert len(bot.sent_messages) == 1
     assert bot.sent_messages[0]['chat_id'] == 12345
     assert "Вам назначена запись на прием" in bot.sent_messages[0]['text']

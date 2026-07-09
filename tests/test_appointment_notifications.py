@@ -1,27 +1,33 @@
 import pytest
+from aiogram.types import ReplyParameters
 
 from bot.models.appointment import Appointment
 from bot.models.user import User
-from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+from bot.services.appointment.appointment_notifications import (
+    REMINDER_TEXT,
+    AppointmentNotificationService,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
 
 class FakeBotMessage:
-    def __init__(self, text, reply_markup):
+    def __init__(self, text, reply_markup, message_id=777):
         self.text = text
         self.reply_markup = reply_markup
+        self.message_id = message_id
 
 
 class FakeBot:
     def __init__(self):
         self.sent_messages = []
 
-    async def send_message(self, chat_id, text, reply_markup=None):
+    async def send_message(self, chat_id, text, reply_markup=None, reply_parameters=None):
         self.sent_messages.append({
             'chat_id': chat_id,
             'text': text,
-            'reply_markup': reply_markup
+            'reply_markup': reply_markup,
+            'reply_parameters': reply_parameters,
         })
         return FakeBotMessage(text, reply_markup)
 
@@ -72,7 +78,7 @@ async def test_notify_client_appointment_sends_message_with_buttons():
 
     result = await service.notify_client_appointment_with_buttons(appointment)
 
-    assert result is True
+    assert result == 777
     assert len(bot.sent_messages) == 1
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 12345
@@ -93,7 +99,7 @@ async def test_notify_client_appointment_returns_false_when_user_not_found():
 
     result = await service.notify_client_appointment_with_buttons(appointment)
 
-    assert result is False
+    assert result is None
     assert len(bot.sent_messages) == 0
 
 
@@ -110,7 +116,7 @@ async def test_notify_client_appointment_returns_false_when_telegram_id_missing(
 
     result = await service.notify_client_appointment_with_buttons(appointment)
 
-    assert result is False
+    assert result is None
     assert len(bot.sent_messages) == 0
 
 
@@ -131,3 +137,253 @@ async def test_notify_admin_cancellation():
     assert "Иванов Иван" in msg['text']
     assert "отменил" in msg['text']
     assert "2026-07-10 14:30" in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reminder_without_buttons_replies_when_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_reminder_without_buttons(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert msg['text'] == REMINDER_TEXT
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reminder_without_buttons_no_reply_parameters_when_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = None
+
+    result = await service.notify_client_reminder_without_buttons(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['text'] == REMINDER_TEXT
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reminder_without_buttons_returns_false_when_no_telegram_id():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reminder_without_buttons(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reminder_with_buttons_replies_when_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_reminder_with_buttons(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert msg['text'] == REMINDER_TEXT
+    assert msg['reply_markup'] is not None
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reminder_with_buttons_no_reply_parameters_when_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = None
+
+    result = await service.notify_client_reminder_with_buttons(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['text'] == REMINDER_TEXT
+    assert msg['reply_markup'] is not None
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reminder_with_buttons_returns_false_when_no_telegram_id():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reminder_with_buttons(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_cancelled_by_admin_replies_when_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_appointment_cancelled_by_admin(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "отменена администратором" in msg['text']
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_cancelled_by_admin_no_reply_parameters_when_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = None
+
+    result = await service.notify_client_appointment_cancelled_by_admin(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "отменена администратором" in msg['text']
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_cancelled_by_admin_returns_false_when_no_telegram_id():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_appointment_cancelled_by_admin(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_changed_sends_updated_details():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_appointment_changed(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "изменены администратором" in msg['text']
+    assert "2026-07-10 14:30" in msg['text']
+    assert "Консультация" in msg['text']
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_changed_no_reply_parameters_when_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = None
+
+    result = await service.notify_client_appointment_changed(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "изменены администратором" in msg['text']
+    assert "2026-07-10 14:30" in msg['text']
+    assert "Консультация" in msg['text']
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_changed_returns_false_when_no_telegram_id():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_appointment_changed(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0

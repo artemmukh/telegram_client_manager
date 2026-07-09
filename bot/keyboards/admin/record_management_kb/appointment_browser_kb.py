@@ -174,6 +174,26 @@ def appointment_delete_confirm_kb(appointment_id: int, mode: str, page: int) -> 
     return builder.as_markup()
 
 
+def appointment_delete_notify_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="✅ Да, уведомить",
+        callback_data=ApptActionCB(
+            action="confirm_delete_notify", appointment_id=appointment_id, mode=mode, page=page,
+        ).pack(),
+    )
+    builder.button(
+        text="🔕 Нет, без уведомления",
+        callback_data=ApptActionCB(
+            action="confirm_delete_silent", appointment_id=appointment_id, mode=mode, page=page,
+        ).pack(),
+    )
+
+    builder.adjust(1, 1)
+    return builder.as_markup()
+
+
 def appointment_confirm_new_datetime_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 

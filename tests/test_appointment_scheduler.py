@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
-from bot.services.appointment.appointment_scheduler import AppointmentScheduler
+from bot.services.appointment.appointment_scheduler import (
+    AppointmentScheduler,
+    _current_tashkent_time,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 
@@ -28,8 +31,8 @@ def mock_user_repo():
 def mock_notification_service():
     """Mock AppointmentNotificationService."""
     service = AsyncMock()
-    service.notify_client_appointment_without_buttons = AsyncMock(return_value=True)
-    service.notify_client_appointment_with_buttons = AsyncMock(return_value=True)
+    service.notify_client_reminder_without_buttons = AsyncMock(return_value=True)
+    service.notify_client_reminder_with_buttons = AsyncMock(return_value=True)
     service.notify_admin_upcoming_appointment = AsyncMock()
     return service
 
@@ -190,7 +193,7 @@ async def test_send_reminder_job_sends_message_if_pending(
     """Test that reminder job sends message when appointment is PENDING (24h reminder)."""
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
     mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
-    mock_notification_service.notify_client_appointment_without_buttons = AsyncMock(return_value=True)
+    mock_notification_service.notify_client_reminder_without_buttons = AsyncMock(return_value=True)
     mock_notification_service.notify_admin_upcoming_appointment = AsyncMock()
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
@@ -217,7 +220,7 @@ async def test_send_reminder_job_sends_message_if_pending(
             await appointment_scheduler._send_reminder_job(sample_appointment.id, hours_before=24)
 
             mock_appointment_repo.get_appointment_by_id.assert_called_once_with(sample_appointment.id)
-            mock_notification_service.notify_client_appointment_without_buttons.assert_called_once_with(
+            mock_notification_service.notify_client_reminder_without_buttons.assert_called_once_with(
                 sample_appointment
             )
 
@@ -239,7 +242,7 @@ async def test_send_reminder_job_sends_message_if_confirmed(
     )
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
     mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
-    mock_notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=True)
+    mock_notification_service.notify_client_reminder_with_buttons = AsyncMock(return_value=True)
     mock_notification_service.notify_admin_upcoming_appointment = AsyncMock()
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
@@ -264,7 +267,7 @@ async def test_send_reminder_job_sends_message_if_confirmed(
 
             await appointment_scheduler._send_reminder_job(confirmed_appointment.id, hours_before=2)
 
-            mock_notification_service.notify_client_appointment_with_buttons.assert_called_once_with(
+            mock_notification_service.notify_client_reminder_with_buttons.assert_called_once_with(
                 confirmed_appointment
             )
 
@@ -306,8 +309,8 @@ async def test_send_reminder_job_skips_if_cancelled(
 
             await appointment_scheduler._send_reminder_job(cancelled_appointment.id)
 
-            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
-            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -347,8 +350,8 @@ async def test_send_reminder_job_skips_if_completed(
 
             await appointment_scheduler._send_reminder_job(completed_appointment.id)
 
-            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
-            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -388,8 +391,8 @@ async def test_send_reminder_job_skips_if_no_show(
 
             await appointment_scheduler._send_reminder_job(no_show_appointment.id)
 
-            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
-            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -420,8 +423,8 @@ async def test_send_reminder_job_handles_missing_appointment(
             # Should not raise error
             await appointment_scheduler._send_reminder_job(999)
 
-            mock_notification_service.notify_client_appointment_without_buttons.assert_not_called()
-            mock_notification_service.notify_client_appointment_with_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
+            mock_notification_service.notify_client_reminder_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -435,7 +438,7 @@ async def test_send_reminder_job_handles_notification_failure(
     mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
 
     # Client notification fails (exception)
-    mock_notification_service.notify_client_appointment_without_buttons = AsyncMock(
+    mock_notification_service.notify_client_reminder_without_buttons = AsyncMock(
         side_effect=Exception("Network error")
     )
     # But admin notification should still be attempted
@@ -465,7 +468,7 @@ async def test_send_reminder_job_handles_notification_failure(
             await appointment_scheduler._send_reminder_job(sample_appointment.id, hours_before=24)
 
             # Verify client notification was attempted
-            mock_notification_service.notify_client_appointment_without_buttons.assert_called_once()
+            mock_notification_service.notify_client_reminder_without_buttons.assert_called_once()
             # Verify admin notification was still attempted despite client failure
             mock_notification_service.notify_admin_upcoming_appointment.assert_called_once()
 
@@ -508,6 +511,61 @@ async def test_appointment_without_id_not_scheduled(
     await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
 
     assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_reminders_not_scheduled_when_appointment_too_soon(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Both the 24h and 2h reminder times are already in the past when the
+    appointment itself is only 1 hour away, so no jobs should be scheduled."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(hours=1)).isoformat()
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_24h_reminder_skipped_but_2h_reminder_still_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """When the appointment is 3 hours away, the 24h reminder time has already
+    passed and must be skipped, while the 2h reminder is still in the future
+    and must be scheduled."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(hours=3)).isoformat()
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    job_ids = {job.id for job in jobs}
+    assert job_ids == {f"appt_{sample_appointment.id}_2h"}
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_reminder_scheduling_does_not_call_add_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Regression test for the past-due guard: add_job must not be invoked at
+    all when every computed reminder time is already in the past."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(minutes=30)).isoformat()
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+        mock_add_job.assert_not_called()
 
     scheduler.shutdown(wait=False)
 
@@ -869,6 +927,41 @@ async def test_appointment_without_id_completion_not_scheduled(
     await appointment_scheduler.schedule_appointment_completion(sample_appointment)
 
     assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_completion_not_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """When appointment datetime + 1h completion time is already in the past
+    (e.g. a very old appointment), no completion job should be scheduled."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=5)).isoformat()
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_completion_scheduling_does_not_call_add_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Regression test for the past-due guard: add_job must not be invoked
+    when the computed completion time is already in the past."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(minutes=90)).isoformat()
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+
+        mock_add_job.assert_not_called()
 
     scheduler.shutdown(wait=False)
 

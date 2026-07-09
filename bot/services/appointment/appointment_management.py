@@ -147,6 +147,9 @@ class AppointmentManagement:
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
         return await self.appointment_repository.get_appointment_by_id(appointment_id)
 
+    async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
+        await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
+
     async def delete_appointment(self, appointment_id: int) -> None:
         if not await self.appointment_repository.appointment_exists(appointment_id):
             raise AppointmentNotFoundError()

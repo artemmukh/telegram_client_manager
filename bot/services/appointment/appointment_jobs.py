@@ -72,15 +72,15 @@ async def send_reminder_job(appointment_id: int, hours_before: int = 24) -> None
 
         try:
             if hours_before == 24:
-                # 24h reminder: text only, NO buttons
+                # 24h reminder: short reply, NO buttons
                 notification_sent = (
-                    await notification_service.notify_client_appointment_without_buttons(appointment)
+                    await notification_service.notify_client_reminder_without_buttons(appointment)
                 )
                 reminder_type = "24h (no buttons)"
             elif hours_before == 2:
-                # 2h reminder: text WITH buttons
+                # 2h reminder: short reply WITH buttons
                 notification_sent = (
-                    await notification_service.notify_client_appointment_with_buttons(appointment)
+                    await notification_service.notify_client_reminder_with_buttons(appointment)
                 )
                 reminder_type = "2h (with buttons)"
             else:
