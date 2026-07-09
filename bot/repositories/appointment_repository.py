@@ -211,6 +211,87 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
+    async def get_appointments_page(self, page: int, per_page: int = 10) -> list[Appointment]:
+        """Получить страницу всех записей"""
+        offset = (page - 1) * per_page
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + """
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (per_page, offset),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def get_appointments_by_name_page(
+        self, full_name: str, page: int, per_page: int = 10
+    ) -> list[Appointment]:
+        """Получить страницу результатов поиска записей по имени клиента"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
+        conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        offset = (page - 1) * per_page
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE ({conditions})
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT ? OFFSET ?
+        """
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def count_appointments_by_name(self, full_name: str) -> int:
+        """Получить количество результатов поиска записей по имени клиента"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return 0
+
+        conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        sql = f"""
+        SELECT COUNT(*)
+        FROM appointments a
+        LEFT JOIN users u ON u.id = a.client_id
+        WHERE ({conditions})
+        """
+        cursor = await self.connection.execute(sql, params)
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_appointments_by_client_id_page(
+        self, client_id: int, page: int, per_page: int = 10
+    ) -> list[Appointment]:
+        """Получить страницу записей конкретного клиента"""
+        offset = (page - 1) * per_page
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + """
+            WHERE a.client_id = ?
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (client_id, per_page, offset),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def count_appointments_by_client_id(self, client_id: int) -> int:
+        """Получить количество записей конкретного клиента"""
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM appointments WHERE client_id = ?",
+            (client_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
     def _row_to_appointment(self, row) -> Appointment | None:
         if row is None:
             return None

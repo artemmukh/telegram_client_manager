@@ -1,0 +1,464 @@
+import logging
+
+from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+
+from bot.exceptions.exceptions import BotException, PaginationError
+from bot.exceptions.user_exceptions import ValidationError
+from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
+    edit_tracked_message,
+    remember_tracked_message,
+)
+from bot.handlers.utils.admin_utils.appointment_helpers import (
+    build_appointment_card,
+    datetime_processing,
+    purpose_processing,
+)
+from bot.handlers.utils.admin_utils.confirmations import show_confirmation
+from bot.handlers.utils.admin_utils.input_helpers import (
+    ask_full_name,
+    ask_phone,
+    edit_full_name,
+    edit_phone,
+    full_name_processing,
+    phone_processing,
+)
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
+    ApptActionCB,
+    ApptCardCB,
+    ApptPageCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
+    appointment_browser_back_to_search_kb,
+    appointment_browser_cancel_edit_kb,
+    appointment_browser_confirm_name_kb,
+    appointment_browser_confirm_phone_kb,
+    appointment_browser_search_kb,
+    appointment_card_kb,
+    appointment_confirm_new_datetime_kb,
+    appointment_confirm_new_purpose_kb,
+    appointment_delete_confirm_kb,
+    appointment_list_kb,
+)
+from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
+from bot.services.utils.date_parser import format_datetime_for_db
+from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
+from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.role import RoleFilter
+from bot.validators.validators import SEARCH_NAME_PATTERN
+
+logger = logging.getLogger(__name__)
+
+
+def create_admin_appointment_browser_router(
+    appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None
+):
+    router = Router()
+
+    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    pagination_service = AppointmentPaginationService(appointment_repo)
+
+    router.message.filter(RoleFilter("admin"))
+    router.callback_query.filter(RoleFilter("admin"))
+
+    # --- Entry ---
+
+    @router.callback_query(F.data == "browse_appointments")
+    async def browse_appointments(callback_query: CallbackQuery, state: FSMContext):
+        await state.clear()
+        await state.set_state(AppointmentBrowserStates.search_variant)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Выберите способ:",
+            reply_markup=appointment_browser_search_kb(),
+        )
+        await remember_tracked_message(state, callback_query.message)
+
+    # --- Search by full name ---
+
+    @router.callback_query(F.data == "appt_search_name")
+    async def search_by_name(callback_query: CallbackQuery, state: FSMContext):
+        await ask_full_name(
+            callback_query, state,
+            next_state=AppointmentBrowserStates.search_name,
+            reply_markup=appointment_browser_back_to_search_kb(),
+        )
+
+    @router.message(AppointmentBrowserStates.search_name, F.text)
+    async def process_search_name(message: Message, state: FSMContext):
+        if not await full_name_processing(
+            message, state,
+            next_state=AppointmentBrowserStates.confirm_search,
+            re_pattern=SEARCH_NAME_PATTERN,
+        ):
+            return
+        await show_confirmation(message, state, reply_markup=appointment_browser_confirm_name_kb())
+
+    @router.callback_query(AppointmentBrowserStates.confirm_search, F.data == "appt_edit_search_name")
+    async def edit_search_name(callback_query: CallbackQuery, state: FSMContext):
+        await edit_full_name(
+            callback_query, state,
+            edit_state=AppointmentBrowserStates.edit_search_full_name,
+            reply_markup=appointment_browser_back_to_search_kb(),
+        )
+
+    @router.message(AppointmentBrowserStates.edit_search_full_name, F.text)
+    async def process_edit_search_name(message: Message, state: FSMContext):
+        if not await full_name_processing(
+            message, state,
+            next_state=AppointmentBrowserStates.confirm_search,
+            re_pattern=SEARCH_NAME_PATTERN,
+        ):
+            return
+        await show_confirmation(message, state, reply_markup=appointment_browser_confirm_name_kb())
+
+    # --- Search by phone ---
+
+    @router.callback_query(F.data == "appt_search_phone")
+    async def search_by_phone(callback_query: CallbackQuery, state: FSMContext):
+        await ask_phone(
+            callback_query, state,
+            AppointmentBrowserStates.search_phone,
+            reply_markup=appointment_browser_back_to_search_kb(),
+        )
+
+    @router.message(AppointmentBrowserStates.search_phone, F.text)
+    async def process_search_phone(message: Message, state: FSMContext):
+        if not await phone_processing(message, state, final_state=AppointmentBrowserStates.confirm_search):
+            return
+        await show_confirmation(message, state, reply_markup=appointment_browser_confirm_phone_kb())
+
+    @router.callback_query(AppointmentBrowserStates.confirm_search, F.data == "appt_edit_search_phone")
+    async def edit_search_phone(callback_query: CallbackQuery, state: FSMContext):
+        await edit_phone(
+            callback_query, state,
+            edit_state=AppointmentBrowserStates.edit_search_phone,
+            reply_markup=appointment_browser_back_to_search_kb(),
+        )
+
+    @router.message(AppointmentBrowserStates.edit_search_phone, F.text)
+    async def process_edit_search_phone(message: Message, state: FSMContext):
+        if not await phone_processing(message, state, final_state=AppointmentBrowserStates.confirm_search):
+            return
+        await show_confirmation(message, state, reply_markup=appointment_browser_confirm_phone_kb())
+
+    # --- Show all appointments (skips search entirely) ---
+
+    @router.callback_query(F.data == "appt_search_all")
+    async def search_all(callback_query: CallbackQuery, state: FSMContext):
+        await state.clear()
+        await render_list(callback_query, state, mode="list", page=1)
+
+    # --- Resolve the search query and show results ---
+
+    @router.callback_query(AppointmentBrowserStates.confirm_search, F.data == "appt_approve_search")
+    async def approve_search(callback_query: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+
+        if data.get("phone"):
+            client = await appt_mng.find_client_by_phone(data["phone"])
+            if client is None:
+                await callback_query.answer("Клиент не был найден.", show_alert=True)
+                return
+
+            await state.update_data(search_data={"client_id": client.ID})
+            await render_list(callback_query, state, mode="phone", page=1)
+            return
+
+        if data.get("full_name"):
+            await state.update_data(search_data={"full_name": data["full_name"]})
+            await render_list(callback_query, state, mode="search", page=1)
+            return
+
+        await callback_query.answer("Укажите телефон или ФИО для поиска.", show_alert=True)
+
+    # --- Pagination ---
+
+    @router.callback_query(ApptPageCB.filter())
+    async def paginate(callback_query: CallbackQuery, callback_data: ApptPageCB, state: FSMContext):
+        await render_list(callback_query, state, mode=callback_data.mode, page=callback_data.page)
+
+    # --- Open an appointment's card ---
+
+    @router.callback_query(ApptCardCB.filter())
+    async def open_card(callback_query: CallbackQuery, callback_data: ApptCardCB, state: FSMContext):
+        await render_card(
+            callback_query, state,
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+
+    # --- Card actions: status ---
+
+    @router.callback_query(ApptActionCB.filter(F.action == "set_status"))
+    async def set_status(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        new_status = AppointmentStatus(callback_data.value)
+
+        try:
+            appointment = await appt_mng.update_status(callback_data.appointment_id, new_status)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        if appointment_scheduler:
+            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
+
+            if new_status in (
+                AppointmentStatus.CANCELLED,
+                AppointmentStatus.NO_SHOW,
+                AppointmentStatus.COMPLETED,
+            ):
+                await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
+            elif new_status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                await appointment_scheduler.schedule_appointment_completion(appointment)
+
+        await callback_query.answer("Статус обновлён")
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment),
+            reply_markup=appointment_card_kb(callback_data.appointment_id, callback_data.mode, callback_data.page),
+        )
+        await remember_tracked_message(state, callback_query.message)
+
+    # --- Card actions: delete ---
+
+    @router.callback_query(ApptActionCB.filter(F.action == "delete"))
+    async def start_delete(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await state.set_state(AppointmentBrowserStates.confirm_delete)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            f"⚠️ Удалить запись №{appointment.id} безвозвратно?",
+            reply_markup=appointment_delete_confirm_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+            ),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "cancel_delete"))
+    async def cancel_delete(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await render_card(
+            callback_query, state,
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "confirm_delete"))
+    async def confirm_delete(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        try:
+            await appt_mng.delete_appointment(callback_data.appointment_id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        if appointment_scheduler:
+            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
+            await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
+
+        await render_list(
+            callback_query, state,
+            mode=callback_data.mode, page=callback_data.page, prefix="✅ Запись удалена.\n\n",
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "cancel_edit"))
+    async def cancel_edit(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await render_card(
+            callback_query, state,
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+
+    # --- Collect and confirm new datetime ---
+
+    @router.callback_query(ApptActionCB.filter(F.action == "edit_datetime"))
+    async def start_edit_datetime(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await state.update_data(
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+        await state.set_state(AppointmentBrowserStates.new_datetime)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите новую дату и время (например: завтра в 15:00):",
+            reply_markup=appointment_browser_cancel_edit_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+            ),
+        )
+
+    @router.message(AppointmentBrowserStates.new_datetime, F.text)
+    async def process_new_datetime(message: Message, state: FSMContext):
+        if not await datetime_processing(message, state, AppointmentBrowserStates.confirm_new_datetime):
+            return
+
+        data = await state.get_data()
+        await message.delete()
+        await edit_tracked_message(
+            message.bot, state,
+            text=f"Новая дата и время: {data.get('appointment_datetime_display')}",
+            reply_markup=appointment_confirm_new_datetime_kb(data["appointment_id"], data["mode"], data["page"]),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "retry_new_datetime"))
+    async def retry_new_datetime(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await state.set_state(AppointmentBrowserStates.new_datetime)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите новую дату и время (например: завтра в 15:00):",
+            reply_markup=appointment_browser_cancel_edit_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+            ),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "approve_new_datetime"))
+    async def approve_new_datetime(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        data = await state.get_data()
+        parsed_dt = data.get("appointment_datetime_parsed")
+
+        if not parsed_dt:
+            await callback_query.answer(
+                "Ошибка: не удалось обработать дату. Попробуйте снова.", show_alert=True,
+            )
+            return
+
+        db_datetime = format_datetime_for_db(parsed_dt)
+
+        try:
+            appointment = await appt_mng.update_datetime(callback_data.appointment_id, db_datetime)
+        except ValidationError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        except BotException as e:
+            await callback_query.answer(f"Ошибка обновления записи: {e}", show_alert=True)
+            return
+
+        if appointment_scheduler:
+            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
+            await appointment_scheduler.schedule_appointment_reminders(appointment)
+            await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
+            await appointment_scheduler.schedule_appointment_completion(appointment)
+
+        await render_card(
+            callback_query, state,
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+
+    # --- Collect and confirm new purpose ---
+
+    @router.callback_query(ApptActionCB.filter(F.action == "edit_purpose"))
+    async def start_edit_purpose(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await state.update_data(
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+        await state.set_state(AppointmentBrowserStates.new_purpose)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите новое описание услуги:",
+            reply_markup=appointment_browser_cancel_edit_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+            ),
+        )
+
+    @router.message(AppointmentBrowserStates.new_purpose, F.text)
+    async def process_new_purpose(message: Message, state: FSMContext):
+        if not await purpose_processing(message, state, AppointmentBrowserStates.confirm_new_purpose):
+            return
+
+        data = await state.get_data()
+        await message.delete()
+        await edit_tracked_message(
+            message.bot, state,
+            text=f"Новая услуга: {data['purpose']}",
+            reply_markup=appointment_confirm_new_purpose_kb(data["appointment_id"], data["mode"], data["page"]),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "retry_new_purpose"))
+    async def retry_new_purpose(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await state.set_state(AppointmentBrowserStates.new_purpose)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите новое описание услуги:",
+            reply_markup=appointment_browser_cancel_edit_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+            ),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "approve_new_purpose"))
+    async def approve_new_purpose(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        data = await state.get_data()
+
+        try:
+            appointment = await appt_mng.update_purpose(callback_data.appointment_id, data["purpose"])
+        except ValidationError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        except BotException as e:
+            await callback_query.answer(f"Ошибка обновления записи: {e}", show_alert=True)
+            return
+
+        await render_card(
+            callback_query, state,
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        )
+
+    @router.callback_query(F.data == "noop")
+    async def noop_button(callback_query: CallbackQuery):
+        await callback_query.answer()
+
+    # --- Shared renderers ---
+
+    async def render_list(
+        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, prefix: str = "",
+    ) -> None:
+        try:
+            search_data = None
+            if mode in ("search", "phone"):
+                data = await state.get_data()
+                search_data = data.get("search_data") or {}
+
+            result = await pagination_service.paginate_appointments(mode, page, search_data)
+
+            titles = {
+                "list": "📒 Все записи",
+                "search": "🔍 Результаты поиска",
+                "phone": "📞 Записи клиента",
+            }
+            title = titles.get(mode, "📒 Записи")
+            text = f"{prefix}{title} ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"
+
+            await callback_query.message.edit_text(
+                text,
+                reply_markup=appointment_list_kb(result.items, mode, result.current_page, result.total_pages),
+            )
+            await callback_query.answer()
+            await remember_tracked_message(state, callback_query.message)
+
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                await callback_query.answer()
+            else:
+                logger.warning(f"TelegramBadRequest in render_list: {e}")
+                await callback_query.answer("Ошибка редактирования сообщения", show_alert=False)
+        except PaginationError as e:
+            logger.warning(f"Pagination error in render_list: {e}")
+            await callback_query.answer(str(e), show_alert=True)
+        except Exception as e:
+            logger.exception(f"Unexpected error in render_list: {e}")
+            await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
+
+    async def render_card(
+        callback_query: CallbackQuery, state: FSMContext, *, appointment_id: int, mode: str, page: int,
+    ) -> None:
+        appointment = await appt_mng.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment),
+            reply_markup=appointment_card_kb(appointment_id, mode, page),
+        )
+        await remember_tracked_message(state, callback_query.message)
+
+    return router

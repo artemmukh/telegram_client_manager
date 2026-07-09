@@ -56,6 +56,12 @@ class ClientManagement:
             self.staff_repository, self.clinic_repository, admin_telegram_id
         )
 
+    async def get_client_by_id(self, user_id: int) -> User | None:
+        return await self.user_repository.get_client_by_id(user_id)
+
+    async def is_phone_taken(self, phone: str) -> bool:
+        return await self.user_repository.phone_exists(phone)
+
     async def search_client(self, data) -> User | list[User]:
         phone = data.get("phone")
         full_name = data.get("full_name")

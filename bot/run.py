@@ -10,9 +10,7 @@ from bot.handlers.admin.client_management.client_menu import create_admin_client
 from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
 from bot.handlers.admin.appointment_management.record_menu import create_admin_record_router
 from bot.handlers.admin.appointment_management.appointment_creation import create_admin_appointment_creation_router
-from bot.handlers.admin.appointment_management.appointment_search import create_admin_appointment_search_router
-from bot.handlers.admin.appointment_management.appointment_delete import create_admin_appointment_deletion_router
-from bot.handlers.admin.appointment_management.appointment_update import create_admin_appointment_update_router
+from bot.handlers.admin.appointment_management.appointment_browser import create_admin_appointment_browser_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
@@ -107,11 +105,7 @@ async def main():
     dp.include_router(create_admin_appointment_creation_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service, appointment_scheduler
     ))
-    dp.include_router(create_admin_appointment_search_router(appointment_repo, user_repo, staff_repo, clinic_repo))
-    dp.include_router(create_admin_appointment_deletion_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler
-    ))
-    dp.include_router(create_admin_appointment_update_router(
+    dp.include_router(create_admin_appointment_browser_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler
     ))
 

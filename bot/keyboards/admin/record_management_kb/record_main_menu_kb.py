@@ -11,21 +11,10 @@ def record_keyboard() -> InlineKeyboardMarkup:
     )
 
     builder.button(
-        text="❌ Удалить запись",
-        callback_data="delete_record"
+        text="📒 Записи",
+        callback_data="browse_appointments"
     )
 
-    builder.button(
-        text="🔍 Поиск записей",
-        callback_data="search_record"
-    )
-
-    builder.button(
-        text="📝 Изменить запись",
-        callback_data="update_record"
-    )
-
-
-    builder.adjust(2, 2, 1)
+    builder.adjust(2)
 
     return builder.as_markup()

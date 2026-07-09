@@ -1,4 +1,5 @@
 CLIENTS_PER_PAGE = 10
+APPOINTMENTS_PER_PAGE = 10
 
 
 def get_circular_page(page: int, total_pages: int, direction: str) -> int:

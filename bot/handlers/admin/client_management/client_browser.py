@@ -221,7 +221,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
 
     @router.callback_query(ClientActionCB.filter(F.action == "delete"))
     async def start_delete(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
-        user = await user_repo.get_client_by_id(callback_data.client_id)
+        user = await cl_mng.get_client_by_id(callback_data.client_id)
         if user is None:
             await callback_query.answer("Клиент не найден.", show_alert=True)
             return
@@ -326,12 +326,12 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
         client_id = data["client_id"]
 
         async def validate_update_phone(phone: str):
-            user = await user_repo.get_client_by_id(client_id)
+            user = await cl_mng.get_client_by_id(client_id)
             if user is None:
                 raise UserNotFoundError("Клиент не найден.")
             if phone == user.phone:
                 raise SamePhoneError("Введён такой же номер телефона. Пожалуйста, введите другой:")
-            if await user_repo.phone_exists(phone):
+            if await cl_mng.is_phone_taken(phone):
                 raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
 
         if not await phone_processing(
@@ -420,7 +420,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
     async def render_card(
         callback_query: CallbackQuery, state: FSMContext, *, client_id: int, mode: str, page: int,
     ) -> None:
-        user = await user_repo.get_client_by_id(client_id)
+        user = await cl_mng.get_client_by_id(client_id)
         if user is None:
             await callback_query.answer("Клиент не найден.", show_alert=True)
             return
