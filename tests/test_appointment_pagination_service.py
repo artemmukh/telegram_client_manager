@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 
 from bot.exceptions.exceptions import PaginationError
@@ -5,6 +7,7 @@ from bot.models.appointment import Appointment
 from bot.services.appointment.appointment_pagination_service import (
     AppointmentPaginationService,
 )
+from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.pagination import APPOINTMENTS_PER_PAGE
 
@@ -52,6 +55,10 @@ class FakeAppointmentRepository:
         self, client_id: int, page: int, per_page: int
     ) -> list[Appointment]:
         self.calls.append(("get_appointments_by_client_id_page", client_id, page, per_page))
+        return self.page_items
+
+    async def get_appointments_by_telegram_id(self, telegram_user_id: int) -> list[Appointment]:
+        self.calls.append(("get_appointments_by_telegram_id", telegram_user_id))
         return self.page_items
 
 
@@ -195,3 +202,104 @@ async def test_empty_result_set_returns_valid_result_with_single_page():
     assert result.total_pages == 1
     assert result.current_page == 1
     assert result.items == []
+
+
+# --- paginate_client_appointments ---
+
+def _appointment_at(appointment_id: int, dt, status: AppointmentStatus = AppointmentStatus.PENDING) -> Appointment:
+    return Appointment(
+        clinic_id=1,
+        client_id=7,
+        datetime=dt.isoformat(),
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=status,
+        id=appointment_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_upcoming_only_ascending_order():
+    now = get_current_tashkent_datetime()
+    a1 = _appointment_at(1, now + timedelta(days=2))
+    a2 = _appointment_at(2, now + timedelta(days=1))
+    a3 = _appointment_at(3, now - timedelta(days=1))
+    repo = FakeAppointmentRepository(page_items=[a1, a2, a3])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "upcoming", 1)
+
+    assert [a.id for a in result.items] == [2, 1]
+    assert result.total_count == 2
+    assert result.total_pages == 1
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_past_only_descending_order():
+    now = get_current_tashkent_datetime()
+    a1 = _appointment_at(1, now - timedelta(days=2))
+    a2 = _appointment_at(2, now - timedelta(days=1))
+    a3 = _appointment_at(3, now + timedelta(days=1))
+    repo = FakeAppointmentRepository(page_items=[a1, a2, a3])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "past", 1)
+
+    assert [a.id for a in result.items] == [2, 1]
+    assert result.total_count == 2
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_all_tab_is_upcoming_then_past():
+    now = get_current_tashkent_datetime()
+    upcoming = _appointment_at(1, now + timedelta(days=1))
+    past = _appointment_at(2, now - timedelta(days=1))
+    repo = FakeAppointmentRepository(page_items=[past, upcoming])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "all", 1)
+
+    assert [a.id for a in result.items] == [1, 2]
+    assert result.total_count == 2
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_unknown_tab_raises_pagination_error():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    with pytest.raises(PaginationError):
+        await service.paginate_client_appointments(123, "unknown", 1)
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_empty_result_returns_single_page():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "all", 1)
+
+    assert result.total_count == 0
+    assert result.total_pages == 1
+    assert result.current_page == 1
+    assert result.items == []
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_slices_across_page_boundary():
+    now = get_current_tashkent_datetime()
+    appointments = [
+        _appointment_at(i, now + timedelta(days=i))
+        for i in range(1, APPOINTMENTS_PER_PAGE + 3)
+    ]
+    repo = FakeAppointmentRepository(page_items=appointments)
+    service = AppointmentPaginationService(repo)
+
+    page_1 = await service.paginate_client_appointments(123, "upcoming", 1)
+    page_2 = await service.paginate_client_appointments(123, "upcoming", 2)
+
+    assert len(page_1.items) == APPOINTMENTS_PER_PAGE
+    assert len(page_2.items) == 2
+    assert page_1.total_pages == 2
+    assert [a.id for a in page_1.items] == list(range(1, APPOINTMENTS_PER_PAGE + 1))
+    assert [a.id for a in page_2.items] == [APPOINTMENTS_PER_PAGE + 1, APPOINTMENTS_PER_PAGE + 2]

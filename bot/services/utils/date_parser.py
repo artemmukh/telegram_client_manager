@@ -92,3 +92,8 @@ def get_current_tashkent_time() -> str:
     tz = pytz.timezone('Asia/Tashkent')
     now = datetime.now(tz)
     return now.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def get_current_tashkent_datetime() -> datetime:
+    """Current time in Asia/Tashkent as a naive datetime, comparable to appointment.datetime."""
+    return datetime.now(pytz.timezone("Asia/Tashkent")).replace(tzinfo=None)

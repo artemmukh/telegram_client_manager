@@ -1,10 +1,15 @@
+import logging
 from dataclasses import dataclass
+from datetime import datetime
 from math import ceil
 
 from bot.exceptions.exceptions import PaginationError
 from bot.models.appointment import Appointment
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.utils.pagination import APPOINTMENTS_PER_PAGE
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,6 +69,77 @@ class AppointmentPaginationService:
         total_pages = ceil(total_count / APPOINTMENTS_PER_PAGE) if total_count > 0 else 1
 
         page = max(1, min(page, total_pages))
+
+        return AppointmentPaginationResult(
+            items=items,
+            current_page=page,
+            total_pages=total_pages,
+            total_count=total_count,
+        )
+
+    async def paginate_client_appointments(
+        self,
+        telegram_id: int,
+        tab: str,
+        page: int,
+        per_page: int | None = None,
+    ) -> AppointmentPaginationResult:
+        """
+        Получить страницу истории записей клиента по вкладке.
+
+        В отличие от paginate_appointments (пагинация на уровне SQL), здесь
+        фильтрация/сортировка/пагинация выполняется в памяти - это осознанное
+        решение, а не недочёт, так как количество записей одного клиента
+        ограничено.
+
+        Args:
+            telegram_id: telegram_user_id клиента
+            tab: 'upcoming' - предстоящие, 'past' - прошедшие, 'all' - все
+            page: номер страницы
+        """
+        per_page = per_page or APPOINTMENTS_PER_PAGE
+
+        appointments = await self.appointment_repo.get_appointments_by_telegram_id(telegram_id)
+        now = get_current_tashkent_datetime()
+
+        upcoming = []
+        past = []
+
+        for appointment in appointments:
+            try:
+                appointment_dt = datetime.fromisoformat(appointment.datetime)
+            except ValueError:
+                logger.warning(
+                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
+                )
+                appointment_dt = datetime.min
+
+            if appointment_dt >= now:
+                upcoming.append((appointment_dt, appointment))
+            else:
+                past.append((appointment_dt, appointment))
+
+        # Статус записи не влияет на распределение по вкладкам - деление
+        # чисто по времени, поэтому отменённая будущая запись всё ещё
+        # считается "предстоящей". Это ожидаемое поведение.
+        upcoming.sort(key=lambda pair: (pair[0], pair[1].id))
+        past.sort(key=lambda pair: (pair[0], pair[1].id), reverse=True)
+
+        if tab == "upcoming":
+            filtered = [appointment for _, appointment in upcoming]
+        elif tab == "past":
+            filtered = [appointment for _, appointment in past]
+        elif tab == "all":
+            filtered = [appointment for _, appointment in upcoming] + [appointment for _, appointment in past]
+        else:
+            raise PaginationError(f"Неизвестная вкладка истории: {tab}")
+
+        total_count = len(filtered)
+        total_pages = ceil(total_count / per_page) if total_count > 0 else 1
+
+        page = max(1, min(page, total_pages))
+
+        items = filtered[(page - 1) * per_page: page * per_page]
 
         return AppointmentPaginationResult(
             items=items,

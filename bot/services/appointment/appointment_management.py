@@ -147,6 +147,21 @@ class AppointmentManagement:
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
         return await self.appointment_repository.get_appointment_by_id(appointment_id)
 
+    async def get_appointment_for_client(
+        self, appointment_id: int, telegram_user_id: int
+    ) -> Appointment | None:
+        """Return the appointment only if it exists and belongs to the client
+        with the given telegram_user_id. Returns None otherwise."""
+        appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            return None
+
+        client = await self.user_repository.get_user_by_telegram_id(telegram_user_id)
+        if client is None or appointment.client_id != client.ID:
+            return None
+
+        return appointment
+
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
 

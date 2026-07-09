@@ -1,29 +1,45 @@
+import logging
+
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
-from bot.exceptions.exceptions import BotException
+from bot.exceptions.exceptions import BotException, PaginationError
+from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
+from bot.keyboards.client.appointment_history_cb import ClientHistoryCardCB, ClientHistoryPageCB
+from bot.keyboards.client.appointment_history_kb import (
+    appointment_history_card_kb,
+    appointment_history_list_kb,
+)
 from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
 from bot.keyboards.client.appointment_response_kb import (
     appointment_response_kb,
     cancel_confirmation_kb,
 )
+from bot.repositories.appointment_repository import AppointmentRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
+from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
 from bot.states.client.appointment_states import AppointmentResponseStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
+logger = logging.getLogger(__name__)
+
 
 def create_client_appointment_router(
+    appointment_repo: AppointmentRepository,
     appointment_management_service: AppointmentManagement = None,
     notification_service: AppointmentNotificationService = None,
     appointment_scheduler=None,
 ) -> Router:
     router = Router()
+
+    pagination_service = AppointmentPaginationService(appointment_repo)
 
     router.message.filter(RoleFilter("client"))
     router.callback_query.filter(RoleFilter("client"))
@@ -42,8 +58,29 @@ def create_client_appointment_router(
 
     @router.callback_query(F.data == "client_appointment_history")
     async def appointment_history(callback_query: CallbackQuery):
+        await render_history_list(callback_query, tab="all", page=1)
+
+    @router.callback_query(ClientHistoryPageCB.filter())
+    async def history_paginate(callback_query: CallbackQuery, callback_data: ClientHistoryPageCB):
+        await render_history_list(callback_query, callback_data.tab, callback_data.page)
+
+    @router.callback_query(ClientHistoryCardCB.filter())
+    async def history_open_card(callback_query: CallbackQuery, callback_data: ClientHistoryCardCB):
+        await render_history_card(
+            callback_query, callback_data.appointment_id, callback_data.tab, callback_data.page,
+        )
+
+    @router.callback_query(F.data == "client_appointment_menu")
+    async def back_to_appointment_menu(callback_query: CallbackQuery, state: FSMContext):
+        await state.clear()
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Выберите действие:", reply_markup=client_appointment_management_kb(),
+        )
+
+    @router.callback_query(F.data == "noop")
+    async def noop_button(callback_query: CallbackQuery):
         await callback_query.answer()
-        await callback_query.message.answer("Функция истории скоро будет доступна...")
 
     @router.callback_query(F.data == "client_manage_appointment")
     async def manage_appointment(callback_query: CallbackQuery):
@@ -166,5 +203,51 @@ def create_client_appointment_router(
                 await callback_query.answer(str(e), show_alert=True)
             finally:
                 await state.clear()
+
+    async def render_history_list(callback_query: CallbackQuery, tab: str, page: int) -> None:
+        try:
+            result = await pagination_service.paginate_client_appointments(
+                callback_query.from_user.id, tab, page,
+            )
+
+            titles = {"upcoming": "📅 Предстоящие", "past": "📋 Прошедшие", "all": "📖 Все записи"}
+            title = titles.get(tab, "📖 История записей")
+            text = f"{title} ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"
+
+            await callback_query.message.edit_text(
+                text,
+                reply_markup=appointment_history_list_kb(
+                    result.items, tab, result.current_page, result.total_pages,
+                ),
+            )
+            await callback_query.answer()
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                await callback_query.answer()
+            else:
+                logger.warning(f"TelegramBadRequest in render_history_list: {e}")
+                await callback_query.answer("Ошибка редактирования сообщения", show_alert=False)
+        except PaginationError as e:
+            logger.warning(f"Pagination error in render_history_list: {e}")
+            await callback_query.answer(str(e), show_alert=True)
+        except Exception as e:
+            logger.exception(f"Unexpected error in render_history_list: {e}")
+            await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
+
+    async def render_history_card(
+        callback_query: CallbackQuery, appointment_id: int, tab: str, page: int,
+    ) -> None:
+        appointment = await appointment_management_service.get_appointment_for_client(
+            appointment_id, callback_query.from_user.id,
+        )
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_history_card_text(appointment),
+            reply_markup=appointment_history_card_kb(tab, page),
+        )
 
     return router

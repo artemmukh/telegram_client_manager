@@ -111,7 +111,7 @@ async def main():
 
     #client handlers
     dp.include_router(create_client_appointment_router(
-        appointment_management_service, notification_service, appointment_scheduler
+        appointment_repo, appointment_management_service, notification_service, appointment_scheduler
     ))
 
     try:

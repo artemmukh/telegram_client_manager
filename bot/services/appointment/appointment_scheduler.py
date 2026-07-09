@@ -1,7 +1,6 @@
 import logging
 from datetime import datetime, timedelta
 
-import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.exceptions.appointment_exceptions import (
@@ -19,13 +18,9 @@ from bot.services.appointment.appointment_jobs import (
     mark_appointment_completed_job,
     complete_appointment,
 )
+from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 
 logger = logging.getLogger(__name__)
-
-
-def _current_tashkent_time() -> datetime:
-    """Current time in Asia/Tashkent as a naive datetime, comparable to appointment.datetime."""
-    return datetime.now(pytz.timezone("Asia/Tashkent")).replace(tzinfo=None)
 
 
 class AppointmentScheduler:
