@@ -7,6 +7,11 @@ class AppointmentNotFoundError(ValidationError):
     pass
 
 
+class AppointmentAlreadyFinalizedError(ValidationError):
+    """Запись уже находится в финальном статусе и не может быть подтверждена."""
+    pass
+
+
 class CancellationWindowExpiredError(ValidationError):
     """Отмена записи менее чем за 2 часа до приёма."""
     pass

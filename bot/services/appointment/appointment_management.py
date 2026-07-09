@@ -1,6 +1,10 @@
 from datetime import datetime, timedelta
 
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, CancellationWindowExpiredError
+from bot.exceptions.appointment_exceptions import (
+    AppointmentAlreadyFinalizedError,
+    AppointmentNotFoundError,
+    CancellationWindowExpiredError,
+)
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
@@ -171,6 +175,12 @@ class AppointmentManagement:
         if appointment is None:
             raise AppointmentNotFoundError()
 
+        self._ensure_not_finalized(
+            appointment,
+            "Эта запись больше недоступна для подтверждения. "
+            "Возможно, она была отменена или уже завершена. Обновите список записей.",
+        )
+
         return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
 
     async def cancel_appointment_by_client(
@@ -179,6 +189,12 @@ class AppointmentManagement:
         appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
         if appointment is None:
             raise AppointmentNotFoundError()
+
+        self._ensure_not_finalized(
+            appointment,
+            "Эта запись больше недоступна для отмены. "
+            "Возможно, она уже была отменена или завершена. Обновите список записей.",
+        )
 
         if enforce_cutoff and self._is_within_cancellation_cutoff(appointment):
             raise CancellationWindowExpiredError(
@@ -249,6 +265,14 @@ class AppointmentManagement:
             raise AppointmentNotFoundError()
 
         return appointment
+
+    def _ensure_not_finalized(self, appointment: Appointment, message: str) -> None:
+        if appointment.status in (
+            AppointmentStatus.CANCELLED,
+            AppointmentStatus.COMPLETED,
+            AppointmentStatus.NO_SHOW,
+        ):
+            raise AppointmentAlreadyFinalizedError(message)
 
     def _is_within_cancellation_cutoff(self, appointment: Appointment) -> bool:
         appointment_dt = datetime.fromisoformat(appointment.datetime)
