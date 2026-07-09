@@ -7,7 +7,7 @@ def client_creation_confirm_kb():
     builder.button(text="✅ Подтвердить", callback_data="confirm_client_creation")
     builder.button(text="📝 Изменить ФИО", callback_data="edit_client_name_in_appointment")
     builder.button(text="📲 Изменить номер", callback_data="edit_client_phone_in_appointment")
-    builder.button(text="❌ Отменить", callback_data="cancel")
+    builder.button(text="❌ Отменить", callback_data="back_to_main_records")
 
     builder.adjust(1, 2, 1)
 
@@ -19,7 +19,7 @@ def appointment_datetime_confirm_kb():
 
     builder.button(text="✅ Верно", callback_data="approve_datetime")
     builder.button(text="🔄 Изменить", callback_data="retry_datetime")
-    builder.button(text="❌ Отменить", callback_data="cancel")
+    builder.button(text="❌ Отменить", callback_data="back_to_main_records")
 
     builder.adjust(1, 1, 1)
 
@@ -31,7 +31,7 @@ def appointment_confirm_kb():
 
     builder.button(text="✅ Подтвердить", callback_data="approve_appointment_create")
     builder.button(text="📝 Заполнить заново", callback_data="restart_appointment_create")
-    builder.button(text="❌ Отменить", callback_data="cancel")
+    builder.button(text="❌ Отменить", callback_data="back_to_main_records")
 
     builder.adjust(1, 1, 1)
 

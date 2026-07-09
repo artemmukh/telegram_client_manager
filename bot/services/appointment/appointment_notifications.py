@@ -30,7 +30,7 @@ class AppointmentNotificationService:
             return False
 
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
-        message_text = self._build_appointment_message(appointment, admin)
+        message_text = self._build_appointment_message(appointment, admin, with_confirmation_prompt=False)
 
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
@@ -50,7 +50,7 @@ class AppointmentNotificationService:
             return False
 
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
-        message_text = self._build_appointment_message(appointment, admin)
+        message_text = self._build_appointment_message(appointment, admin, with_confirmation_prompt=True)
 
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
@@ -135,17 +135,26 @@ class AppointmentNotificationService:
             text=message_text
         )
 
-    def _build_appointment_message(self, appointment: Appointment, admin: User | None = None) -> str:
+    def _build_appointment_message(
+        self,
+        appointment: Appointment,
+        admin: User | None = None,
+        with_confirmation_prompt: bool = True,
+    ) -> str:
         """Build appointment notification message for client."""
         admin_info = ""
         if admin:
             admin_info = f"👨‍⚕️ Администратор: {admin.full_name}\n📱 Номер: {admin.phone or '—'}\n\n"
 
-        return (
+        message = (
             "Вам назначена запись на прием\n\n"
             f"{admin_info}"
             f"Дата и время: {appointment.datetime}\n"
             f"Услуга: {appointment.purpose}\n"
-            f"Клиника: {appointment.clinic_name or 'Информация не доступна'}\n\n"
-            "Пожалуйста, подтвердите вашу готовность посетить запись"
+            f"Клиника: {appointment.clinic_name or 'Информация не доступна'}"
         )
+
+        if with_confirmation_prompt:
+            message += "\n\nПожалуйста, подтвердите вашу готовность посетить запись"
+
+        return message

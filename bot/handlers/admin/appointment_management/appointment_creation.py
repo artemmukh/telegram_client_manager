@@ -24,12 +24,11 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
     client_creation_confirm_kb,
     back_to_records_kb,
 )
-from bot.keyboards.utils.utils_kb import cancel_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.role import RoleFilter
-from bot.validators.validators import SEARCH_NAME_PATTERN, FULL_NAME_PATTERN
+from bot.validators.validators import FULL_NAME_PATTERN
 
 
 def create_admin_appointment_creation_router(
@@ -51,19 +50,19 @@ def create_admin_appointment_creation_router(
             return
 
         await state.update_data(clinic_name=clinic.name)
-        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=cancel_kb())
+        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "restart_appointment_create")
     async def restart_create(callback_query: CallbackQuery, state: FSMContext):
         await state.set_state(AppointmentCreationStates.client_full_name)
         await callback_query.answer('')
-        await callback_query.message.answer("Введите имя клиента:", reply_markup=cancel_kb())
+        await callback_query.message.answer("Введите имя клиента:", reply_markup=back_to_records_kb())
 
     @router.message(AppointmentCreationStates.client_full_name, F.text)
     async def get_name(message: Message, state: FSMContext):
         if not await full_name_processing(message, state, AppointmentCreationStates.client_phone, re_pattern=FULL_NAME_PATTERN):
             return
-        await message.answer("Введите номер телефона клиента:", reply_markup=cancel_kb())
+        await message.answer("Введите номер телефона клиента:", reply_markup=back_to_records_kb())
 
     @router.message(AppointmentCreationStates.client_phone, F.text)
     async def get_phone(message: Message, state: FSMContext):
@@ -95,7 +94,7 @@ def create_admin_appointment_creation_router(
                 "• просто время без даты (нужна дата)\n"
                 "• английский язык\n"
                 "• 'через 2 часов' (правильно 'через 2 часа')",
-                reply_markup=cancel_kb(),
+                reply_markup=back_to_records_kb(),
             )
         else:
             await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
@@ -139,22 +138,22 @@ def create_admin_appointment_creation_router(
             "• просто время без даты (нужна дата)\n"
             "• английский язык\n"
             "• 'через 2 часов' (правильно 'через 2 часа')",
-            reply_markup=cancel_kb(),
+            reply_markup=back_to_records_kb(),
         )
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "edit_client_name_in_appointment")
     async def handle_edit_client_name(callback_query: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback_query, state, AppointmentCreationStates.edit_full_name, reply_markup=cancel_kb())
+        await edit_full_name(callback_query, state, AppointmentCreationStates.edit_full_name, reply_markup=back_to_records_kb())
 
     @router.message(AppointmentCreationStates.edit_full_name, F.text)
     async def process_edit_client_name(message: Message, state: FSMContext):
-        if not await full_name_processing(message, state, AppointmentCreationStates.confirm_create, re_pattern=SEARCH_NAME_PATTERN):
+        if not await full_name_processing(message, state, AppointmentCreationStates.confirm_create, re_pattern=FULL_NAME_PATTERN):
             return
         await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "edit_client_phone_in_appointment")
     async def handle_edit_client_phone(callback_query: CallbackQuery, state: FSMContext):
-        await edit_phone(callback_query, state, AppointmentCreationStates.edit_phone, reply_markup=cancel_kb())
+        await edit_phone(callback_query, state, AppointmentCreationStates.edit_phone, reply_markup=back_to_records_kb())
 
     @router.message(AppointmentCreationStates.edit_phone, F.text)
     async def process_edit_client_phone(message: Message, state: FSMContext):
@@ -195,7 +194,7 @@ def create_admin_appointment_creation_router(
         await callback_query.answer('')
         await callback_query.message.edit_text(
             "Опишите услугу (например: Консультация, Чистка):",
-            reply_markup=cancel_kb(),
+            reply_markup=back_to_records_kb(),
         )
 
     @router.callback_query(AppointmentCreationStates.appointment_datetime_confirm, F.data == "retry_datetime")
@@ -218,7 +217,7 @@ def create_admin_appointment_creation_router(
             "• просто время без даты (нужна дата)\n"
             "• английский язык\n"
             "• 'через 2 часов' (правильно 'через 2 часа')",
-            reply_markup=cancel_kb(),
+            reply_markup=back_to_records_kb(),
         )
 
     @router.message(AppointmentCreationStates.purpose, F.text)
