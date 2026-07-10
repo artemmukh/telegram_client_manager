@@ -17,6 +17,11 @@ class AwaitingClinicDecisionError(ValidationError):
     pass
 
 
+class PendingRequestLimitExceededError(ValidationError):
+    """У клиента уже есть заявка на самозапись, ожидающая решения клиники."""
+    pass
+
+
 class CancellationWindowExpiredError(ValidationError):
     """Отмена записи менее чем за 2 часа до приёма."""
     pass

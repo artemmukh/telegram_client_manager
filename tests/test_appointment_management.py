@@ -9,6 +9,7 @@ from bot.exceptions.appointment_exceptions import (
     CancellationWindowExpiredError,
     NegotiationInProgressError,
     NoPendingProposalError,
+    PendingRequestLimitExceededError,
 )
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
@@ -53,6 +54,9 @@ class FakeAppointmentRepository:
 
     async def update_proposed_datetime(self, appointment_id, proposed_datetime):
         self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
+
+    async def get_appointments_by_telegram_id(self, telegram_user_id):
+        return list(self.appointments)
 
 
 class FakeUserRepo:
@@ -273,6 +277,96 @@ async def test_create_self_booking_raises_when_staff_not_found():
             client.telegram_user_id,
             {"staff_user_id": 12345, "appointment_datetime": "2026-07-10 14:30", "complaint": "Болит зуб"},
         )
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_succeeds_with_no_pending_requests():
+    client = _booking_client()
+    staff = _staff_member()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.create_self_booking(
+        client.telegram_user_id,
+        {"staff_user_id": staff.ID, "appointment_datetime": "2026-07-10 14:30", "complaint": "Болит зуб"},
+    )
+
+    assert appointment.status is AppointmentStatus.PENDING
+
+
+def _self_booked_appointment(appointment_id=1, client_id=7, status=AppointmentStatus.PENDING, proposed_datetime=None):
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        datetime="2026-07-10 14:30",
+        purpose="Болит зуб",
+        created_by=CreatedBy.CLIENT,
+        status=status,
+        id=appointment_id,
+        proposed_datetime=proposed_datetime,
+    )
+
+
+def _admin_pending_appointment(appointment_id=1, client_id=7):
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        datetime="2026-07-10 14:30",
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        id=appointment_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_pending_limit_raises_with_existing_pending_self_booking():
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository([_self_booked_appointment(client_id=client.ID)])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(PendingRequestLimitExceededError):
+        await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+
+
+@pytest.mark.asyncio
+async def test_ensure_pending_limit_raises_when_proposal_outstanding():
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository(
+        [_self_booked_appointment(client_id=client.ID, proposed_datetime="2026-07-11 10:00")]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(PendingRequestLimitExceededError):
+        await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        AppointmentStatus.CONFIRMED,
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.COMPLETED,
+        AppointmentStatus.EXPIRED,
+    ],
+)
+async def test_ensure_pending_limit_allows_when_self_booking_is_finalized(status):
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository([_self_booked_appointment(client_id=client.ID, status=status)])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
+
+    await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+
+
+@pytest.mark.asyncio
+async def test_ensure_pending_limit_ignores_admin_created_pending_appointment():
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository([_admin_pending_appointment(client_id=client.ID)])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
+
+    await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
 
 
 @pytest.mark.asyncio

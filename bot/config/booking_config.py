@@ -12,6 +12,7 @@ WORKING_HOURS_END = "18:00"
 SLOT_STEP_MINUTES = 30
 WORKING_WEEKDAYS = (0, 1, 2, 3, 4, 5)  # Mon=0 ... Sat=5, Sunday=6 is a day off
 BOOKING_HORIZON_DAYS = 14
+MAX_PENDING_REQUESTS_PER_CLIENT = 1
 
 
 def _generate_slots() -> tuple[str, ...]:

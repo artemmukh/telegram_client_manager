@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+from bot.config.booking_config import MAX_PENDING_REQUESTS_PER_CLIENT
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
@@ -7,6 +8,7 @@ from bot.exceptions.appointment_exceptions import (
     CancellationWindowExpiredError,
     NegotiationInProgressError,
     NoPendingProposalError,
+    PendingRequestLimitExceededError,
 )
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
@@ -78,6 +80,8 @@ class AppointmentManagement:
         if client is None:
             raise UserNotFoundError("Клиент не найден.")
 
+        await self.ensure_pending_limit_not_exceeded(client_telegram_id)
+
         staff = await self.user_repository.get_user_by_id(data["staff_user_id"])
         if staff is None:
             raise UserNotFoundError("Специалист не найден.")
@@ -99,6 +103,13 @@ class AppointmentManagement:
         )
 
         return await self.appointment_repository.create_appointment(appointment)
+
+    async def ensure_pending_limit_not_exceeded(self, client_telegram_id: int) -> None:
+        pending_count = await self._count_pending_self_bookings(client_telegram_id)
+        if pending_count >= MAX_PENDING_REQUESTS_PER_CLIENT:
+            raise PendingRequestLimitExceededError(
+                "У вас уже есть заявка на рассмотрении. Дождитесь решения клиники, прежде чем создавать новую."
+            )
 
     async def get_admin_clinic(self, doctor_telegram_id: int) -> Clinic:
         return await resolve_staff_clinic(
@@ -390,3 +401,10 @@ class AppointmentManagement:
         now = get_current_tashkent_datetime()
 
         return appointment_dt - now < timedelta(hours=CANCELLATION_CUTOFF_HOURS)
+
+    async def _count_pending_self_bookings(self, client_telegram_id: int) -> int:
+        appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)
+        return sum(
+            1 for a in appointments
+            if a.created_by == CreatedBy.CLIENT and a.status == AppointmentStatus.PENDING
+        )
