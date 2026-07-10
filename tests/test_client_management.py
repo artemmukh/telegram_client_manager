@@ -1,8 +1,15 @@
 import pytest
 
-from bot.exceptions.user_exceptions import InvalidFullNameError, PhoneAlreadyExistsError, RoleError
+from bot.exceptions.user_exceptions import (
+    InvalidFullNameError,
+    PhoneAlreadyExistsError,
+    RoleError,
+    UserNotFoundError,
+    ValidationError,
+)
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
+from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.utils.role import Role
 
@@ -81,3 +88,54 @@ async def test_client_management_rejects_non_staff(fake_user_repo):
 
     with pytest.raises(RoleError):
         await service.create_client(100, {"full_name": "Иванов Иван", "phone": "+998901234567"})
+
+
+def _existing_client(user_id=1):
+    return User(
+        ID=user_id,
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        reminder_24h=True,
+        reminder_2h=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "preset, expected_24h, expected_2h",
+    [
+        ("both", True, True),
+        ("24_only", True, False),
+        ("2_only", False, True),
+        ("off", False, False),
+    ],
+)
+async def test_update_reminder_preferences_maps_preset_to_booleans(
+    fake_user_repo_factory, preset, expected_24h, expected_2h
+):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    user = await service.update_reminder_preferences(1, preset)
+
+    assert user.reminder_24h is expected_24h
+    assert user.reminder_2h is expected_2h
+    assert repo.reminder_updates == [(1, expected_24h, expected_2h)]
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_preferences_rejects_unknown_preset(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    with pytest.raises(ValidationError):
+        await service.update_reminder_preferences(1, "invalid")
+
+
+@pytest.mark.asyncio
+async def test_update_reminder_preferences_raises_if_client_not_found(fake_user_repo):
+    service = _service(fake_user_repo)
+
+    with pytest.raises(UserNotFoundError):
+        await service.update_reminder_preferences(999, "both")

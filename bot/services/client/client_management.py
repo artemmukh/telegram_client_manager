@@ -133,3 +133,23 @@ class ClientManagement:
         await self.user_repository.update_client(user_id, user)
 
         return user
+
+    async def update_reminder_preferences(self, user_id: int, preset: str) -> User:
+        presets = {
+            "both": (True, True),
+            "24_only": (True, False),
+            "2_only": (False, True),
+            "off": (False, False),
+        }
+        if preset not in presets:
+            raise ValidationError(f"Неизвестный вариант настроек напоминаний: {preset}")
+        reminder_24h, reminder_2h = presets[preset]
+
+        user = await self.user_repository.get_client_by_id(user_id)
+        if user is None:
+            raise UserNotFoundError("Клиент не найден.")
+
+        await self.user_repository.update_reminder_preferences(user_id, reminder_24h, reminder_2h)
+        user.reminder_24h = reminder_24h
+        user.reminder_2h = reminder_2h
+        return user

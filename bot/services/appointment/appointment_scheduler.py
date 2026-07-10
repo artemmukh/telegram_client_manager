@@ -64,10 +64,15 @@ class AppointmentScheduler:
             appointment_dt = datetime.fromisoformat(appointment.datetime)
             now = _current_tashkent_time()
 
-            reminder_times = [
-                (appointment_dt - timedelta(hours=24), 24),
-                (appointment_dt - timedelta(hours=2), 2),
-            ]
+            client = await self.user_repo.get_client_by_id(appointment.client_id)
+            reminder_24h = client.reminder_24h if client else True
+            reminder_2h = client.reminder_2h if client else True
+
+            reminder_times = []
+            if reminder_24h:
+                reminder_times.append((appointment_dt - timedelta(hours=24), 24))
+            if reminder_2h:
+                reminder_times.append((appointment_dt - timedelta(hours=2), 2))
 
             for reminder_dt, hours_before in reminder_times:
                 if reminder_dt <= now:

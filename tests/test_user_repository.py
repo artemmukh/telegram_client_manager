@@ -148,3 +148,70 @@ async def test_get_clients_by_name_page_empty_full_name_is_defensive_guard():
         assert await user_repo.get_clients_by_name("") == []
     finally:
         await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_reminder_preferences_default_true_and_persist_updates():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+
+        user = await user_repo.get_user_by_telegram_id(1001)
+        assert user.reminder_24h is True
+        assert user.reminder_2h is True
+
+        await user_repo.update_reminder_preferences(user.ID, False, True)
+
+        updated = await user_repo.get_user_by_telegram_id(1001)
+        assert updated.reminder_24h is False
+        assert updated.reminder_2h is True
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_reminder_columns_migration_backfills_existing_rows():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        # Simulate a pre-migration users table that predates the reminder columns.
+        await connection.execute("""
+            CREATE TABLE users(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER UNIQUE,
+                full_name TEXT NOT NULL,
+                phone TEXT UNIQUE NOT NULL,
+                clinic_id INTEGER DEFAULT NULL,
+                role TEXT DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, role) VALUES (?, ?, ?, ?)",
+            (2002, "Петров Петр", "+998901234599", Role.CLIENT.value),
+        )
+        await connection.commit()
+
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        user = await user_repo.get_user_by_telegram_id(2002)
+        assert user.reminder_24h is True
+        assert user.reminder_2h is True
+    finally:
+        await connection.close()

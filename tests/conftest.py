@@ -6,12 +6,20 @@ from bot.models.user import User
 
 
 class FakeUserRepository:
-    def __init__(self, existing_phones=None, existing_telegram_ids=None, clients_by_phone=None):
+    def __init__(
+        self,
+        existing_phones=None,
+        existing_telegram_ids=None,
+        clients_by_phone=None,
+        clients_by_id=None,
+    ):
         self.existing_phones = set(existing_phones or [])
         self.existing_telegram_ids = set(existing_telegram_ids or [])
         self.clients_by_phone = dict(clients_by_phone or {})
+        self.clients_by_id = dict(clients_by_id or {})
         self.created_users: list[User] = []
         self.linked = []
+        self.reminder_updates = []
 
     async def phone_exists(self, phone: str) -> bool:
         return phone in self.existing_phones
@@ -28,8 +36,14 @@ class FakeUserRepository:
     async def get_client_by_phone(self, phone):
         return self.clients_by_phone.get(phone)
 
+    async def get_client_by_id(self, user_id):
+        return self.clients_by_id.get(user_id)
+
     async def update_user_telegram_id(self, user_id, telegram_user_id):
         self.linked.append((user_id, telegram_user_id))
+
+    async def update_reminder_preferences(self, user_id, reminder_24h, reminder_2h):
+        self.reminder_updates.append((user_id, reminder_24h, reminder_2h))
 
 
 @pytest.fixture

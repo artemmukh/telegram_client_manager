@@ -12,7 +12,9 @@ SELECT
     u.phone,
     u.clinic_id,
     c.name AS clinic_name,
-    u.role
+    u.role,
+    u.reminder_24h,
+    u.reminder_2h
 FROM users u
 LEFT JOIN clinics c
 ON u.clinic_id = c.id
@@ -31,10 +33,26 @@ class UserRepository:
                 phone TEXT UNIQUE NOT NULL,
                 clinic_id INTEGER DEFAULT NULL,
                 role TEXT DEFAULT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-                
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reminder_24h INTEGER DEFAULT 1,
+                reminder_2h INTEGER DEFAULT 1,
+
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
         """)
+
+        cursor = await self.connection.execute("PRAGMA table_info(users)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "reminder_24h" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE users ADD COLUMN reminder_24h INTEGER DEFAULT 1"
+            )
+
+        if "reminder_2h" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE users ADD COLUMN reminder_2h INTEGER DEFAULT 1"
+            )
+
         await self.connection.commit()
 
     async def get_user_by_telegram_id(self, telegram_user_id: int) -> User | None:
@@ -134,6 +152,13 @@ class UserRepository:
 
         return await self.get_client_by_id(user_id)
 
+    async def update_reminder_preferences(self, user_id: int, reminder_24h: bool, reminder_2h: bool) -> None:
+        await self.connection.execute(
+            "UPDATE users SET reminder_24h = ?, reminder_2h = ? WHERE id = ?",
+            (int(reminder_24h), int(reminder_2h), user_id),
+        )
+        await self.connection.commit()
+
     async def update_user_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
         await self.connection.execute(
             """
@@ -194,6 +219,8 @@ class UserRepository:
             clinic_id=row[4],
             clinic_name=row[5],
             role=Role(row[6]) if row[6] else None,
+            reminder_24h=bool(row[7]),
+            reminder_2h=bool(row[8]),
         )
 
     async def phone_exists(self, phone: str) -> bool:

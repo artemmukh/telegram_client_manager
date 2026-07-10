@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
+from bot.models.user import User
 from bot.services.appointment.appointment_jobs import (
     expire_pending_request_job,
     expire_reschedule_request_job,
@@ -15,6 +16,7 @@ from bot.services.appointment.appointment_scheduler import (
     _current_tashkent_time,
 )
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.role import Role
 
 
 @pytest.fixture
@@ -570,6 +572,105 @@ async def test_past_due_reminder_scheduling_does_not_call_add_job(
         await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
 
         mock_add_job.assert_not_called()
+
+    scheduler.shutdown(wait=False)
+
+
+# Reminder preference filtering (Phase 3b)
+
+
+def _client_with_preferences(reminder_24h: bool, reminder_2h: bool) -> User:
+    return User(
+        ID=1,
+        full_name="Test Client",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        reminder_24h=reminder_24h,
+        reminder_2h=reminder_2h,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reminders_respect_both_enabled_preference(
+    appointment_scheduler, scheduler, mock_user_repo, sample_appointment
+):
+    """Client with both reminders enabled gets both jobs scheduled."""
+    scheduler.start()
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+    }
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reminders_respect_24h_only_preference(
+    appointment_scheduler, scheduler, mock_user_repo, sample_appointment
+):
+    """Client who opted out of the 2h reminder only gets the 24h job scheduled."""
+    scheduler.start()
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, False)
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {f"appt_{sample_appointment.id}_24h"}
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reminders_respect_2h_only_preference(
+    appointment_scheduler, scheduler, mock_user_repo, sample_appointment
+):
+    """Client who opted out of the 24h reminder only gets the 2h job scheduled."""
+    scheduler.start()
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, True)
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {f"appt_{sample_appointment.id}_2h"}
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reminders_respect_both_disabled_preference(
+    appointment_scheduler, scheduler, mock_user_repo, sample_appointment
+):
+    """Client who opted out of both reminders gets no reminder jobs scheduled."""
+    scheduler.start()
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, False)
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    assert scheduler.get_jobs() == []
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reminders_default_to_both_when_client_not_found(
+    appointment_scheduler, scheduler, mock_user_repo, sample_appointment
+):
+    """When the client can't be resolved, fall back to scheduling both reminders."""
+    scheduler.start()
+    mock_user_repo.get_client_by_id.return_value = None
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+    }
 
     scheduler.shutdown(wait=False)
 

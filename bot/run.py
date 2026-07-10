@@ -91,7 +91,7 @@ async def main():
     dp.include_router(create_start_router())
     dp.include_router(create_help_router())
     dp.include_router(create_cancel_router())
-    dp.include_router(create_profile_router())
+    dp.include_router(create_profile_router(client_management_service))
 
     #admin handlers
 

@@ -11,5 +11,7 @@ class User:
     ID: int | None = None
     clinic_id: int | None = None
     clinic_name: str | None = None
+    reminder_24h: bool = True
+    reminder_2h: bool = True
 
 
