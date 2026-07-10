@@ -65,16 +65,20 @@ class AppointmentScheduler:
             now = _current_tashkent_time()
 
             client = await self.user_repo.get_client_by_id(appointment.client_id)
-            reminder_24h = client.reminder_24h if client else True
-            reminder_2h = client.reminder_2h if client else True
+            client_reminder_24h = client.reminder_24h if client else True
+            client_reminder_2h = client.reminder_2h if client else True
+
+            admin = await self.user_repo.get_user_by_telegram_id(appointment.created_by_telegram_id)
+            admin_reminder_24h = admin.reminder_24h if admin else True
+            admin_reminder_2h = admin.reminder_2h if admin else True
 
             reminder_times = []
-            if reminder_24h:
-                reminder_times.append((appointment_dt - timedelta(hours=24), 24))
-            if reminder_2h:
-                reminder_times.append((appointment_dt - timedelta(hours=2), 2))
+            if client_reminder_24h or admin_reminder_24h:
+                reminder_times.append((appointment_dt - timedelta(hours=24), 24, client_reminder_24h, admin_reminder_24h))
+            if client_reminder_2h or admin_reminder_2h:
+                reminder_times.append((appointment_dt - timedelta(hours=2), 2, client_reminder_2h, admin_reminder_2h))
 
-            for reminder_dt, hours_before in reminder_times:
+            for reminder_dt, hours_before, client_wants_slot, admin_wants_slot in reminder_times:
                 if reminder_dt <= now:
                     logger.info(
                         f"Skipping past-due {hours_before}h reminder for appointment "
@@ -89,7 +93,7 @@ class AppointmentScheduler:
                         send_reminder_job,
                         "date",
                         run_date=reminder_dt,
-                        args=(appointment.id, hours_before),
+                        args=(appointment.id, hours_before, client_wants_slot, admin_wants_slot),
                         id=job_id,
                         replace_existing=True,
                     )
@@ -355,9 +359,15 @@ class AppointmentScheduler:
                 f"Failed to cancel reschedule expiry for appointment {appointment_id}: {e}"
             )
 
-    async def _send_reminder_job(self, appointment_id: int, hours_before: int = 24) -> None:
+    async def _send_reminder_job(
+        self,
+        appointment_id: int,
+        hours_before: int = 24,
+        notify_client: bool = True,
+        notify_admin: bool = True,
+    ) -> None:
         """Wrapper for send_reminder_job - for backward compatibility with tests."""
-        await send_reminder_job(appointment_id, hours_before)
+        await send_reminder_job(appointment_id, hours_before, notify_client, notify_admin)
 
     async def _mark_appointment_completed_job(self, appointment_id: int) -> None:
         """Mark appointment completed using this scheduler's injected dependencies.

@@ -12,11 +12,18 @@ class FakeUserRepository:
         existing_telegram_ids=None,
         clients_by_phone=None,
         clients_by_id=None,
+        users_by_id=None,
     ):
         self.existing_phones = set(existing_phones or [])
         self.existing_telegram_ids = set(existing_telegram_ids or [])
         self.clients_by_phone = dict(clients_by_phone or {})
         self.clients_by_id = dict(clients_by_id or {})
+        # get_user_by_id() is role-agnostic (clients AND admins), unlike
+        # get_client_by_id(). Seed it from clients_by_id so existing tests
+        # that only populate clients_by_id keep working, and allow callers
+        # to additionally register non-client (e.g. admin) users here.
+        self.users_by_id = dict(self.clients_by_id)
+        self.users_by_id.update(users_by_id or {})
         self.created_users: list[User] = []
         self.linked = []
         self.reminder_updates = []
@@ -38,6 +45,9 @@ class FakeUserRepository:
 
     async def get_client_by_id(self, user_id):
         return self.clients_by_id.get(user_id)
+
+    async def get_user_by_id(self, user_id):
+        return self.users_by_id.get(user_id)
 
     async def update_user_telegram_id(self, user_id, telegram_user_id):
         self.linked.append((user_id, telegram_user_id))

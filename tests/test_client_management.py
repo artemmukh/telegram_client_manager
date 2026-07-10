@@ -137,5 +137,46 @@ async def test_update_reminder_preferences_rejects_unknown_preset(fake_user_repo
 async def test_update_reminder_preferences_raises_if_client_not_found(fake_user_repo):
     service = _service(fake_user_repo)
 
-    with pytest.raises(UserNotFoundError):
+    with pytest.raises(UserNotFoundError) as exc_info:
         await service.update_reminder_preferences(999, "both")
+
+    assert str(exc_info.value) == "Пользователь не найден."
+
+
+def _existing_admin(user_id=2):
+    return User(
+        ID=user_id,
+        full_name="Админов Админ",
+        phone="+998907654321",
+        role=Role.ADMIN,
+        reminder_24h=True,
+        reminder_2h=True,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "preset, expected_24h, expected_2h",
+    [
+        ("both", True, True),
+        ("2_only", False, True),
+        ("off", False, False),
+    ],
+)
+async def test_update_reminder_preferences_works_for_admin_user_id(
+    fake_user_repo_factory, preset, expected_24h, expected_2h
+):
+    """update_reminder_preferences() now resolves via get_user_by_id(), which is
+    role-agnostic, so it must also work for an admin's user_id (not just clients).
+    The admin is intentionally absent from clients_by_id to prove the lookup
+    does not go through get_client_by_id."""
+    admin = _existing_admin()
+    repo = fake_user_repo_factory(users_by_id={2: admin})
+    service = _service(repo)
+
+    user = await service.update_reminder_preferences(2, preset)
+
+    assert user.role is Role.ADMIN
+    assert user.reminder_24h is expected_24h
+    assert user.reminder_2h is expected_2h
+    assert repo.reminder_updates == [(2, expected_24h, expected_2h)]
