@@ -32,6 +32,16 @@ class InvalidPurposeError(ValidationError):
     pass
 
 
+class NegotiationInProgressError(ValidationError):
+    """Действие недоступно: по заявке уже есть предложенное время, ожидающее ответа клиента."""
+    pass
+
+
+class NoPendingProposalError(ValidationError):
+    """Нет предложенного времени, ожидающего ответа."""
+    pass
+
+
 class SchedulerError(BotException):
     """Ошибка планировщика (APScheduler)."""
     pass

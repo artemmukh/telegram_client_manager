@@ -2,7 +2,8 @@ from aiogram import Bot
 from aiogram.types import ReplyParameters
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
-from bot.keyboards.client.appointment_response_kb import appointment_response_kb
+from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_request_kb
+from bot.keyboards.client.appointment_response_kb import appointment_response_kb, reschedule_proposal_kb
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
@@ -95,6 +96,23 @@ class AppointmentNotificationService:
             chat_id=client.telegram_user_id,
             text="❌ Ваша запись отменена администратором.",
             reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return True
+
+    async def notify_client_booking_request_rejected(self, appointment: Appointment) -> bool:
+        """Notify client that their self-booking request was declined by the clinic.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text="❌ Клиника отклонила вашу заявку на запись.",
         )
 
         return True
@@ -215,7 +233,7 @@ class AppointmentNotificationService:
     ) -> None:
         """Notify the chosen staff member about a new client self-booking request.
 
-        Informational only (no action buttons yet - those arrive in a later pass).
+        Sends Confirm / Propose-different-time / Reject action buttons.
         Raises NotificationDeliveryError if the message could not be sent.
         """
         message_text = (
@@ -229,6 +247,7 @@ class AppointmentNotificationService:
             await self.bot.send_message(
                 chat_id=staff_telegram_id,
                 text=message_text,
+                reply_markup=booking_request_kb(appointment.id),
             )
         except Exception as e:
             raise NotificationDeliveryError(
@@ -238,6 +257,10 @@ class AppointmentNotificationService:
     async def notify_client_pending_request_expired(self, appointment: Appointment) -> bool:
         """Notify client that their unanswered self-booking request has expired.
 
+        The wording depends on whether the clinic had proposed a new time: if it
+        did, the request expired because the client never answered that proposal;
+        otherwise the clinic itself never responded to the original request.
+
         Returns True if message sent, False if user not found or no telegram_id.
         """
         client = await self.user_repo.get_client_by_id(appointment.client_id)
@@ -245,12 +268,77 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
+        if appointment.proposed_datetime is not None:
+            text = "⌛ Вы не ответили на предложенное клиникой новое время, заявка на запись истекла."
+        else:
+            text = "⌛ Ваша заявка на запись истекла без ответа клиники."
+
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
-            text="⌛ Ваша заявка на запись истекла без ответа клиники.",
+            text=text,
         )
 
         return True
+
+    async def notify_client_reschedule_proposed(self, appointment: Appointment) -> bool:
+        """Notify client that the clinic proposed a different time for their request.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        message_text = (
+            "🔁 Клиника предложила другое время для вашей заявки\n\n"
+            f"Предложенное время: {appointment.proposed_datetime}\n\n"
+            "Согласны на новое время?"
+        )
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_markup=reschedule_proposal_kb(appointment.id),
+            reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return True
+
+    async def notify_staff_proposal_accepted(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        client_name: str,
+    ) -> None:
+        """Notify staff that the client accepted the proposed new time."""
+        message_text = (
+            f"✅ Клиент {client_name} согласился на предложенное время\n\n"
+            f"Дата и время: {appointment.datetime}\n"
+            f"Жалоба: {appointment.purpose}"
+        )
+
+        await self.bot.send_message(
+            chat_id=staff_telegram_id,
+            text=message_text,
+        )
+
+    async def notify_staff_proposal_rejected(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        client_name: str,
+    ) -> None:
+        """Notify staff that the client rejected the proposed new time."""
+        message_text = (
+            f"❌ Клиент {client_name} отклонил предложенное время\n\n"
+            f"Жалоба: {appointment.purpose}"
+        )
+
+        await self.bot.send_message(
+            chat_id=staff_telegram_id,
+            text=message_text,
+        )
 
     def _build_appointment_message(
         self,

@@ -1198,7 +1198,7 @@ async def test_expire_pending_request_job_expires_if_pending_and_client_created(
 
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 client_request.id,
-                AppointmentStatus.CANCELLED,
+                AppointmentStatus.EXPIRED,
             )
             mock_notification_service.notify_client_pending_request_expired.assert_called_once_with(
                 client_request
@@ -1362,5 +1362,5 @@ async def test_expire_pending_request_job_handles_notification_failure(
 
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 client_request.id,
-                AppointmentStatus.CANCELLED,
+                AppointmentStatus.EXPIRED,
             )

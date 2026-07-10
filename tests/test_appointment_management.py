@@ -7,6 +7,8 @@ from bot.exceptions.appointment_exceptions import (
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
     CancellationWindowExpiredError,
+    NegotiationInProgressError,
+    NoPendingProposalError,
 )
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
@@ -25,6 +27,7 @@ class FakeAppointmentRepository:
         self.created = []
         self.status_updates = []
         self.updated = []
+        self.proposed_datetime_updates = []
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -47,6 +50,9 @@ class FakeAppointmentRepository:
 
     async def update_appointment(self, appointment_id, appointment):
         self.updated.append((appointment_id, appointment))
+
+    async def update_proposed_datetime(self, appointment_id, proposed_datetime):
+        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
 
 
 class FakeUserRepo:
@@ -587,6 +593,231 @@ async def test_cancel_appointment_by_client_raises_when_no_show():
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.NO_SHOW)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.cancel_appointment_by_client(1, client.telegram_user_id, enforce_cutoff=False)
+
+    assert appt_repo.status_updates == []
+
+
+# --- Booking negotiation (confirm/reject/propose/accept/reject-proposal) ---
+
+
+def _pending_client_request(appointment_id=1, client_id=7, proposed_datetime=None, status=AppointmentStatus.PENDING):
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        datetime="2026-07-10 14:30",
+        purpose="Болит зуб",
+        created_by=CreatedBy.CLIENT,
+        status=status,
+        id=appointment_id,
+        proposed_datetime=proposed_datetime,
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_request_updates_status():
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.confirm_pending_request(1, staff_telegram_id=999)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_request_blocked_when_proposal_pending():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(NegotiationInProgressError):
+        await service.confirm_pending_request(1, staff_telegram_id=999)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_request_raises_when_finalized():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(status=AppointmentStatus.EXPIRED)]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.confirm_pending_request(1, staff_telegram_id=999)
+
+
+@pytest.mark.asyncio
+async def test_reject_pending_request_updates_status():
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.reject_pending_request(1, staff_telegram_id=999)
+
+    assert appointment.status is AppointmentStatus.CANCELLED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]
+
+
+@pytest.mark.asyncio
+async def test_reject_pending_request_blocked_when_proposal_pending():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(NegotiationInProgressError):
+        await service.reject_pending_request(1, staff_telegram_id=999)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_sets_proposed_without_touching_status_or_datetime():
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
+
+    assert appointment.proposed_datetime == "2026-07-11 10:00"
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appointment.datetime == "2026-07-10 14:30"
+    assert appt_repo.proposed_datetime_updates == [(1, "2026-07-11 10:00")]
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_raises_when_finalized():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(status=AppointmentStatus.CANCELLED)]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
+
+
+@pytest.mark.asyncio
+async def test_accept_proposed_datetime_promotes_proposal_and_confirms():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.accept_proposed_datetime(1, client.telegram_user_id)
+
+    assert appointment.datetime == "2026-07-11 10:00"
+    assert appointment.proposed_datetime is None
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.updated[0][0] == 1
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+
+
+@pytest.mark.asyncio
+async def test_accept_proposed_datetime_raises_when_no_proposal():
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(NoPendingProposalError):
+        await service.accept_proposed_datetime(1, client.telegram_user_id)
+
+
+@pytest.mark.asyncio
+async def test_accept_proposed_datetime_raises_not_found_for_wrong_owner():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.accept_proposed_datetime(1, telegram_user_id=999)
+
+
+@pytest.mark.asyncio
+async def test_reject_proposed_datetime_cancels_and_clears_proposal():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.reject_proposed_datetime(1, client.telegram_user_id)
+
+    assert appointment.status is AppointmentStatus.CANCELLED
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]
+
+
+@pytest.mark.asyncio
+async def test_reject_proposed_datetime_raises_when_no_proposal():
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(NoPendingProposalError):
+        await service.reject_proposed_datetime(1, client.telegram_user_id)
+
+
+@pytest.mark.asyncio
+async def test_accept_proposed_datetime_raises_when_expired_with_stale_proposal():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00", status=AppointmentStatus.EXPIRED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.accept_proposed_datetime(1, client.telegram_user_id)
+
+    assert appt_repo.status_updates == []
+    assert appt_repo.updated == []
+    assert appt_repo.proposed_datetime_updates == []
+
+
+@pytest.mark.asyncio
+async def test_reject_proposed_datetime_raises_when_expired_with_stale_proposal():
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00", status=AppointmentStatus.EXPIRED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.reject_proposed_datetime(1, client.telegram_user_id)
+
+    assert appt_repo.status_updates == []
+    assert appt_repo.proposed_datetime_updates == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_raises_when_expired():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.EXPIRED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_by_client_raises_when_expired():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.EXPIRED)]
     )
     client = _owning_client()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())

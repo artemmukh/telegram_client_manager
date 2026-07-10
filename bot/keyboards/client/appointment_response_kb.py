@@ -1,5 +1,7 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.keyboards.client.appointment_manage_cb import ClientManageActionCB
+
 
 def appointment_response_kb(appointment_id: int):
     """Keyboard for client appointment response (Confirm/Cancel)."""
@@ -7,6 +9,24 @@ def appointment_response_kb(appointment_id: int):
 
     builder.button(text="✅ Приду", callback_data=f"appt_confirm:{appointment_id}")
     builder.button(text="❌ Не приду", callback_data=f"appt_cancel:{appointment_id}")
+
+    builder.adjust(1, 1)
+
+    return builder.as_markup()
+
+
+def reschedule_proposal_kb(appointment_id: int):
+    """Keyboard for client response to a clinic-proposed new time (Accept/Reject)."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="✅ Согласен на новое время",
+        callback_data=ClientManageActionCB(action="accept_proposal", appointment_id=appointment_id, page=1).pack(),
+    )
+    builder.button(
+        text="❌ Не подходит",
+        callback_data=ClientManageActionCB(action="reject_proposal", appointment_id=appointment_id, page=1).pack(),
+    )
 
     builder.adjust(1, 1)
 

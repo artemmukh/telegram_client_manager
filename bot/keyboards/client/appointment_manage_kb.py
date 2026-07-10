@@ -51,17 +51,32 @@ def appointment_manage_empty_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def appointment_manage_card_kb(appointment_id: int, page: int) -> InlineKeyboardMarkup:
+def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    builder.button(
-        text="✅ Подтвержу приход",
-        callback_data=ClientManageActionCB(action="confirm", appointment_id=appointment_id, page=page).pack(),
-    )
-    builder.button(
-        text="❌ Отменить",
-        callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment_id, page=page).pack(),
-    )
+    if appointment.proposed_datetime is not None:
+        builder.button(
+            text="✅ Согласен на новое время",
+            callback_data=ClientManageActionCB(
+                action="accept_proposal", appointment_id=appointment.id, page=page,
+            ).pack(),
+        )
+        builder.button(
+            text="❌ Не подходит",
+            callback_data=ClientManageActionCB(
+                action="reject_proposal", appointment_id=appointment.id, page=page,
+            ).pack(),
+        )
+    else:
+        builder.button(
+            text="✅ Подтвержу приход",
+            callback_data=ClientManageActionCB(action="confirm", appointment_id=appointment.id, page=page).pack(),
+        )
+        builder.button(
+            text="❌ Отменить",
+            callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page).pack(),
+        )
+
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ClientManagePageCB(page=page).pack(),

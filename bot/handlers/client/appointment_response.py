@@ -185,6 +185,75 @@ def create_client_appointment_router(
                 await render_manage_card(callback_query, appointment_id, page)
                 return
 
+            if callback_data.action == "accept_proposal":
+                try:
+                    appointment = await appointment_management_service.accept_proposed_datetime(
+                        appointment_id, callback_query.from_user.id
+                    )
+
+                    _, client = await appointment_management_service.get_appointment_with_client_info(
+                        appointment_id
+                    )
+
+                    if appointment_scheduler:
+                        await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.schedule_appointment_reminders(appointment)
+                        await appointment_scheduler.schedule_appointment_completion(appointment)
+
+                    await callback_query.message.edit_text(
+                        "✅ Вы согласились на новое время. Запись подтверждена."
+                    )
+                    await callback_query.answer()
+
+                    if notification_service and appointment.created_by_telegram_id:
+                        try:
+                            await notification_service.notify_staff_proposal_accepted(
+                                appointment.created_by_telegram_id,
+                                appointment,
+                                client.full_name if client else "Неизвестный клиент",
+                            )
+                        except Exception:
+                            pass  # Graceful fail если не получилось отправить
+                except AppointmentNotFoundError:
+                    await callback_query.answer("Запись не найдена", show_alert=True)
+                except BotException as e:
+                    await callback_query.answer(str(e), show_alert=True)
+                return
+
+            if callback_data.action == "reject_proposal":
+                try:
+                    appointment = await appointment_management_service.reject_proposed_datetime(
+                        appointment_id, callback_query.from_user.id
+                    )
+
+                    _, client = await appointment_management_service.get_appointment_with_client_info(
+                        appointment_id
+                    )
+
+                    if appointment_scheduler:
+                        await appointment_scheduler.cancel_pending_expiry(appointment_id)
+
+                    await callback_query.message.edit_text(
+                        "❌ Вы отклонили предложенное время. Если запись всё ещё нужна, "
+                        "свяжитесь с клиникой или отправьте новую заявку."
+                    )
+                    await callback_query.answer()
+
+                    if notification_service and appointment.created_by_telegram_id:
+                        try:
+                            await notification_service.notify_staff_proposal_rejected(
+                                appointment.created_by_telegram_id,
+                                appointment,
+                                client.full_name if client else "Неизвестный клиент",
+                            )
+                        except Exception:
+                            pass  # Graceful fail если не получилось отправить
+                except AppointmentNotFoundError:
+                    await callback_query.answer("Запись не найдена", show_alert=True)
+                except BotException as e:
+                    await callback_query.answer(str(e), show_alert=True)
+                return
+
         @router.callback_query(F.data.startswith("appt_confirm:"))
         async def handle_appointment_confirm(callback_query: CallbackQuery):
             """Handle appointment confirmation button."""
@@ -398,7 +467,7 @@ def create_client_appointment_router(
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_history_card_text(appointment),
-            reply_markup=appointment_manage_card_kb(appointment_id, page),
+            reply_markup=appointment_manage_card_kb(appointment, page),
         )
 
     return router

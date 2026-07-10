@@ -7,6 +7,7 @@ class AppointmentStatus(Enum):
     CANCELLED = "cancelled"
     COMPLETED = "completed"
     NO_SHOW = "no_show"
+    EXPIRED = "expired"
 
 
 class CreatedBy(Enum):

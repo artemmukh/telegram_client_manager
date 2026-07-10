@@ -166,6 +166,7 @@ async def complete_appointment(
         AppointmentStatus.CANCELLED,
         AppointmentStatus.COMPLETED,
         AppointmentStatus.NO_SHOW,
+        AppointmentStatus.EXPIRED,
     ):
         logger.info(
             f"Completion job: skipping appointment {appointment_id} "
@@ -201,13 +202,8 @@ async def complete_appointment(
 async def expire_pending_request_job(appointment_id: int) -> None:
     """Expire an unanswered client self-booking request once its requested time passes.
 
-    This job is called by APScheduler at the appointment's requested datetime.
-
-    NOTE (provisional): this sets status to CANCELLED, not a dedicated EXPIRED
-    status, since AppointmentStatus.EXPIRED does not exist yet. A later pass
-    (negotiation flow) is expected to introduce a proper EXPIRED status and
-    proposal-aware messaging; the client-facing text below is written to make
-    sense for a plain "clinic did not respond" outcome only.
+    This job is called by APScheduler at the appointment's requested datetime
+    (or, if the clinic proposed a new time, at the proposed datetime).
 
     Args:
         appointment_id: The ID of the appointment/request to expire
@@ -237,7 +233,7 @@ async def expire_pending_request_job(appointment_id: int) -> None:
             )
             return
 
-        await appointment_repo.update_appointment_status(appointment_id, AppointmentStatus.CANCELLED)
+        await appointment_repo.update_appointment_status(appointment_id, AppointmentStatus.EXPIRED)
 
         logger.info(f"Appointment {appointment_id} self-booking request expired (unanswered)")
 

@@ -11,6 +11,7 @@ from bot.handlers.admin.client_management.client_browser import create_admin_cli
 from bot.handlers.admin.appointment_management.record_menu import create_admin_record_router
 from bot.handlers.admin.appointment_management.appointment_creation import create_admin_appointment_creation_router
 from bot.handlers.admin.appointment_management.appointment_browser import create_admin_appointment_browser_router
+from bot.handlers.admin.appointment_management.booking_requests import create_admin_booking_requests_router
 from bot.handlers.client.appointment_booking import create_client_booking_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.common.cancel import create_cancel_router
@@ -108,6 +109,9 @@ async def main():
     ))
     dp.include_router(create_admin_appointment_browser_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service
+    ))
+    dp.include_router(create_admin_booking_requests_router(
+        appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
     ))
 
     #client handlers

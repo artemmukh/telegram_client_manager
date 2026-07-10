@@ -10,6 +10,7 @@ HISTORY_STATUS_LABELS = {
     AppointmentStatus.CANCELLED: "❌ отменена",
     AppointmentStatus.COMPLETED: "✔️ завершена",
     AppointmentStatus.NO_SHOW: "🙅 неявка",
+    AppointmentStatus.EXPIRED: "⏳ истекла",
 }
 
 
@@ -34,6 +35,13 @@ def build_history_card_text(appointment: Appointment) -> str:
 
     if appointment.purpose:
         lines.append(f"Услуга: {appointment.purpose}")
+
+    if appointment.proposed_datetime:
+        try:
+            proposed_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
+        except ValueError:
+            proposed_display = appointment.proposed_datetime
+        lines.append(f"Предложено новое время: {proposed_display}")
 
     lines.append(f"Статус: {HISTORY_STATUS_LABELS.get(appointment.status, appointment.status.value)}")
 

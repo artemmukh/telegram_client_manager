@@ -5,6 +5,8 @@ from bot.exceptions.appointment_exceptions import (
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
     CancellationWindowExpiredError,
+    NegotiationInProgressError,
+    NoPendingProposalError,
 )
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
@@ -241,6 +243,73 @@ class AppointmentManagement:
 
         return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
 
+    async def confirm_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
+        appointment = await self._get_or_raise(appointment_id)
+        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+
+        if appointment.proposed_datetime is not None:
+            raise NegotiationInProgressError(
+                "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
+            )
+
+        return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
+
+    async def reject_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
+        appointment = await self._get_or_raise(appointment_id)
+        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+
+        if appointment.proposed_datetime is not None:
+            raise NegotiationInProgressError(
+                "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
+            )
+
+        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+
+    async def propose_new_datetime(
+        self, appointment_id: int, staff_telegram_id: int, proposed_datetime: str
+    ) -> Appointment:
+        appointment = await self._get_or_raise(appointment_id)
+        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+
+        validated = validate_datetime(proposed_datetime)
+        await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
+        appointment.proposed_datetime = validated
+
+        return appointment
+
+    async def accept_proposed_datetime(self, appointment_id: int, telegram_user_id: int) -> Appointment:
+        appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
+
+        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+
+        if appointment.proposed_datetime is None:
+            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+
+        appointment.datetime = appointment.proposed_datetime
+        appointment.status = AppointmentStatus.CONFIRMED
+        await self.appointment_repository.update_appointment(appointment_id, appointment)
+
+        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        appointment.proposed_datetime = None
+
+        return appointment
+
+    async def reject_proposed_datetime(self, appointment_id: int, telegram_user_id: int) -> Appointment:
+        appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
+
+        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+
+        if appointment.proposed_datetime is None:
+            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+
+        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+
+        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
 
@@ -309,6 +378,7 @@ class AppointmentManagement:
             AppointmentStatus.CANCELLED,
             AppointmentStatus.COMPLETED,
             AppointmentStatus.NO_SHOW,
+            AppointmentStatus.EXPIRED,
         ):
             raise AppointmentAlreadyFinalizedError(message)
 

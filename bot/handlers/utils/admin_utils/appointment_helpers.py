@@ -16,6 +16,7 @@ STATUS_LABELS = {
     AppointmentStatus.CANCELLED: "Отменена",
     AppointmentStatus.COMPLETED: "Завершена",
     AppointmentStatus.NO_SHOW: "Неявка",
+    AppointmentStatus.EXPIRED: "Истекла",
 }
 
 
