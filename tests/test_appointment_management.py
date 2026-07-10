@@ -1057,17 +1057,40 @@ async def test_request_reschedule_by_client_raises_when_pending():
 
 
 @pytest.mark.asyncio
-async def test_request_reschedule_by_client_raises_within_cutoff():
+async def test_request_reschedule_by_client_succeeds_when_old_time_is_imminent_but_new_time_is_not():
+    """The cutoff must be checked against the NEW datetime, not the old one: a client
+    rescheduling away from an imminent appointment to a far-future slot must succeed."""
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
-        [_appointment_at(1, now + timedelta(hours=1), status=AppointmentStatus.CONFIRMED)]
+        [_appointment_at(1, now + timedelta(minutes=5), status=AppointmentStatus.CONFIRMED)]
     )
     client = _owning_client()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
-    new_dt = (now + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    new_dt = (now + timedelta(days=1)).strftime("%Y-%m-%d %H:%M")
+    appointment = await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appointment.proposed_datetime == new_dt
+    assert appointment.proposed_by is CreatedBy.CLIENT
+    assert appt_repo.proposed_datetime_updates == [(1, new_dt)]
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_raises_when_new_time_within_cutoff():
+    """The cutoff must reject a reschedule when the NEW proposed datetime is too soon,
+    regardless of how far away the original appointment is."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=3), status=AppointmentStatus.CONFIRMED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    new_dt = (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")
     with pytest.raises(CancellationWindowExpiredError):
         await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appt_repo.proposed_datetime_updates == []
 
 
 @pytest.mark.asyncio

@@ -554,6 +554,7 @@ async def test_notify_staff_reschedule_requested_sends_message():
     service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     appointment = _appointment()
     appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.client_phone = "+998901234567"
 
     await service.notify_staff_reschedule_requested(67890, appointment, "Иванов Иван")
 
@@ -562,9 +563,26 @@ async def test_notify_staff_reschedule_requested_sends_message():
     assert msg['chat_id'] == 67890
     assert "Клиент просит перенести запись" in msg['text']
     assert "Иванов Иван" in msg['text']
+    assert "+998901234567" in msg['text']
     assert "10 июля 2026, 14:30" in msg['text']
     assert "15 августа 2026, 15:00" in msg['text']
     assert msg['reply_markup'] is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_reschedule_requested_falls_back_when_phone_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    await service.notify_staff_reschedule_requested(67890, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert "📱 Номер: —" in msg['text']
 
 
 @pytest.mark.asyncio

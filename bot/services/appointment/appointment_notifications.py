@@ -372,6 +372,7 @@ class AppointmentNotificationService:
         message_text = (
             f"🔁 Клиент просит перенести запись\n\n"
             f"👤 Клиент: {client_name}\n"
+            f"📱 Номер: {appointment.client_phone or '—'}\n"
             f"📅 Текущее время: {_format_datetime_value(appointment.datetime)}\n"
             f"🆕 Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n"
             f"📝 Услуга: {appointment.purpose}"

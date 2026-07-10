@@ -358,12 +358,14 @@ class AppointmentManagement:
                 "По этой записи уже есть предложение, ожидающее ответа."
             )
 
-        if self._is_within_cancellation_cutoff(appointment):
+        validated = validate_datetime(new_datetime)
+
+        if self._is_new_datetime_within_cutoff(validated):
             raise CancellationWindowExpiredError(
-                "Перенос возможен не позднее чем за 2 часа, свяжитесь с клиникой."
+                "Новое время должно быть не менее чем через 2 часа от текущего момента, "
+                "свяжитесь с клиникой."
             )
 
-        validated = validate_datetime(new_datetime)
         await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
         await self.appointment_repository.update_proposed_by(appointment_id, CreatedBy.CLIENT)
         appointment.proposed_datetime = validated
@@ -485,6 +487,12 @@ class AppointmentManagement:
         now = get_current_tashkent_datetime()
 
         return appointment_dt - now < timedelta(hours=CANCELLATION_CUTOFF_HOURS)
+
+    def _is_new_datetime_within_cutoff(self, new_datetime: str) -> bool:
+        new_dt = datetime.fromisoformat(new_datetime)
+        now = get_current_tashkent_datetime()
+
+        return new_dt - now < timedelta(hours=CANCELLATION_CUTOFF_HOURS)
 
     async def _count_pending_self_bookings(self, client_telegram_id: int) -> int:
         appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)
