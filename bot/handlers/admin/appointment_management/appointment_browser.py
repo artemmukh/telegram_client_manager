@@ -151,7 +151,7 @@ def create_admin_appointment_browser_router(
     @router.callback_query(F.data == "appt_search_all")
     async def search_all(callback_query: CallbackQuery, state: FSMContext):
         await state.clear()
-        await render_list(callback_query, state, mode="list", page=1)
+        await render_list(callback_query, state, mode="list", page=1, tab="upcoming")
 
     # --- Resolve the search query and show results ---
 
@@ -180,7 +180,9 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptPageCB.filter())
     async def paginate(callback_query: CallbackQuery, callback_data: ApptPageCB, state: FSMContext):
-        await render_list(callback_query, state, mode=callback_data.mode, page=callback_data.page)
+        await render_list(
+            callback_query, state, mode=callback_data.mode, page=callback_data.page, tab=callback_data.tab,
+        )
 
     # --- Open an appointment's card ---
 
@@ -189,6 +191,7 @@ def create_admin_appointment_browser_router(
         await render_card(
             callback_query, state,
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+            tab=callback_data.tab,
         )
 
     # --- Card actions: status ---
@@ -466,15 +469,19 @@ def create_admin_appointment_browser_router(
             )
 
     async def render_list(
-        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, prefix: str = "",
+        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, tab: str = "", prefix: str = "",
     ) -> None:
         try:
-            search_data = None
-            if mode in ("search", "phone"):
-                data = await state.get_data()
-                search_data = data.get("search_data") or {}
+            if mode == "list":
+                tab = tab or "upcoming"
+                result = await pagination_service.paginate_all_appointments_by_tab(tab, page)
+            else:
+                search_data = None
+                if mode in ("search", "phone"):
+                    data = await state.get_data()
+                    search_data = data.get("search_data") or {}
 
-            result = await pagination_service.paginate_appointments(mode, page, search_data)
+                result = await pagination_service.paginate_appointments(mode, page, search_data)
 
             titles = {
                 "list": "📒 Все записи",
@@ -486,7 +493,7 @@ def create_admin_appointment_browser_router(
 
             await callback_query.message.edit_text(
                 text,
-                reply_markup=appointment_list_kb(result.items, mode, result.current_page, result.total_pages),
+                reply_markup=appointment_list_kb(result.items, mode, result.current_page, result.total_pages, tab),
             )
             await callback_query.answer()
             await remember_tracked_message(state, callback_query.message)
@@ -505,7 +512,7 @@ def create_admin_appointment_browser_router(
             await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
 
     async def render_card(
-        callback_query: CallbackQuery, state: FSMContext, *, appointment_id: int, mode: str, page: int,
+        callback_query: CallbackQuery, state: FSMContext, *, appointment_id: int, mode: str, page: int, tab: str = "",
     ) -> None:
         appointment = await appt_mng.get_appointment_by_id(appointment_id)
         if appointment is None:
@@ -515,7 +522,7 @@ def create_admin_appointment_browser_router(
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
-            reply_markup=appointment_card_kb(appointment_id, mode, page),
+            reply_markup=appointment_card_kb(appointment_id, mode, page, tab),
         )
         await remember_tracked_message(state, callback_query.message)
 

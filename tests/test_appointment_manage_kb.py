@@ -81,11 +81,14 @@ def test_appointment_manage_card_kb_normal_confirmed_shows_reschedule_button():
     callback_datas = [button.callback_data for button in buttons]
 
     assert callback_datas == [
-        ClientManageActionCB(action="confirm", appointment_id=1, page=1).pack(),
         ClientManageActionCB(action="cancel_ask", appointment_id=1, page=1).pack(),
         ClientRescheduleStartCB(appointment_id=1).pack(),
         ClientManagePageCB(page=1).pack(),
     ]
+    assert not any(
+        cb.startswith(ClientManageActionCB.__prefix__) and ":confirm:" in cb
+        for cb in callback_datas
+    )
 
 
 def test_appointment_manage_card_kb_normal_pending_hides_reschedule_button():
@@ -97,10 +100,13 @@ def test_appointment_manage_card_kb_normal_pending_hides_reschedule_button():
     callback_datas = [button.callback_data for button in buttons]
 
     assert callback_datas == [
-        ClientManageActionCB(action="confirm", appointment_id=1, page=1).pack(),
         ClientManageActionCB(action="cancel_ask", appointment_id=1, page=1).pack(),
         ClientManagePageCB(page=1).pack(),
     ]
+    assert not any(
+        cb.startswith(ClientManageActionCB.__prefix__) and ":confirm:" in cb
+        for cb in callback_datas
+    )
     assert not any(
         cb.startswith(ClientRescheduleStartCB.__prefix__) for cb in callback_datas
     )

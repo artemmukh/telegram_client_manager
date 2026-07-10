@@ -11,6 +11,11 @@ from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.pagination import get_circular_page
 
+_LIST_TAB_LABELS = {
+    "upcoming": "Предстоящие",
+    "past": "Прошедшие",
+}
+
 
 def appointment_browser_back_to_search_kb() -> InlineKeyboardMarkup:
     """Единственная кнопка "к меню поиска" - для экранов ввода (ФИО/телефон)."""
@@ -70,16 +75,25 @@ def appointment_list_kb(
     mode: str,
     current_page: int,
     total_pages: int,
+    tab: str = "",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for appointment in items:
         builder.button(
             text=build_appointment_button_text(appointment),
-            callback_data=ApptCardCB(appointment_id=appointment.id, mode=mode, page=current_page).pack(),
+            callback_data=ApptCardCB(
+                appointment_id=appointment.id, mode=mode, page=current_page, tab=tab,
+            ).pack(),
         )
 
     rows = [1] * len(items)
+
+    if mode == "list":
+        for tab_value, label in _LIST_TAB_LABELS.items():
+            text = f"• {label}" if tab_value == tab else label
+            builder.button(text=text, callback_data=ApptPageCB(mode=mode, page=1, tab=tab_value).pack())
+        rows.append(len(_LIST_TAB_LABELS))
 
     if total_pages > 1:
         prev_page = get_circular_page(current_page, total_pages, "prev")
@@ -88,11 +102,11 @@ def appointment_list_kb(
         builder.button(text=f"{current_page} из {total_pages}", callback_data="noop")
         builder.button(
             text="⬅️",
-            callback_data=ApptPageCB(mode=mode, page=prev_page).pack(),
+            callback_data=ApptPageCB(mode=mode, page=prev_page, tab=tab).pack(),
         )
         builder.button(
             text="➡️",
-            callback_data=ApptPageCB(mode=mode, page=next_page).pack(),
+            callback_data=ApptPageCB(mode=mode, page=next_page, tab=tab).pack(),
         )
         rows += [1, 2]
     else:
@@ -106,7 +120,7 @@ def appointment_list_kb(
     return builder.as_markup()
 
 
-def appointment_card_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def appointment_card_kb(appointment_id: int, mode: str, page: int, tab: str = "") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
@@ -151,7 +165,7 @@ def appointment_card_kb(appointment_id: int, mode: str, page: int) -> InlineKeyb
     )
     builder.button(
         text="⬅️ Назад к списку",
-        callback_data=ApptPageCB(mode=mode, page=page).pack(),
+        callback_data=ApptPageCB(mode=mode, page=page, tab=tab).pack(),
     )
 
     builder.adjust(2, 2, 2, 1, 1)

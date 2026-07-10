@@ -129,34 +129,6 @@ def create_client_appointment_router(
             appointment_id = callback_data.appointment_id
             page = callback_data.page
 
-            if callback_data.action == "confirm":
-                try:
-                    await appointment_management_service.confirm_appointment_by_client(
-                        appointment_id, callback_query.from_user.id
-                    )
-
-                    appointment, client = await appointment_management_service.get_appointment_with_client_info(
-                        appointment_id
-                    )
-
-                    await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
-                    await callback_query.answer()
-
-                    if notification_service and appointment.created_by_telegram_id:
-                        try:
-                            await notification_service.notify_admin_confirmation(
-                                appointment.created_by_telegram_id,
-                                appointment,
-                                client.full_name if client else "Неизвестный клиент",
-                            )
-                        except Exception:
-                            pass  # Graceful fail если не получилось отправить
-                except AppointmentNotFoundError:
-                    await callback_query.answer("Запись не найдена", show_alert=True)
-                except BotException as e:
-                    await callback_query.answer(str(e), show_alert=True)
-                return
-
             if callback_data.action == "cancel_ask":
                 await callback_query.message.edit_text(
                     "Вы уверены? Это действие нельзя отменить.",

@@ -137,9 +137,87 @@ class AppointmentPaginationService:
         elif tab == "past":
             filtered = [appointment for _, appointment in past]
         elif tab == "all":
-            filtered = [appointment for _, appointment in upcoming] + [appointment for _, appointment in past]
+            dated = []
+
+            for appointment in appointments:
+                try:
+                    created_at = (
+                        datetime.fromisoformat(appointment.created_at)
+                        if appointment.created_at
+                        else datetime.min
+                    )
+                except ValueError:
+                    logger.warning(
+                        f"Не удалось разобрать дату создания записи {appointment.id}: {appointment.created_at!r}"
+                    )
+                    created_at = datetime.min
+
+                dated.append((created_at, appointment))
+
+            dated.sort(key=lambda pair: (pair[0], pair[1].id), reverse=True)
+            filtered = [appointment for _, appointment in dated]
         else:
             raise PaginationError(f"Неизвестная вкладка истории: {tab}")
+
+        total_count = len(filtered)
+        page, total_pages = self._paginate_math(total_count, page, per_page)
+
+        items = filtered[(page - 1) * per_page: page * per_page]
+
+        return AppointmentPaginationResult(
+            items=items,
+            current_page=page,
+            total_pages=total_pages,
+            total_count=total_count,
+        )
+
+    async def paginate_all_appointments_by_tab(
+        self,
+        tab: str,
+        page: int,
+        per_page: int | None = None,
+    ) -> AppointmentPaginationResult:
+        """
+        Получить страницу списка всех записей (админ, mode="list") по вкладке.
+
+        Как и paginate_client_appointments, фильтрация/сортировка/пагинация
+        выполняется в памяти поверх полного списка записей.
+
+        Args:
+            tab: 'upcoming' - предстоящие, 'past' - прошедшие
+            page: номер страницы
+        """
+        per_page = per_page or APPOINTMENTS_PER_PAGE
+
+        appointments = await self.appointment_repo.get_all_appointments()
+        now = get_current_tashkent_datetime()
+
+        upcoming = []
+        past = []
+
+        for appointment in appointments:
+            try:
+                appointment_dt = datetime.fromisoformat(appointment.datetime)
+            except ValueError:
+                logger.warning(
+                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
+                )
+                appointment_dt = datetime.min
+
+            if appointment_dt >= now:
+                upcoming.append((appointment_dt, appointment))
+            else:
+                past.append((appointment_dt, appointment))
+
+        upcoming.sort(key=lambda pair: (pair[0], pair[1].client_id, pair[1].id))
+        past.sort(key=lambda pair: (pair[0], pair[1].client_id, pair[1].id), reverse=True)
+
+        if tab == "upcoming":
+            filtered = [appointment for _, appointment in upcoming]
+        elif tab == "past":
+            filtered = [appointment for _, appointment in past]
+        else:
+            raise PaginationError(f"Неизвестная вкладка списка записей: {tab}")
 
         total_count = len(filtered)
         page, total_pages = self._paginate_math(total_count, page, per_page)

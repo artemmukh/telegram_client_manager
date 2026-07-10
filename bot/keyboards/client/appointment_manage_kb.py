@@ -82,14 +82,10 @@ def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKey
         button_rows += 1
     else:
         builder.button(
-            text="✅ Подтвержу приход",
-            callback_data=ClientManageActionCB(action="confirm", appointment_id=appointment.id, page=page).pack(),
-        )
-        builder.button(
             text="❌ Отменить",
             callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page).pack(),
         )
-        button_rows += 2
+        button_rows += 1
 
         if appointment.status == AppointmentStatus.CONFIRMED:
             builder.button(
