@@ -349,3 +349,17 @@ async def test_paginate_active_client_appointments_empty_returns_single_page():
     assert result.total_count == 0
     assert result.total_pages == 1
     assert result.items == []
+
+
+@pytest.mark.asyncio
+async def test_paginate_active_client_appointments_uses_proposed_datetime_when_present():
+    now = get_current_tashkent_datetime()
+    stale_datetime_but_future_proposal = _appointment_at(1, now - timedelta(days=1), AppointmentStatus.PENDING)
+    stale_datetime_but_future_proposal.proposed_datetime = (now + timedelta(days=1)).isoformat()
+    repo = FakeAppointmentRepository(page_items=[stale_datetime_but_future_proposal])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_active_client_appointments(123, 1)
+
+    assert [a.id for a in result.items] == [1]
+    assert result.total_count == 1

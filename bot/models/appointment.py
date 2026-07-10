@@ -20,3 +20,4 @@ class Appointment:
     client_phone: str | None = None
     notification_message_id: int | None = None
     proposed_datetime: str | None = None
+    proposal_message_id: int | None = None

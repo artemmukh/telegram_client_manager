@@ -100,6 +100,30 @@ def create_client_appointment_router(
         async def manage_open_card(callback_query: CallbackQuery, callback_data: ClientManageCardCB):
             await render_manage_card(callback_query, callback_data.appointment_id, callback_data.page)
 
+        async def close_stale_proposal_message(
+            appointment_id: int,
+            stale_message_id: int | None,
+            telegram_user_id: int,
+            current_message_id: int | None,
+        ) -> None:
+            if not stale_message_id:
+                return
+
+            await appointment_management_service.update_proposal_message_id(appointment_id, None)
+
+            if stale_message_id == current_message_id:
+                # The client answered directly on the proposal message itself,
+                # which was just edited to show the success/rejection text above.
+                # Closing it here would overwrite that text.
+                return
+
+            try:
+                await notification_service.close_reschedule_proposal_message(
+                    telegram_user_id, stale_message_id
+                )
+            except Exception:
+                pass
+
         @router.callback_query(ClientManageActionCB.filter())
         async def manage_action(callback_query: CallbackQuery, callback_data: ClientManageActionCB):
             appointment_id = callback_data.appointment_id
@@ -190,6 +214,7 @@ def create_client_appointment_router(
                     appointment = await appointment_management_service.accept_proposed_datetime(
                         appointment_id, callback_query.from_user.id
                     )
+                    stale_message_id = appointment.proposal_message_id
 
                     _, client = await appointment_management_service.get_appointment_with_client_info(
                         appointment_id
@@ -204,6 +229,13 @@ def create_client_appointment_router(
                         "✅ Вы согласились на новое время. Запись подтверждена."
                     )
                     await callback_query.answer()
+
+                    await close_stale_proposal_message(
+                        appointment_id,
+                        stale_message_id,
+                        callback_query.from_user.id,
+                        callback_query.message.message_id,
+                    )
 
                     if notification_service and appointment.created_by_telegram_id:
                         try:
@@ -225,6 +257,7 @@ def create_client_appointment_router(
                     appointment = await appointment_management_service.reject_proposed_datetime(
                         appointment_id, callback_query.from_user.id
                     )
+                    stale_message_id = appointment.proposal_message_id
 
                     _, client = await appointment_management_service.get_appointment_with_client_info(
                         appointment_id
@@ -238,6 +271,13 @@ def create_client_appointment_router(
                         "свяжитесь с клиникой или отправьте новую заявку."
                     )
                     await callback_query.answer()
+
+                    await close_stale_proposal_message(
+                        appointment_id,
+                        stale_message_id,
+                        callback_query.from_user.id,
+                        callback_query.message.message_id,
+                    )
 
                     if notification_service and appointment.created_by_telegram_id:
                         try:

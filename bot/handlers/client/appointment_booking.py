@@ -18,6 +18,7 @@ from bot.keyboards.client.booking_cb import (
     ClientBookDoctorCB,
     ClientBookSlotCB,
 )
+from bot.keyboards.client.appointment_manage_kb import appointment_manage_empty_kb
 from bot.keyboards.client.booking_kb import (
     booking_cancel_kb,
     booking_confirm_kb,
@@ -202,7 +203,8 @@ def create_client_booking_router(
         await state.clear()
 
         await callback_query.message.edit_text(
-            "✅ Заявка отправлена. Ожидайте подтверждения от клиники."
+            "✅ Заявка отправлена. Ожидайте подтверждения от клиники.",
+            reply_markup=appointment_manage_empty_kb(),
         )
         await callback_query.answer()
 

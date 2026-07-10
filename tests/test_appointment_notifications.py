@@ -476,3 +476,87 @@ async def test_notify_client_pending_request_expired_returns_false_when_telegram
 
     assert result is False
     assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_proposed_formats_proposed_datetime_for_display():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_reschedule_proposed(appointment)
+
+    assert result == 777
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert "15 августа 2026, 15:00" in msg['text']
+    assert "2026-08-15 15:00" not in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_proposed_returns_none_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_reschedule_proposed(appointment)
+
+    assert result is None
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_proposal_accepted_formats_datetime_for_display():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    await service.notify_staff_proposal_accepted(54321, appointment, "Иванов Иван")
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "2026-07-10 14:30" not in msg['text']
+
+
+class FakeEditBot(FakeBot):
+    def __init__(self):
+        super().__init__()
+        self.edited_messages = []
+
+    async def edit_message_text(self, chat_id, message_id, text):
+        self.edited_messages.append({
+            'chat_id': chat_id,
+            'message_id': message_id,
+            'text': text,
+        })
+
+
+@pytest.mark.asyncio
+async def test_close_reschedule_proposal_message_edits_message():
+    bot = FakeEditBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+    await service.close_reschedule_proposal_message(12345, 777)
+
+    assert len(bot.edited_messages) == 1
+    edited = bot.edited_messages[0]
+    assert edited['chat_id'] == 12345
+    assert edited['message_id'] == 777
+    assert edited['text'] == "Это предложение больше не актуально."

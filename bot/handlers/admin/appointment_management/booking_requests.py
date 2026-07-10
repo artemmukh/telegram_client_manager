@@ -1,5 +1,6 @@
 import logging
 from dataclasses import replace
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -23,11 +24,18 @@ from bot.keyboards.admin.record_management_kb.booking_request_kb import (
     booking_request_propose_cancel_kb,
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.utils.date_parser import format_datetime_for_db
+from bot.services.utils.date_parser import format_datetime_for_db, format_datetime_for_display
 from bot.states.admin.record_management.booking_negotiation_states import BookingNegotiationStates
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
+
+
+def _format_datetime_value(value: str) -> str:
+    try:
+        return format_datetime_for_display(datetime.fromisoformat(value))
+    except ValueError:
+        return value
 
 
 def create_admin_booking_requests_router(
@@ -171,7 +179,9 @@ def create_admin_booking_requests_router(
 
         if notification_service:
             try:
-                await notification_service.notify_client_reschedule_proposed(appointment)
+                message_id = await notification_service.notify_client_reschedule_proposed(appointment)
+                if message_id:
+                    await appt_mng.update_proposal_message_id(appointment.id, message_id)
             except Exception as e:
                 logger.warning(
                     f"Failed to notify client about proposed time for appointment {callback_data.appointment_id}: {e}"
@@ -179,7 +189,7 @@ def create_admin_booking_requests_router(
 
         await callback_query.answer("Предложение отправлено клиенту")
         await callback_query.message.edit_text(
-            f"🔁 Клиенту предложено новое время: {appointment.proposed_datetime}\n"
+            f"🔁 Клиенту предложено новое время: {_format_datetime_value(appointment.proposed_datetime)}\n"
             "Ожидаем ответа клиента."
         )
         await state.clear()

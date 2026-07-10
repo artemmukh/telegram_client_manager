@@ -171,11 +171,17 @@ class AppointmentPaginationService:
         active = []
 
         for appointment in appointments:
+            relevant_datetime = (
+                appointment.proposed_datetime
+                if appointment.proposed_datetime is not None
+                else appointment.datetime
+            )
+
             try:
-                appointment_dt = datetime.fromisoformat(appointment.datetime)
+                appointment_dt = datetime.fromisoformat(relevant_datetime)
             except ValueError:
                 logger.warning(
-                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
+                    f"Не удалось разобрать дату записи {appointment.id}: {relevant_datetime!r}"
                 )
                 continue
 

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from aiogram import Bot
 from aiogram.types import ReplyParameters
 
@@ -8,8 +10,16 @@ from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.date_parser import format_datetime_for_display
 
 REMINDER_TEXT = "Напоминаем вам о записи."
+
+
+def _format_datetime_value(value: str) -> str:
+    try:
+        return format_datetime_for_display(datetime.fromisoformat(value))
+    except ValueError:
+        return value
 
 
 class AppointmentNotificationService:
@@ -280,30 +290,37 @@ class AppointmentNotificationService:
 
         return True
 
-    async def notify_client_reschedule_proposed(self, appointment: Appointment) -> bool:
+    async def notify_client_reschedule_proposed(self, appointment: Appointment) -> int | None:
         """Notify client that the clinic proposed a different time for their request.
 
-        Returns True if message sent, False if user not found or no telegram_id.
+        Returns the sent message's message_id (to be persisted so the proposal message
+        can later be closed), or None if the client was not found or has no telegram_id.
         """
         client = await self.user_repo.get_client_by_id(appointment.client_id)
 
         if client is None or client.telegram_user_id is None:
-            return False
+            return None
 
         message_text = (
             "🔁 Клиника предложила другое время для вашей заявки\n\n"
-            f"Предложенное время: {appointment.proposed_datetime}\n\n"
+            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
             "Согласны на новое время?"
         )
 
-        await self.bot.send_message(
+        sent_message = await self.bot.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
             reply_markup=reschedule_proposal_kb(appointment.id),
             reply_parameters=self._reply_parameters(appointment),
         )
 
-        return True
+        return sent_message.message_id
+
+    async def close_reschedule_proposal_message(
+        self, chat_id: int, message_id: int, text: str = "Это предложение больше не актуально."
+    ) -> None:
+        """Edit a stale reschedule-proposal message so it no longer looks actionable."""
+        await self.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
     async def notify_staff_proposal_accepted(
         self,
@@ -314,7 +331,7 @@ class AppointmentNotificationService:
         """Notify staff that the client accepted the proposed new time."""
         message_text = (
             f"✅ Клиент {client_name} согласился на предложенное время\n\n"
-            f"Дата и время: {appointment.datetime}\n"
+            f"Дата и время: {_format_datetime_value(appointment.datetime)}\n"
             f"Жалоба: {appointment.purpose}"
         )
 

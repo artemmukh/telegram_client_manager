@@ -244,6 +244,22 @@ async def expire_pending_request_job(appointment_id: int) -> None:
                 f"Failed to send expiry notification to client for appointment {appointment_id}: {e}"
             )
 
+        if appointment.proposed_datetime is not None:
+            if appointment.proposal_message_id:
+                try:
+                    client = await user_repo.get_client_by_id(appointment.client_id)
+                    if client and client.telegram_user_id:
+                        await notification_service.close_reschedule_proposal_message(
+                            client.telegram_user_id, appointment.proposal_message_id
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to close stale proposal message for appointment {appointment_id}: {e}"
+                    )
+
+            await appointment_repo.update_proposed_datetime(appointment_id, None)
+            await appointment_repo.update_proposal_message_id(appointment_id, None)
+
     except AppointmentNotFoundError:
         logger.warning(f"Expire pending job: appointment {appointment_id} not found")
     except Exception as e:
