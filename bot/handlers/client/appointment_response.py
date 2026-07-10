@@ -186,6 +186,7 @@ def create_client_appointment_router(
                         await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                         await appointment_scheduler.cancel_appointment_completions(appointment_id)
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
 
                     await callback_query.message.edit_text("✅ Ваша запись отменена")
                     await callback_query.answer()
@@ -374,6 +375,7 @@ def create_client_appointment_router(
                     await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                     await appointment_scheduler.cancel_appointment_completions(appointment_id)
                     await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                    await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
 
                 await callback_query.message.edit_text("✅ Ваша запись отменена")
                 await callback_query.answer()

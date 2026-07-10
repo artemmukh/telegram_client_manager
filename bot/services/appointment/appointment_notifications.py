@@ -5,6 +5,7 @@ from aiogram.types import ReplyParameters
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_request_kb
+from bot.keyboards.admin.record_management_kb.reschedule_request_kb import reschedule_request_kb
 from bot.keyboards.client.appointment_response_kb import appointment_response_kb, reschedule_proposal_kb
 from bot.models.appointment import Appointment
 from bot.models.user import User
@@ -356,6 +357,110 @@ class AppointmentNotificationService:
             chat_id=staff_telegram_id,
             text=message_text,
         )
+
+    async def notify_staff_reschedule_requested(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        client_name: str,
+    ) -> None:
+        """Notify staff that a client wants to reschedule a confirmed appointment.
+
+        Sends Accept / Reject action buttons.
+        Raises NotificationDeliveryError if the message could not be sent.
+        """
+        message_text = (
+            f"🔁 Клиент просит перенести запись\n\n"
+            f"👤 Клиент: {client_name}\n"
+            f"📅 Текущее время: {_format_datetime_value(appointment.datetime)}\n"
+            f"🆕 Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n"
+            f"📝 Услуга: {appointment.purpose}"
+        )
+
+        try:
+            await self.bot.send_message(
+                chat_id=staff_telegram_id,
+                text=message_text,
+                reply_markup=reschedule_request_kb(appointment.id),
+            )
+        except Exception as e:
+            raise NotificationDeliveryError(
+                f"Не удалось отправить уведомление специалисту {staff_telegram_id}: {e}"
+            ) from e
+
+    async def notify_client_reschedule_accepted(self, appointment: Appointment) -> bool:
+        """Notify client that the clinic accepted their reschedule request.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        message_text = (
+            "✅ Клиника приняла ваш перенос записи\n\n"
+            f"Новое время: {_format_datetime_value(appointment.datetime)}"
+        )
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return True
+
+    async def notify_client_reschedule_rejected(self, appointment: Appointment) -> bool:
+        """Notify client that the clinic could not accommodate their reschedule request.
+
+        The original appointment remains CONFIRMED and unchanged — this is
+        explicitly not a cancellation.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        message_text = (
+            "❌ Клиника не смогла подтвердить перенос записи\n\n"
+            f"Ваша запись остаётся в силе на прежнее время: {_format_datetime_value(appointment.datetime)}"
+        )
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return True
+
+    async def notify_client_reschedule_request_expired(self, appointment: Appointment) -> bool:
+        """Notify client that the clinic did not respond to their reschedule request in time.
+
+        The original appointment remains CONFIRMED and unchanged.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        message_text = (
+            "⌛ Клиника не ответила на вашу заявку на перенос вовремя\n\n"
+            f"Ваша запись остаётся в силе на прежнее время: {_format_datetime_value(appointment.datetime)}"
+        )
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return True
 
     def _build_appointment_message(
         self,

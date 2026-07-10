@@ -2,7 +2,7 @@ from datetime import datetime
 
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import format_datetime_for_display
-from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 HISTORY_STATUS_LABELS = {
     AppointmentStatus.PENDING: "🕐 ожидает",
@@ -41,7 +41,11 @@ def build_history_card_text(appointment: Appointment) -> str:
             proposed_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
         except ValueError:
             proposed_display = appointment.proposed_datetime
-        lines.append(f"Предложено новое время: {proposed_display}")
+
+        if appointment.proposed_by == CreatedBy.CLIENT:
+            lines.append(f"Вы предложили перенос на: {proposed_display}")
+        else:
+            lines.append(f"Клиника предложила перенос на: {proposed_display}")
 
     lines.append(f"Статус: {HISTORY_STATUS_LABELS.get(appointment.status, appointment.status.value)}")
 

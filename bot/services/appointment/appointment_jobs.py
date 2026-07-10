@@ -259,11 +259,71 @@ async def expire_pending_request_job(appointment_id: int) -> None:
 
             await appointment_repo.update_proposed_datetime(appointment_id, None)
             await appointment_repo.update_proposal_message_id(appointment_id, None)
+            await appointment_repo.update_proposed_by(appointment_id, None)
 
     except AppointmentNotFoundError:
         logger.warning(f"Expire pending job: appointment {appointment_id} not found")
     except Exception as e:
         logger.exception(f"Error in expire_pending_request_job({appointment_id}): {e}")
+    finally:
+        if connection is not None:
+            await connection.close()
+
+
+async def expire_reschedule_request_job(appointment_id: int) -> None:
+    """Expire an unanswered client-initiated reschedule request once the proposed time passes.
+
+    This job is called by APScheduler at the client's proposed datetime. Unlike
+    expire_pending_request_job, it does NOT change the appointment status: the
+    appointment stays CONFIRMED at its ORIGINAL datetime, only the outstanding
+    proposal is cleared. Reminder/completion jobs for the original time were never
+    touched during the negotiation, so they continue to fire normally.
+
+    Args:
+        appointment_id: The ID of the appointment whose reschedule request should expire
+    """
+    connection = None
+    try:
+        bot = get_bot()
+        config = load_config()
+
+        db = Database(config.database_path)
+        connection = await db.connect()
+
+        appointment_repo = AppointmentRepository(connection)
+        user_repo = UserRepository(connection)
+        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+
+        if appointment is None:
+            logger.warning(f"Reschedule expiry job: appointment {appointment_id} not found")
+            return
+
+        if (
+            appointment.status != AppointmentStatus.CONFIRMED
+            or appointment.proposed_datetime is None
+            or appointment.proposed_by != CreatedBy.CLIENT
+        ):
+            logger.info(f"Reschedule expiry job: skipping appointment {appointment_id} (already resolved)")
+            return
+
+        await appointment_repo.update_proposed_datetime(appointment_id, None)
+        await appointment_repo.update_proposed_by(appointment_id, None)
+
+        logger.info(f"Reschedule request for appointment {appointment_id} expired (unanswered)")
+
+        try:
+            await notification_service.notify_client_reschedule_request_expired(appointment)
+        except Exception as e:
+            logger.warning(
+                f"Failed to send reschedule-expiry notification for appointment {appointment_id}: {e}"
+            )
+
+    except AppointmentNotFoundError:
+        logger.warning(f"Reschedule expiry job: appointment {appointment_id} not found")
+    except Exception as e:
+        logger.exception(f"Error in expire_reschedule_request_job({appointment_id}): {e}")
     finally:
         if connection is not None:
             await connection.close()

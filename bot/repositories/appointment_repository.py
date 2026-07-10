@@ -20,7 +20,8 @@ SELECT
     u.phone AS client_phone,
     a.notification_message_id,
     a.proposed_datetime,
-    a.proposal_message_id
+    a.proposal_message_id,
+    a.proposed_by
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
@@ -61,6 +62,7 @@ class AppointmentRepository:
                 notification_message_id INTEGER DEFAULT NULL,
                 proposed_datetime TIMESTAMP DEFAULT NULL,
                 proposal_message_id INTEGER DEFAULT NULL,
+                proposed_by TEXT DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -97,6 +99,12 @@ class AppointmentRepository:
                 "ALTER TABLE appointments ADD COLUMN proposal_message_id INTEGER DEFAULT NULL"
             )
 
+        # Ensure proposed_by column exists for existing databases
+        if "proposed_by" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN proposed_by TEXT DEFAULT NULL"
+            )
+
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_clinic_datetime
             ON appointments(clinic_id, datetime)
@@ -130,7 +138,8 @@ class AppointmentRepository:
                 a.datetime, a.purpose, a.created_by, a.status, a.created_at,
                 c.name AS clinic_name, a.admin_tg_id,
                 u.full_name AS client_full_name, u.phone AS client_phone,
-                a.notification_message_id, a.proposed_datetime, a.proposal_message_id
+                a.notification_message_id, a.proposed_datetime, a.proposal_message_id,
+                a.proposed_by
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -217,6 +226,13 @@ class AppointmentRepository:
         await self.connection.execute(
             "UPDATE appointments SET proposal_message_id = ? WHERE id = ?",
             (message_id, appointment_id),
+        )
+        await self.connection.commit()
+
+    async def update_proposed_by(self, appointment_id: int, proposed_by: CreatedBy | None) -> None:
+        await self.connection.execute(
+            "UPDATE appointments SET proposed_by = ? WHERE id = ?",
+            (proposed_by.value if proposed_by else None, appointment_id),
         )
         await self.connection.commit()
 
@@ -360,4 +376,5 @@ class AppointmentRepository:
             notification_message_id=row[13],
             proposed_datetime=row[14],
             proposal_message_id=row[15],
+            proposed_by=CreatedBy(row[16]) if row[16] else None,
         )

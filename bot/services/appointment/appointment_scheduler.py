@@ -18,6 +18,7 @@ from bot.services.appointment.appointment_jobs import (
     mark_appointment_completed_job,
     complete_appointment,
     expire_pending_request_job,
+    expire_reschedule_request_job,
 )
 from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 
@@ -271,6 +272,82 @@ class AppointmentScheduler:
         except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel pending expiry for appointment {appointment_id}: {e}"
+            )
+
+    async def schedule_reschedule_expiry(self, appointment: Appointment) -> None:
+        """Schedule an expiry job for a client-initiated reschedule request.
+
+        Runs at the client's proposed datetime; if the clinic has not
+        responded by then, the reschedule request auto-expires and the
+        appointment quietly stays CONFIRMED at its original datetime.
+
+        Job ID: appt_{appointment_id}_resch_expire
+        """
+        if not appointment.proposed_datetime:
+            return
+
+        if not appointment.id:
+            logger.warning("Cannot schedule reschedule expiry for appointment without ID")
+            return
+
+        try:
+            proposed_dt = datetime.fromisoformat(appointment.proposed_datetime)
+            now = _current_tashkent_time()
+
+            if proposed_dt <= now:
+                logger.info(
+                    f"Skipping past-due reschedule expiry for appointment {appointment.id} "
+                    f"(would have run at {proposed_dt.isoformat()})"
+                )
+                return
+
+            job_id = f"appt_{appointment.id}_resch_expire"
+
+            try:
+                self.scheduler.add_job(
+                    expire_reschedule_request_job,
+                    "date",
+                    run_date=proposed_dt,
+                    args=(appointment.id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule reschedule expiry job {job_id}: {exc}"
+                ) from exc
+
+            logger.info(
+                f"Scheduled reschedule expiry for appointment {appointment.id} "
+                f"at {proposed_dt.isoformat()}"
+            )
+        except JobSchedulingError as e:
+            logger.error(
+                f"Failed to schedule reschedule expiry for appointment {appointment.id}: {e}"
+            )
+
+    async def cancel_reschedule_expiry(self, appointment_id: int) -> None:
+        """Cancel the reschedule expiry job for an appointment.
+
+        Removes job with ID: appt_{appointment_id}_resch_expire
+        """
+        from apscheduler.jobstores.base import JobLookupError
+
+        try:
+            job_id = f"appt_{appointment_id}_resch_expire"
+
+            try:
+                self.scheduler.remove_job(job_id)
+                logger.info(f"Cancelled reschedule expiry job: {job_id}")
+            except JobLookupError:
+                logger.debug(f"Reschedule expiry job {job_id} does not exist (already ran or cancelled)")
+            except Exception as exc:
+                raise JobCancellationError(
+                    f"Failed to remove reschedule expiry job {job_id}: {exc}"
+                ) from exc
+        except JobCancellationError as e:
+            logger.error(
+                f"Failed to cancel reschedule expiry for appointment {appointment_id}: {e}"
             )
 
     async def _send_reminder_job(self, appointment_id: int, hours_before: int = 24) -> None:

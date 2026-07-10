@@ -546,6 +546,215 @@ class FakeEditBot(FakeBot):
 
 
 @pytest.mark.asyncio
+async def test_notify_staff_reschedule_requested_sends_message():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    await service.notify_staff_reschedule_requested(67890, appointment, "Иванов Иван")
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 67890
+    assert "Клиент просит перенести запись" in msg['text']
+    assert "Иванов Иван" in msg['text']
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "15 августа 2026, 15:00" in msg['text']
+    assert msg['reply_markup'] is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_reschedule_requested_raises_on_send_failure():
+    bot = FailingBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    with pytest.raises(NotificationDeliveryError):
+        await service.notify_staff_reschedule_requested(67890, appointment, "Иванов Иван")
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_accepted_formats_datetime_for_display():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_reschedule_accepted(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "приняла ваш перенос" in msg['text']
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "2026-07-10 14:30" not in msg['text']
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_accepted_returns_false_when_user_not_found():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(None)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reschedule_accepted(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_accepted_returns_false_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reschedule_accepted(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_rejected_formats_datetime_for_display():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_reschedule_rejected(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "не смогла подтвердить перенос" in msg['text']
+    assert "остаётся в силе" in msg['text']
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "2026-07-10 14:30" not in msg['text']
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_rejected_returns_false_when_user_not_found():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(None)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reschedule_rejected(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_rejected_returns_false_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reschedule_rejected(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_request_expired_formats_datetime_for_display():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_reschedule_request_expired(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert "не ответила на вашу заявку на перенос вовремя" in msg['text']
+    assert "остаётся в силе" in msg['text']
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "2026-07-10 14:30" not in msg['text']
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_request_expired_returns_false_when_user_not_found():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(None)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reschedule_request_expired(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_reschedule_request_expired_returns_false_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_reschedule_request_expired(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
 async def test_close_reschedule_proposal_message_edits_message():
     bot = FakeEditBot()
     user_repo = FakeUserRepo(_client())

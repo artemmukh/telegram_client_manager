@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
-from bot.services.appointment.appointment_jobs import expire_pending_request_job
+from bot.services.appointment.appointment_jobs import (
+    expire_pending_request_job,
+    expire_reschedule_request_job,
+)
 from bot.services.appointment.appointment_scheduler import (
     AppointmentScheduler,
     _current_tashkent_time,
@@ -1363,4 +1366,414 @@ async def test_expire_pending_request_job_handles_notification_failure(
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 client_request.id,
                 AppointmentStatus.EXPIRED,
+            )
+
+
+@pytest.fixture
+def sample_reschedule_appointment(sample_appointment):
+    """A CONFIRMED appointment with an outstanding client-initiated reschedule request.
+
+    The proposed datetime is deliberately different from the original datetime so
+    tests can detect if scheduling accidentally anchors to the wrong field.
+    """
+    now = datetime.now()
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.created_by = CreatedBy.CLIENT
+    sample_appointment.proposed_datetime = (now + timedelta(days=5)).isoformat()
+    sample_appointment.proposed_by = CreatedBy.CLIENT
+    return sample_appointment
+
+
+@pytest.mark.asyncio
+async def test_schedule_reschedule_expiry_creates_job(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Test that scheduling reschedule expiry creates exactly 1 job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_reschedule_appointment.id}_resch_expire"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_expiry_job_id_correct(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Test that reschedule expiry job ID follows pattern: appt_{id}_resch_expire."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_reschedule_appointment.id}_resch_expire"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_reschedule_expiry_time_anchored_to_proposed_datetime_not_original(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Test that reschedule expiry runs at the PROPOSED datetime, not the
+    appointment's original datetime. The fixture deliberately sets these to
+    different values so this assertion can fail if the wrong field is used."""
+    scheduler.start()
+
+    assert sample_reschedule_appointment.proposed_datetime != sample_reschedule_appointment.datetime
+
+    expected_expiry_time = datetime.fromisoformat(sample_reschedule_appointment.proposed_datetime)
+
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+    jobs = scheduler.get_jobs()
+    actual_expiry_time = jobs[0].next_run_time
+
+    if actual_expiry_time.tzinfo:
+        expected_expiry_time = expected_expiry_time.replace(tzinfo=actual_expiry_time.tzinfo)
+
+    assert abs(
+        (actual_expiry_time - expected_expiry_time).total_seconds()
+    ) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_reschedule_expiry_removes_job(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Test that cancelling reschedule expiry removes the scheduled job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+    assert len(scheduler.get_jobs()) == 1
+
+    await appointment_scheduler.cancel_reschedule_expiry(sample_reschedule_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_reschedule_expiry_idempotent_no_error(
+    appointment_scheduler, scheduler
+):
+    """Test that cancelling non-existent reschedule expiry doesn't raise error."""
+    scheduler.start()
+
+    # Cancel reschedule expiry that was never scheduled
+    await appointment_scheduler.cancel_reschedule_expiry(999)
+
+    # Should not raise error
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_appointment_without_id_reschedule_expiry_not_scheduled(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Test that appointments without ID are not scheduled for reschedule expiry."""
+    scheduler.start()
+
+    sample_reschedule_appointment.id = None
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_appointment_without_proposed_datetime_reschedule_expiry_not_scheduled(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Test that appointments with no outstanding proposal are not scheduled
+    for reschedule expiry (guard unique to schedule_reschedule_expiry)."""
+    scheduler.start()
+
+    sample_reschedule_appointment.proposed_datetime = None
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_reschedule_expiry_not_scheduled(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """When the proposed datetime is already in the past, no reschedule
+    expiry job should be scheduled."""
+    scheduler.start()
+
+    sample_reschedule_appointment.proposed_datetime = (
+        _current_tashkent_time() - timedelta(hours=1)
+    ).isoformat()
+
+    await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_reschedule_expiry_scheduling_does_not_call_add_job(
+    appointment_scheduler, scheduler, sample_reschedule_appointment
+):
+    """Regression test for the past-due guard: add_job must not be invoked
+    when the proposed datetime is already in the past."""
+    scheduler.start()
+
+    sample_reschedule_appointment.proposed_datetime = (
+        _current_tashkent_time() - timedelta(minutes=30)
+    ).isoformat()
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.schedule_reschedule_expiry(sample_reschedule_appointment)
+
+        mock_add_job.assert_not_called()
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_clears_proposal_if_confirmed_and_client_proposed(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
+):
+    """Test that the expiry job clears the outstanding client proposal but leaves
+    the appointment's status untouched (it stays CONFIRMED at the ORIGINAL time)."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+    mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_reschedule_request_job(sample_reschedule_appointment.id)
+
+            # Status must NOT change - the appointment stays CONFIRMED, unlike the pending job.
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+
+            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            mock_appointment_repo.update_proposed_by.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            # Unlike the pending job, proposal_message_id is left untouched.
+            mock_appointment_repo.update_proposal_message_id.assert_not_called()
+
+            mock_notification_service.notify_client_reschedule_request_expired.assert_called_once_with(
+                sample_reschedule_appointment
+            )
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_skips_if_not_confirmed(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
+):
+    """Test that the expiry job skips an appointment that is no longer CONFIRMED
+    (e.g. it was already cancelled)."""
+    sample_reschedule_appointment.status = AppointmentStatus.CANCELLED
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_reschedule_request_job(sample_reschedule_appointment.id)
+
+            mock_appointment_repo.update_proposed_datetime.assert_not_called()
+            mock_appointment_repo.update_proposed_by.assert_not_called()
+            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_skips_if_no_proposed_datetime(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
+):
+    """Test that the expiry job skips an appointment with no outstanding proposal
+    (e.g. it was already accepted/rejected/cancelled before the job ran)."""
+    sample_reschedule_appointment.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_reschedule_request_job(sample_reschedule_appointment.id)
+
+            mock_appointment_repo.update_proposed_datetime.assert_not_called()
+            mock_appointment_repo.update_proposed_by.assert_not_called()
+            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_skips_if_proposed_by_not_client(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
+):
+    """Test that the expiry job skips an admin-proposed counter-offer (2b behavior) -
+    only client-initiated reschedule requests expire via this job."""
+    sample_reschedule_appointment.proposed_by = CreatedBy.ADMIN
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_reschedule_request_job(sample_reschedule_appointment.id)
+
+            mock_appointment_repo.update_proposed_datetime.assert_not_called()
+            mock_appointment_repo.update_proposed_by.assert_not_called()
+            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_handles_missing_appointment(
+    mock_appointment_repo, mock_user_repo, mock_notification_service
+):
+    """Test that the expiry job handles the case where the appointment is not found."""
+    mock_appointment_repo.get_appointment_by_id.return_value = None
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            # Should not raise error
+            await expire_reschedule_request_job(999)
+
+            mock_appointment_repo.update_proposed_datetime.assert_not_called()
+            mock_appointment_repo.update_proposed_by.assert_not_called()
+            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_handles_notification_failure(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
+):
+    """Test that the expiry job still clears the proposal even if the client
+    notification fails."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+    mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(
+        side_effect=Exception("Network error")
+    )
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            # Should not raise error even if notification fails
+            await expire_reschedule_request_job(sample_reschedule_appointment.id)
+
+            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            mock_appointment_repo.update_proposed_by.assert_called_once_with(
+                sample_reschedule_appointment.id, None
             )

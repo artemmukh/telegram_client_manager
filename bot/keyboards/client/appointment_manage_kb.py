@@ -7,7 +7,9 @@ from bot.keyboards.client.appointment_manage_cb import (
     ClientManageCardCB,
     ClientManagePageCB,
 )
+from bot.keyboards.client.reschedule_cb import ClientRescheduleStartCB
 from bot.models.appointment import Appointment
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.pagination import get_circular_page
 
 
@@ -53,8 +55,10 @@ def appointment_manage_empty_kb() -> InlineKeyboardMarkup:
 
 def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    button_rows = 0
 
-    if appointment.proposed_datetime is not None:
+    if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+        # Client responds to the clinic's counter-offer (2b behavior).
         builder.button(
             text="✅ Согласен на новое время",
             callback_data=ClientManageActionCB(
@@ -67,6 +71,15 @@ def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKey
                 action="reject_proposal", appointment_id=appointment.id, page=page,
             ).pack(),
         )
+        button_rows += 2
+    elif appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.CLIENT:
+        # Client's own reschedule request is pending admin decision:
+        # no confirm/re-propose, only the ability to cancel the appointment outright.
+        builder.button(
+            text="❌ Отменить",
+            callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page).pack(),
+        )
+        button_rows += 1
     else:
         builder.button(
             text="✅ Подтвержу приход",
@@ -76,12 +89,21 @@ def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKey
             text="❌ Отменить",
             callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page).pack(),
         )
+        button_rows += 2
+
+        if appointment.status == AppointmentStatus.CONFIRMED:
+            builder.button(
+                text="🔁 Перенести",
+                callback_data=ClientRescheduleStartCB(appointment_id=appointment.id).pack(),
+            )
+            button_rows += 1
 
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ClientManagePageCB(page=page).pack(),
     )
+    button_rows += 1
 
-    builder.adjust(1, 1, 1)
+    builder.adjust(*([1] * button_rows))
 
     return builder.as_markup()

@@ -21,3 +21,4 @@ class Appointment:
     notification_message_id: int | None = None
     proposed_datetime: str | None = None
     proposal_message_id: int | None = None
+    proposed_by: CreatedBy | None = None

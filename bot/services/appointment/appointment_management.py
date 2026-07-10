@@ -252,6 +252,10 @@ class AppointmentManagement:
                 "Отмена возможна не позднее чем за 2 часа, свяжитесь с клиникой"
             )
 
+        if appointment.proposed_datetime is not None:
+            await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+            await self.appointment_repository.update_proposed_by(appointment_id, None)
+
         return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
 
     async def confirm_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
@@ -282,9 +286,16 @@ class AppointmentManagement:
         appointment = await self._get_or_raise(appointment_id)
         self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
 
+        if appointment.proposed_datetime is not None:
+            raise NegotiationInProgressError(
+                "По этой записи уже есть предложение, ожидающее ответа."
+            )
+
         validated = validate_datetime(proposed_datetime)
         await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
+        await self.appointment_repository.update_proposed_by(appointment_id, CreatedBy.ADMIN)
         appointment.proposed_datetime = validated
+        appointment.proposed_by = CreatedBy.ADMIN
 
         return appointment
 
@@ -298,12 +309,17 @@ class AppointmentManagement:
         if appointment.proposed_datetime is None:
             raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
 
+        if appointment.proposed_by != CreatedBy.ADMIN:
+            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
         await self.appointment_repository.update_appointment(appointment_id, appointment)
 
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        await self.appointment_repository.update_proposed_by(appointment_id, None)
         appointment.proposed_datetime = None
+        appointment.proposed_by = None
 
         return appointment
 
@@ -317,9 +333,77 @@ class AppointmentManagement:
         if appointment.proposed_datetime is None:
             raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
 
+        if appointment.proposed_by != CreatedBy.ADMIN:
+            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        await self.appointment_repository.update_proposed_by(appointment_id, None)
 
         return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+
+    async def request_reschedule_by_client(
+        self, appointment_id: int, telegram_user_id: int, new_datetime: str
+    ) -> Appointment:
+        appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
+
+        self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
+
+        if appointment.status != AppointmentStatus.CONFIRMED:
+            raise AwaitingClinicDecisionError("Перенос доступен только для подтверждённых записей.")
+
+        if appointment.proposed_datetime is not None:
+            raise NegotiationInProgressError(
+                "По этой записи уже есть предложение, ожидающее ответа."
+            )
+
+        if self._is_within_cancellation_cutoff(appointment):
+            raise CancellationWindowExpiredError(
+                "Перенос возможен не позднее чем за 2 часа, свяжитесь с клиникой."
+            )
+
+        validated = validate_datetime(new_datetime)
+        await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
+        await self.appointment_repository.update_proposed_by(appointment_id, CreatedBy.CLIENT)
+        appointment.proposed_datetime = validated
+        appointment.proposed_by = CreatedBy.CLIENT
+
+        return appointment
+
+    async def accept_client_reschedule(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
+        appointment = await self._get_or_raise(appointment_id)
+        self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
+
+        if appointment.proposed_by != CreatedBy.CLIENT:
+            raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
+
+        appointment.datetime = appointment.proposed_datetime
+        await self.appointment_repository.update_appointment(appointment_id, appointment)
+
+        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        await self.appointment_repository.update_proposed_by(appointment_id, None)
+        appointment.proposed_datetime = None
+        appointment.proposed_by = None
+
+        return appointment
+
+    async def reject_client_reschedule(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
+        appointment = await self._get_or_raise(appointment_id)
+        self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
+
+        if appointment.proposed_by != CreatedBy.CLIENT:
+            raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
+
+        # Unlike reject_pending_request (2b), rejecting a client's reschedule request
+        # is not terminal: the appointment stays CONFIRMED at its original datetime,
+        # only the outstanding proposal is cleared.
+        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        await self.appointment_repository.update_proposed_by(appointment_id, None)
+        appointment.proposed_datetime = None
+        appointment.proposed_by = None
+
+        return appointment
 
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
