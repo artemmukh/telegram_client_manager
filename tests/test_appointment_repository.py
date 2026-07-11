@@ -317,6 +317,29 @@ async def test_update_proposal_message_id_round_trips_via_get_by_id_and_by_teleg
 
 
 @pytest.mark.asyncio
+async def test_update_admin_notification_message_id_round_trips_via_get_by_id_and_by_telegram_id():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, telegram_user_id=2004)
+        )
+        client = await user_repo.get_user_by_telegram_id(2004)
+
+        created = await appointment_repo.create_appointment(_appointment_for(client.ID, "2026-07-01 10:00:00"))
+        assert created.admin_notification_message_id is None
+
+        await appointment_repo.update_admin_notification_message_id(created.id, 4242)
+
+        by_id = await appointment_repo.get_appointment_by_id(created.id)
+        by_telegram = await appointment_repo.get_appointments_by_telegram_id(2004)
+
+        assert by_id.admin_notification_message_id == 4242
+        assert by_telegram[0].admin_notification_message_id == 4242
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_update_proposed_by_round_trips_via_get_by_id_and_by_telegram_id():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:

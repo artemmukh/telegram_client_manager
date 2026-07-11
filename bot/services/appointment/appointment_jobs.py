@@ -148,22 +148,20 @@ async def send_reminder_job(
 
 async def complete_appointment(
     appointment_repo: AppointmentRepository,
-    user_repo: UserRepository,
-    bot,
+    notification_service: AppointmentNotificationService,
     appointment_id: int,
 ) -> None:
-    """Mark appointment as completed and notify the client.
+    """Mark appointment as completed and notify the admin.
 
     Shared by the standalone APScheduler job function and by
-    AppointmentScheduler (for callers that inject repositories/bot directly,
-    e.g. tests).
+    AppointmentScheduler (for callers that inject repositories/notification
+    service directly, e.g. tests).
 
     Updates status to COMPLETED if appointment is still PENDING or CONFIRMED.
 
     Args:
         appointment_repo: Repository used to fetch/update the appointment
-        user_repo: Repository used to fetch the client
-        bot: Bot instance used to notify the client
+        notification_service: Service used to notify the admin
         appointment_id: The ID of the appointment to mark as completed
     """
     appointment = await appointment_repo.get_appointment_by_id(appointment_id)
@@ -195,20 +193,18 @@ async def complete_appointment(
         f"Appointment {appointment_id} auto-completed"
     )
 
-    try:
-        client = await user_repo.get_client_by_id(appointment.client_id)
-        if client and client.telegram_user_id:
-            await bot.send_message(
-                chat_id=client.telegram_user_id,
-                text="Ваш прием завершен. Спасибо за посещение!"
+    if appointment.created_by_telegram_id:
+        try:
+            await notification_service.notify_admin_completion(
+                appointment.created_by_telegram_id, appointment
             )
             logger.info(
-                f"Sent completion notification to client {appointment.client_id}"
+                f"Sent completion notification to admin for appointment {appointment_id}"
             )
-    except Exception as e:
-        logger.warning(
-            f"Failed to send completion notification to client {appointment.client_id}: {e}"
-        )
+        except Exception as e:
+            logger.warning(
+                f"Failed to send completion notification to admin for appointment {appointment_id}: {e}"
+            )
 
 
 async def expire_pending_request_job(appointment_id: int) -> None:
@@ -360,8 +356,9 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        await complete_appointment(appointment_repo, user_repo, bot, appointment_id)
+        await complete_appointment(appointment_repo, notification_service, appointment_id)
 
     except AppointmentNotFoundError:
         logger.warning(f"Mark completion job: appointment {appointment_id} not found")

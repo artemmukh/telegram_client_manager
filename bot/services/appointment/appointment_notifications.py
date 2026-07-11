@@ -5,6 +5,7 @@ from aiogram.types import ReplyParameters
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_request_kb
+from bot.keyboards.admin.record_management_kb.completion_followup_kb import completion_followup_kb
 from bot.keyboards.admin.record_management_kb.reschedule_request_kb import reschedule_request_kb
 from bot.keyboards.client.appointment_response_kb import appointment_response_kb, reschedule_proposal_kb
 from bot.models.appointment import Appointment
@@ -161,6 +162,15 @@ class AppointmentNotificationService:
             allow_sending_without_reply=True,
         )
 
+    def _admin_reply_parameters(self, appointment: Appointment) -> ReplyParameters | None:
+        if appointment.admin_notification_message_id is None:
+            return None
+
+        return ReplyParameters(
+            message_id=appointment.admin_notification_message_id,
+            allow_sending_without_reply=True,
+        )
+
     async def notify_admin_upcoming_appointment(
         self,
         admin_telegram_id: int,
@@ -199,19 +209,10 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send cancellation notification to admin."""
-        client = await self.user_repo.get_client_by_id(appointment.client_id)
-        client_phone = client.phone if client else "—"
-
-        message_text = (
-            f"Клиент {client_name} отменил запись\n\n"
-            f"📱 Номер: {client_phone}\n"
-            f"Дата и время: {appointment.datetime}\n"
-            f"Услуга: {appointment.purpose}"
-        )
-
         await self.bot.send_message(
             chat_id=admin_telegram_id,
-            text=message_text
+            text=f"Клиент {client_name} отменил запись.",
+            reply_parameters=self._admin_reply_parameters(appointment),
         )
 
     async def notify_admin_confirmation(
@@ -221,19 +222,19 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send confirmation notification to admin."""
-        client = await self.user_repo.get_client_by_id(appointment.client_id)
-        client_phone = client.phone if client else "—"
-
-        message_text = (
-            f"Клиент {client_name} подтвердил запись\n\n"
-            f"📱 Номер: {client_phone}\n"
-            f"Дата и время: {appointment.datetime}\n"
-            f"Услуга: {appointment.purpose}"
-        )
-
         await self.bot.send_message(
             chat_id=admin_telegram_id,
-            text=message_text
+            text=f"Клиент {client_name} подтвердил запись.",
+            reply_parameters=self._admin_reply_parameters(appointment),
+        )
+
+    async def notify_admin_completion(self, admin_telegram_id: int, appointment: Appointment) -> None:
+        """Notify admin that the appointment auto-completed, asking to fill in service details."""
+        await self.bot.send_message(
+            chat_id=admin_telegram_id,
+            text="Приём завершён. Дополнить информацию об услуге?",
+            reply_markup=completion_followup_kb(appointment.id),
+            reply_parameters=self._admin_reply_parameters(appointment),
         )
 
     async def notify_staff_new_booking_request(
@@ -241,10 +242,11 @@ class AppointmentNotificationService:
         staff_telegram_id: int,
         appointment: Appointment,
         client_name: str,
-    ) -> None:
+    ) -> int | None:
         """Notify the chosen staff member about a new client self-booking request.
 
         Sends Confirm / Propose-different-time / Reject action buttons.
+        Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
         """
         message_text = (
@@ -255,7 +257,7 @@ class AppointmentNotificationService:
         )
 
         try:
-            await self.bot.send_message(
+            sent_message = await self.bot.send_message(
                 chat_id=staff_telegram_id,
                 text=message_text,
                 reply_markup=booking_request_kb(appointment.id),
@@ -264,6 +266,8 @@ class AppointmentNotificationService:
             raise NotificationDeliveryError(
                 f"Не удалось отправить уведомление специалисту {staff_telegram_id}: {e}"
             ) from e
+
+        return sent_message.message_id
 
     async def notify_client_pending_request_expired(self, appointment: Appointment) -> bool:
         """Notify client that their unanswered self-booking request has expired.
@@ -330,15 +334,10 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify staff that the client accepted the proposed new time."""
-        message_text = (
-            f"✅ Клиент {client_name} согласился на предложенное время\n\n"
-            f"Дата и время: {_format_datetime_value(appointment.datetime)}\n"
-            f"Жалоба: {appointment.purpose}"
-        )
-
         await self.bot.send_message(
             chat_id=staff_telegram_id,
-            text=message_text,
+            text=f"✅ Клиент {client_name} согласился на предложенное время.",
+            reply_parameters=self._admin_reply_parameters(appointment),
         )
 
     async def notify_staff_proposal_rejected(
@@ -348,14 +347,10 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify staff that the client rejected the proposed new time."""
-        message_text = (
-            f"❌ Клиент {client_name} отклонил предложенное время\n\n"
-            f"Жалоба: {appointment.purpose}"
-        )
-
         await self.bot.send_message(
             chat_id=staff_telegram_id,
-            text=message_text,
+            text=f"❌ Клиент {client_name} отклонил предложенное время.",
+            reply_parameters=self._admin_reply_parameters(appointment),
         )
 
     async def notify_staff_reschedule_requested(

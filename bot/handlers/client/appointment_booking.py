@@ -211,11 +211,15 @@ def create_client_booking_router(
 
         if notification_service and appointment.created_by_telegram_id:
             try:
-                await notification_service.notify_staff_new_booking_request(
+                admin_message_id = await notification_service.notify_staff_new_booking_request(
                     appointment.created_by_telegram_id,
                     appointment,
                     current_user.full_name,
                 )
+                if admin_message_id is not None:
+                    await appointment_management_service.update_admin_notification_message_id(
+                        appointment.id, admin_message_id
+                    )
             except Exception:
                 pass  # Graceful fail если не получилось отправить
 

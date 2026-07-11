@@ -370,51 +370,65 @@ async def test_completion_job_skips_already_completed(
 
 
 @pytest.mark.asyncio
-async def test_completion_job_sends_client_notification(
-    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
+async def test_completion_job_notifies_admin_not_client(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Completion job sends notification to client."""
-    client = User(
-        ID=1,
-        phone="+998901234567",
-        full_name="Test Client",
-        role=Role.CLIENT,
-        telegram_user_id=123456,
-    )
+    """Test: Completion job notifies the admin who created the appointment, never the client."""
+    sample_appointment.created_by_telegram_id = 54321
 
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_user_repo.get_client_by_id.return_value = client
 
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    # Verify notification was sent
-    mock_notification_service.bot.send_message.assert_called_once()
-    call_args = mock_notification_service.bot.send_message.call_args
-    assert call_args[1]['chat_id'] == client.telegram_user_id
-    assert "завершен" in call_args[1]['text'].lower() or "спасибо" in call_args[1]['text'].lower()
+    mock_notification_service.notify_admin_completion.assert_called_once_with(
+        54321, sample_appointment
+    )
+    mock_notification_service.bot.send_message.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_completion_job_graceful_if_client_not_found(
-    appointment_scheduler, mock_appointment_repo, mock_user_repo, sample_appointment
+async def test_completion_job_skips_admin_notification_when_no_creator(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Completion job gracefully handles missing client."""
+    """Test: Completion job does not attempt an admin notification when created_by_telegram_id is unset."""
+    sample_appointment.created_by_telegram_id = None
+
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_user_repo.get_client_by_id.return_value = None
 
     # Should not raise error
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
     # Status update should still happen
     mock_appointment_repo.update_appointment_status.assert_called_once()
+    mock_notification_service.notify_admin_completion.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_completion_job_swallows_admin_notification_failure(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """Test: A failed admin completion notification must not crash the job; status update already committed."""
+    sample_appointment.created_by_telegram_id = 54321
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_notification_service.notify_admin_completion.side_effect = Exception("boom")
+
+    # Should not raise error
+    await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
+
+    mock_appointment_repo.update_appointment_status.assert_called_once_with(
+        sample_appointment.id,
+        AppointmentStatus.COMPLETED
+    )
 
 
 @pytest.mark.asyncio
 async def test_full_workflow_pending_to_completed(
     appointment_scheduler, scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Full workflow - create → stay PENDING → auto-complete after 1h."""
+    """Test: Full workflow - create → stay PENDING → auto-complete after 1h → admin follow-up notified."""
     scheduler.start()
+
+    sample_appointment.created_by_telegram_id = 54321
 
     # 1. Create appointment (initially PENDING)
     await appointment_scheduler.schedule_appointment_completion(sample_appointment)
@@ -422,13 +436,6 @@ async def test_full_workflow_pending_to_completed(
 
     # 2. Setup mock for completion job
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_user_repo.get_client_by_id.return_value = User(
-        ID=1,
-        phone="+998901234567",
-        full_name="Test Client",
-        role=Role.CLIENT,
-        telegram_user_id=123456,
-    )
 
     # 3. Run completion job (simulating time passing)
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
@@ -439,8 +446,11 @@ async def test_full_workflow_pending_to_completed(
         AppointmentStatus.COMPLETED
     )
 
-    # 5. Verify notification was sent
-    mock_notification_service.bot.send_message.assert_called_once()
+    # 5. Verify the admin (not the client) was notified about the completion follow-up
+    mock_notification_service.notify_admin_completion.assert_called_once_with(
+        54321, sample_appointment
+    )
+    mock_notification_service.bot.send_message.assert_not_called()
 
     scheduler.shutdown(wait=False)
 

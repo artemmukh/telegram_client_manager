@@ -374,13 +374,12 @@ class AppointmentScheduler:
 
         Unlike mark_appointment_completed_job (which is scheduled by APScheduler
         via module reference and creates its own bot/repositories), this wrapper
-        reuses appointment_repo, user_repo, and notification_service.bot injected
-        into this AppointmentScheduler instance.
+        reuses appointment_repo and notification_service injected into this
+        AppointmentScheduler instance.
         """
         await complete_appointment(
             self.appointment_repo,
-            self.user_repo,
-            self.notification_service.bot,
+            self.notification_service,
             appointment_id,
         )
 

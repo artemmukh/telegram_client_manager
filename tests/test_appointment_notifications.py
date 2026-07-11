@@ -140,9 +140,147 @@ async def test_notify_admin_cancellation():
     assert len(bot.sent_messages) == 1
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert "Иванов Иван" in msg['text']
-    assert "отменил" in msg['text']
-    assert "2026-07-10 14:30" in msg['text']
+    assert msg['text'] == "Клиент Иванов Иван отменил запись."
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_cancellation_replies_when_admin_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = 888
+
+    await service.notify_admin_cancellation(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=888,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_cancellation_no_reply_parameters_when_admin_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = None
+
+    await service.notify_admin_cancellation(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_confirmation_sends_short_text():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    await service.notify_admin_confirmation(54321, appointment, "Иванов Иван")
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 54321
+    assert msg['text'] == "Клиент Иванов Иван подтвердил запись."
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_confirmation_replies_when_admin_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = 888
+
+    await service.notify_admin_confirmation(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=888,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_confirmation_no_reply_parameters_when_admin_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = None
+
+    await service.notify_admin_confirmation(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_completion_sends_followup_prompt_with_keyboard():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    await service.notify_admin_completion(54321, appointment)
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 54321
+    assert msg['text'] == "Приём завершён. Дополнить информацию об услуге?"
+    assert msg['reply_markup'] is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_completion_replies_when_admin_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = 888
+
+    await service.notify_admin_completion(54321, appointment)
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=888,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_completion_no_reply_parameters_when_admin_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = None
+
+    await service.notify_admin_completion(54321, appointment)
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
 
 
 @pytest.mark.asyncio
@@ -404,8 +542,9 @@ async def test_notify_staff_new_booking_request_sends_message():
     service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     appointment = _appointment()
 
-    await service.notify_staff_new_booking_request(67890, appointment, "Иванов Иван")
+    result = await service.notify_staff_new_booking_request(67890, appointment, "Иванов Иван")
 
+    assert result == 777
     assert len(bot.sent_messages) == 1
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 67890
@@ -516,7 +655,7 @@ async def test_notify_client_reschedule_proposed_returns_none_when_telegram_id_m
 
 
 @pytest.mark.asyncio
-async def test_notify_staff_proposal_accepted_formats_datetime_for_display():
+async def test_notify_staff_proposal_accepted_sends_short_text():
     bot = FakeBot()
     user_repo = FakeUserRepo(_client())
     appointment_repo = FakeAppointmentRepo()
@@ -528,8 +667,95 @@ async def test_notify_staff_proposal_accepted_formats_datetime_for_display():
 
     assert len(bot.sent_messages) == 1
     msg = bot.sent_messages[0]
-    assert "10 июля 2026, 14:30" in msg['text']
-    assert "2026-07-10 14:30" not in msg['text']
+    assert msg['chat_id'] == 54321
+    assert msg['text'] == "✅ Клиент Иванов Иван согласился на предложенное время."
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_proposal_accepted_replies_when_admin_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = 888
+
+    await service.notify_staff_proposal_accepted(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=888,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_proposal_accepted_no_reply_parameters_when_admin_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = None
+
+    await service.notify_staff_proposal_accepted(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_proposal_rejected_sends_short_text():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    await service.notify_staff_proposal_rejected(54321, appointment, "Иванов Иван")
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 54321
+    assert msg['text'] == "❌ Клиент Иванов Иван отклонил предложенное время."
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_proposal_rejected_replies_when_admin_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = 888
+
+    await service.notify_staff_proposal_rejected(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=888,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_proposal_rejected_no_reply_parameters_when_admin_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = None
+
+    await service.notify_staff_proposal_rejected(54321, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
 
 
 class FakeEditBot(FakeBot):

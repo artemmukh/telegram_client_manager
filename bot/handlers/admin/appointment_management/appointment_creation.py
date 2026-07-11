@@ -264,6 +264,7 @@ def create_admin_appointment_creation_router(
             notification_text,
             reply_markup=back_to_records_kb(),
         )
+        await appt_mng.update_admin_notification_message_id(appointment.id, callback_query.message.message_id)
         await state.clear()
 
     return router

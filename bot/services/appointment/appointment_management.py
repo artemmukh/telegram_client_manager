@@ -410,6 +410,9 @@ class AppointmentManagement:
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
 
+    async def update_admin_notification_message_id(self, appointment_id: int, message_id: int) -> None:
+        await self.appointment_repository.update_admin_notification_message_id(appointment_id, message_id)
+
     async def update_proposal_message_id(self, appointment_id: int, message_id: int | None) -> None:
         await self.appointment_repository.update_proposal_message_id(appointment_id, message_id)
 
