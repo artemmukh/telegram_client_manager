@@ -425,8 +425,10 @@ class AppointmentManagement:
     async def update_status(self, appointment_id: int, status: AppointmentStatus) -> Appointment:
         appointment = await self._get_or_raise(appointment_id)
 
-        await self.appointment_repository.update_appointment_status(appointment_id, status)
+        status_updated_at = get_current_tashkent_time()
+        await self.appointment_repository.update_appointment_status(appointment_id, status, status_updated_at)
         appointment.status = status
+        appointment.status_updated_at = status_updated_at
 
         return appointment
 

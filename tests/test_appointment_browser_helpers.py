@@ -22,28 +22,28 @@ def _appointment(client_full_name: str | None, client_phone: str | None = "+9989
 def test_build_appointment_button_text_includes_client_name_phone_and_datetime():
     text = build_appointment_button_text(_appointment("Иванов Иван"))
 
-    assert text == "📅 Иванов Иван · 90 123-45-67 · 2026-07-10 14:30"
+    assert text == "🕐 Иванов Иван · 90 123-45-67 · 2026-07-10 14:30"
 
 
 def test_build_appointment_button_text_falls_back_when_client_name_missing():
     text = build_appointment_button_text(_appointment(None))
 
-    assert text == "📅 Без имени · 90 123-45-67 · 2026-07-10 14:30"
+    assert text == "🕐 Без имени · 90 123-45-67 · 2026-07-10 14:30"
 
 
 def test_build_appointment_button_text_falls_back_when_client_name_empty_string():
     text = build_appointment_button_text(_appointment(""))
 
-    assert text == "📅 Без имени · 90 123-45-67 · 2026-07-10 14:30"
+    assert text == "🕐 Без имени · 90 123-45-67 · 2026-07-10 14:30"
 
 
 def test_build_appointment_button_text_falls_back_when_phone_missing():
     text = build_appointment_button_text(_appointment("Иванов Иван", client_phone=None))
 
-    assert text == "📅 Иванов Иван · — · 2026-07-10 14:30"
+    assert text == "🕐 Иванов Иван · — · 2026-07-10 14:30"
 
 
 def test_build_appointment_button_text_falls_back_when_phone_empty_string():
     text = build_appointment_button_text(_appointment("Иванов Иван", client_phone=""))
 
-    assert text == "📅 Иванов Иван · — · 2026-07-10 14:30"
+    assert text == "🕐 Иванов Иван · — · 2026-07-10 14:30"

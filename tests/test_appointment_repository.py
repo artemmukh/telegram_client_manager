@@ -75,10 +75,13 @@ async def test_updates_appointment_status(appointment_setup):
     await appointment_repo.create_appointment(_appointment(user.ID))
     appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID))[0].id
 
-    await appointment_repo.update_appointment_status(appointment_id, AppointmentStatus.CONFIRMED)
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00"
+    )
 
     updated = await appointment_repo.get_appointment_by_id(appointment_id)
     assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.status_updated_at == "2026-07-02 10:00:00"
 
 
 @pytest.mark.asyncio
@@ -250,6 +253,161 @@ async def test_count_and_page_results_stay_consistent_for_client_id():
         page = await appointment_repo.get_appointments_by_client_id_page(client.ID, 1, per_page=10)
 
         assert count == len(page) == 1
+    finally:
+        await connection.close()
+
+
+def _appointment_with_status(
+    client_id: int,
+    dt: str,
+    status: AppointmentStatus,
+    created_at: str,
+    status_updated_at: str | None = None,
+) -> Appointment:
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        datetime=dt,
+        purpose="Consultation",
+        created_by=CreatedBy.ADMIN,
+        status=status,
+        created_at=created_at,
+        status_updated_at=status_updated_at,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_status_page_confirmed_sorted_soonest_first_with_id_tiebreak():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        same_time = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_appointment_status(same_time.id, AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+
+        second_same_time = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00")
+        )
+        sooner = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-05 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-03 10:00:00")
+        )
+        await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, "2026-07-04 10:00:00")
+        )
+
+        count = await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED)
+        page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.CONFIRMED, 1, per_page=10
+        )
+
+        assert count == 3
+        assert [a.id for a in page] == [sooner.id, same_time.id, second_same_time.id]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_status_page_pending_sorted_by_created_at_desc():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        older = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, "2026-07-01 10:00:00")
+        )
+        newer = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, "2026-07-02 10:00:00")
+        )
+        await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-03 10:00:00")
+        )
+
+        count = await appointment_repo.count_appointments_by_status(AppointmentStatus.PENDING)
+        page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.PENDING, 1, per_page=10
+        )
+
+        assert count == 2
+        assert [a.id for a in page] == [newer.id, older.id]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_status_page_cancelled_sorted_by_status_updated_at_desc_with_fallback():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        with_status_updated_at = await appointment_repo.create_appointment(
+            _appointment_with_status(
+                client.ID, "2026-07-01 10:00:00", AppointmentStatus.CANCELLED, "2026-07-01 10:00:00"
+            )
+        )
+        await appointment_repo.update_appointment_status(
+            with_status_updated_at.id, AppointmentStatus.CANCELLED, "2026-07-05 10:00:00"
+        )
+
+        fallback_to_created_at = await appointment_repo.create_appointment(
+            _appointment_with_status(
+                client.ID, "2026-07-01 10:00:00", AppointmentStatus.CANCELLED, "2026-07-10 10:00:00"
+            )
+        )
+        await connection.execute(
+            "UPDATE appointments SET status_updated_at = NULL WHERE id = ?",
+            (fallback_to_created_at.id,),
+        )
+        await connection.commit()
+
+        page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.CANCELLED, 1, per_page=10
+        )
+
+        # fallback_to_created_at has NULL status_updated_at, so COALESCE falls back
+        # to its created_at (2026-07-10), which should sort ahead of 2026-07-05.
+        assert [a.id for a in page] == [fallback_to_created_at.id, with_status_updated_at.id]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_status_page_paginates_with_offset():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        for i in range(1, 4):
+            await appointment_repo.create_appointment(
+                _appointment_with_status(
+                    client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, f"2026-07-0{i} 10:00:00"
+                )
+            )
+
+        page_one = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.PENDING, 1, per_page=2
+        )
+        page_two = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.PENDING, 2, per_page=2
+        )
+
+        assert [a.created_at for a in page_one] == ["2026-07-03 10:00:00", "2026-07-02 10:00:00"]
+        assert [a.created_at for a in page_two] == ["2026-07-01 10:00:00"]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_count_appointments_by_status_returns_zero_when_no_matches():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, "2026-07-01 10:00:00")
+        )
+
+        assert await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED) == 0
     finally:
         await connection.close()
 

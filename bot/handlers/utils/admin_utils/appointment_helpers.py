@@ -5,19 +5,10 @@ from aiogram.types import Message
 from bot.exceptions.user_exceptions import ValidationError
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_display
-from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus
 from bot.validators.validators import (
     validate_purpose,
 )
-
-STATUS_LABELS = {
-    AppointmentStatus.PENDING: "Ожидает",
-    AppointmentStatus.CONFIRMED: "Подтверждена",
-    AppointmentStatus.CANCELLED: "Отменена",
-    AppointmentStatus.COMPLETED: "Завершена",
-    AppointmentStatus.NO_SHOW: "Неявка",
-    AppointmentStatus.EXPIRED: "Истекла",
-}
 
 
 def build_appointment_confirmation(data: dict) -> str:
@@ -30,7 +21,7 @@ def build_appointment_confirmation(data: dict) -> str:
         f"Телефон: {data.get('phone', '')}",
         f"Дата и время: {display_datetime}",
         f"Услуга: {data.get('purpose', '')}",
-        "Статус: Ожидает",
+        f"Статус: {APPOINTMENT_STATUS_LABELS[AppointmentStatus.PENDING]}",
     ])
 
 
@@ -49,7 +40,7 @@ def build_appointment_card(appointment: Appointment) -> str:
     lines += [
         f"Дата и время: {appointment.datetime}",
         f"Услуга: {appointment.purpose}",
-        f"Статус: {STATUS_LABELS.get(appointment.status, appointment.status.value)}",
+        f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}",
     ]
 
     if appointment.created_at:

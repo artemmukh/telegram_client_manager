@@ -26,7 +26,9 @@ def create_admin_completion_router(appointment_repo, user_repo, staff_repo, clin
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
-            reply_markup=appointment_card_kb(appointment.id, mode="list", page=1, tab="past"),
+            reply_markup=appointment_card_kb(
+                appointment.id, mode="list", page=1, status=appointment.status, tab="completed",
+            ),
         )
         await remember_tracked_message(state, callback_query.message)
 

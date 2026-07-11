@@ -8,7 +8,11 @@ from aiogram.types import Message, CallbackQuery
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException, PaginationError
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
-from bot.keyboards.client.appointment_history_cb import ClientHistoryCardCB, ClientHistoryPageCB
+from bot.keyboards.client.appointment_history_cb import (
+    ClientHistoryActionCB,
+    ClientHistoryCardCB,
+    ClientHistoryPageCB,
+)
 from bot.keyboards.client.appointment_history_kb import (
     appointment_history_card_kb,
     appointment_history_list_kb,
@@ -35,10 +39,22 @@ from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
+from bot.services.utils.date_parser import get_current_tashkent_datetime, is_appointment_upcoming
 from bot.states.client.appointment_states import AppointmentResponseStates
+from bot.utils.appointment_enums import (
+    APPOINTMENT_STATUS_LABELS,
+    APPOINTMENT_TAB_LABELS,
+    APPOINTMENT_TAB_ORDER,
+    AppointmentStatus,
+)
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
+
+_HISTORY_TAB_TITLES = {
+    status.value: f"{APPOINTMENT_STATUS_LABELS[status].split()[0]} {APPOINTMENT_TAB_LABELS[status]}"
+    for status in APPOINTMENT_TAB_ORDER
+}
 
 
 def create_client_appointment_router(
@@ -63,16 +79,18 @@ def create_client_appointment_router(
 
     @router.callback_query(F.data == "client_appointment_history")
     async def appointment_history(callback_query: CallbackQuery):
-        await render_history_list(callback_query, tab="all", page=1)
+        await render_history_list(callback_query, tab="confirmed", page=1)
 
     @router.callback_query(ClientHistoryPageCB.filter())
     async def history_paginate(callback_query: CallbackQuery, callback_data: ClientHistoryPageCB):
         await render_history_list(callback_query, callback_data.tab, callback_data.page)
 
     @router.callback_query(ClientHistoryCardCB.filter())
-    async def history_open_card(callback_query: CallbackQuery, callback_data: ClientHistoryCardCB):
+    async def history_open_card(
+        callback_query: CallbackQuery, callback_data: ClientHistoryCardCB, state: FSMContext,
+    ):
         await render_history_card(
-            callback_query, callback_data.appointment_id, callback_data.tab, callback_data.page,
+            callback_query, callback_data.appointment_id, callback_data.tab, callback_data.page, state,
         )
 
     @router.callback_query(F.data == "client_appointment_menu")
@@ -98,8 +116,10 @@ def create_client_appointment_router(
             await render_manage_list(callback_query, callback_data.page)
 
         @router.callback_query(ClientManageCardCB.filter())
-        async def manage_open_card(callback_query: CallbackQuery, callback_data: ClientManageCardCB):
-            await render_manage_card(callback_query, callback_data.appointment_id, callback_data.page)
+        async def manage_open_card(
+            callback_query: CallbackQuery, callback_data: ClientManageCardCB, state: FSMContext,
+        ):
+            await render_manage_card(callback_query, callback_data.appointment_id, callback_data.page, state)
 
         async def close_stale_proposal_message(
             appointment_id: int,
@@ -126,7 +146,9 @@ def create_client_appointment_router(
                 pass
 
         @router.callback_query(ClientManageActionCB.filter())
-        async def manage_action(callback_query: CallbackQuery, callback_data: ClientManageActionCB):
+        async def manage_action(
+            callback_query: CallbackQuery, callback_data: ClientManageActionCB, state: FSMContext,
+        ):
             appointment_id = callback_data.appointment_id
             page = callback_data.page
 
@@ -180,7 +202,7 @@ def create_client_appointment_router(
                 return
 
             if callback_data.action == "cancel_no":
-                await render_manage_card(callback_query, appointment_id, page)
+                await render_manage_card(callback_query, appointment_id, page, state)
                 return
 
             if callback_data.action == "accept_proposal":
@@ -266,6 +288,66 @@ def create_client_appointment_router(
                     await callback_query.answer("Запись не найдена", show_alert=True)
                 except BotException as e:
                     await callback_query.answer(str(e), show_alert=True)
+                return
+
+        @router.callback_query(ClientHistoryActionCB.filter())
+        async def history_action(
+            callback_query: CallbackQuery, callback_data: ClientHistoryActionCB, state: FSMContext,
+        ):
+            appointment_id = callback_data.appointment_id
+            tab = callback_data.tab
+            page = callback_data.page
+
+            if callback_data.action == "cancel_ask":
+                await callback_query.message.edit_text(
+                    "Вы уверены? Это действие нельзя отменить.",
+                    reply_markup=cancel_confirmation_kb(
+                        yes_callback=ClientHistoryActionCB(
+                            action="cancel_yes", appointment_id=appointment_id, tab=tab, page=page,
+                        ).pack(),
+                        no_callback=ClientHistoryActionCB(
+                            action="cancel_no", appointment_id=appointment_id, tab=tab, page=page,
+                        ).pack(),
+                    ),
+                )
+                await callback_query.answer()
+                return
+
+            if callback_data.action == "cancel_yes":
+                try:
+                    await appointment_management_service.cancel_appointment_by_client(
+                        appointment_id, callback_query.from_user.id, enforce_cutoff=True
+                    )
+
+                    appointment, client = await appointment_management_service.get_appointment_with_client_info(
+                        appointment_id
+                    )
+
+                    if appointment_scheduler:
+                        await appointment_scheduler.cancel_appointment_reminders(appointment_id)
+                        await appointment_scheduler.cancel_appointment_completions(appointment_id)
+                        await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
+
+                    if notification_service and appointment.created_by_telegram_id:
+                        try:
+                            await notification_service.notify_admin_cancellation(
+                                appointment.created_by_telegram_id,
+                                appointment,
+                                client.full_name if client else "Неизвестный клиент",
+                            )
+                        except Exception:
+                            pass  # Graceful fail если не получилось отправить
+
+                    await render_history_card(callback_query, appointment_id, tab, page, state)
+                except AppointmentNotFoundError:
+                    await callback_query.answer("Запись не найдена", show_alert=True)
+                except BotException as e:
+                    await callback_query.answer(str(e), show_alert=True)
+                return
+
+            if callback_data.action == "cancel_no":
+                await render_history_card(callback_query, appointment_id, tab, page, state)
                 return
 
         @router.callback_query(F.data.startswith("appt_confirm:"))
@@ -413,8 +495,7 @@ def create_client_appointment_router(
                 callback_query.from_user.id, tab, page,
             )
 
-            titles = {"upcoming": "📅 Предстоящие", "past": "📋 Прошедшие", "all": "📖 Все записи"}
-            title = titles.get(tab, "📖 История записей")
+            title = _HISTORY_TAB_TITLES.get(tab, "📖 История записей")
             text = f"{title} ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"
 
             await callback_query.message.edit_text(
@@ -438,7 +519,7 @@ def create_client_appointment_router(
             await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
 
     async def render_history_card(
-        callback_query: CallbackQuery, appointment_id: int, tab: str, page: int,
+        callback_query: CallbackQuery, appointment_id: int, tab: str, page: int, state: FSMContext,
     ) -> None:
         appointment = await appointment_management_service.get_appointment_for_client(
             appointment_id, callback_query.from_user.id,
@@ -447,10 +528,16 @@ def create_client_appointment_router(
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return
 
+        now = get_current_tashkent_datetime()
+        can_cancel = appointment.status == AppointmentStatus.CONFIRMED and is_appointment_upcoming(appointment, now)
+        can_reschedule = can_cancel and appointment.proposed_datetime is None
+
+        await state.update_data(origin="history", tab=tab, page=page)
+
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_history_card_text(appointment),
-            reply_markup=appointment_history_card_kb(tab, page),
+            reply_markup=appointment_history_card_kb(appointment, tab, page, can_cancel, can_reschedule),
         )
 
     async def render_manage_list(callback_query: CallbackQuery, page: int) -> None:
@@ -489,13 +576,17 @@ def create_client_appointment_router(
             logger.exception(f"Unexpected error in render_manage_list: {e}")
             await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
 
-    async def render_manage_card(callback_query: CallbackQuery, appointment_id: int, page: int) -> None:
+    async def render_manage_card(
+        callback_query: CallbackQuery, appointment_id: int, page: int, state: FSMContext,
+    ) -> None:
         appointment = await appointment_management_service.get_appointment_for_client(
             appointment_id, callback_query.from_user.id,
         )
         if appointment is None:
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return
+
+        await state.update_data(origin="manage", page=page)
 
         await callback_query.answer('')
         await callback_query.message.edit_text(

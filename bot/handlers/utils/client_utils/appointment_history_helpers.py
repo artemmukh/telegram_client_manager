@@ -44,4 +44,8 @@ def build_history_card_text(appointment: Appointment) -> str:
 
     lines.append(f"Клиника: {appointment.clinic_name or 'Информация не доступна'}")
 
+    if appointment.doctor_full_name:
+        lines.append(f"Врач: {appointment.doctor_full_name}")
+        lines.append(f"Телефон врача: {appointment.doctor_phone or '—'}")
+
     return "\n".join(lines)

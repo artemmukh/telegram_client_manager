@@ -17,6 +17,7 @@ from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
@@ -186,7 +187,8 @@ async def complete_appointment(
 
     await appointment_repo.update_appointment_status(
         appointment_id,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        get_current_tashkent_time(),
     )
 
     logger.info(
@@ -241,7 +243,9 @@ async def expire_pending_request_job(appointment_id: int) -> None:
             )
             return
 
-        await appointment_repo.update_appointment_status(appointment_id, AppointmentStatus.EXPIRED)
+        await appointment_repo.update_appointment_status(
+            appointment_id, AppointmentStatus.EXPIRED, get_current_tashkent_time()
+        )
 
         logger.info(f"Appointment {appointment_id} self-booking request expired (unanswered)")
 

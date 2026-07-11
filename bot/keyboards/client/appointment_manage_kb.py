@@ -1,3 +1,4 @@
+from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -11,6 +12,26 @@ from bot.keyboards.client.reschedule_cb import ClientRescheduleStartCB
 from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.pagination import get_circular_page
+
+
+def _add_status_action_buttons(
+    builder: InlineKeyboardBuilder,
+    can_cancel: bool,
+    can_reschedule: bool,
+    cancel_cb: CallbackData,
+    reschedule_cb: CallbackData,
+) -> int:
+    button_rows = 0
+
+    if can_cancel:
+        builder.button(text="❌ Отменить", callback_data=cancel_cb.pack())
+        button_rows += 1
+
+    if can_reschedule:
+        builder.button(text="🔁 Перенести", callback_data=reschedule_cb.pack())
+        button_rows += 1
+
+    return button_rows
 
 
 def appointment_manage_list_kb(
@@ -72,27 +93,19 @@ def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKey
             ).pack(),
         )
         button_rows += 2
-    elif appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.CLIENT:
-        # Client's own reschedule request is pending admin decision:
-        # no confirm/re-propose, only the ability to cancel the appointment outright.
-        builder.button(
-            text="❌ Отменить",
-            callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page).pack(),
-        )
-        button_rows += 1
     else:
-        builder.button(
-            text="❌ Отменить",
-            callback_data=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page).pack(),
-        )
-        button_rows += 1
+        # Client's own reschedule request pending admin decision (proposed_by CLIENT)
+        # only allows cancelling outright; a plain confirmed/pending appointment also
+        # allows rescheduling.
+        can_reschedule = appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None
 
-        if appointment.status == AppointmentStatus.CONFIRMED:
-            builder.button(
-                text="🔁 Перенести",
-                callback_data=ClientRescheduleStartCB(appointment_id=appointment.id).pack(),
-            )
-            button_rows += 1
+        button_rows += _add_status_action_buttons(
+            builder,
+            can_cancel=True,
+            can_reschedule=can_reschedule,
+            cancel_cb=ClientManageActionCB(action="cancel_ask", appointment_id=appointment.id, page=page),
+            reschedule_cb=ClientRescheduleStartCB(appointment_id=appointment.id),
+        )
 
     builder.button(
         text="⬅️ Назад к списку",

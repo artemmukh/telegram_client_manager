@@ -11,7 +11,7 @@ Tests the complete workflow of appointment auto-completion:
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
@@ -267,7 +267,8 @@ async def test_completion_job_updates_pending_to_completed(
     # Verify status update was called
     mock_appointment_repo.update_appointment_status.assert_called_once_with(
         sample_appointment.id,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        ANY,
     )
 
 
@@ -293,7 +294,8 @@ async def test_completion_job_updates_confirmed_to_completed(
 
     mock_appointment_repo.update_appointment_status.assert_called_once_with(
         confirmed_appointment.id,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        ANY,
     )
 
 
@@ -417,7 +419,8 @@ async def test_completion_job_swallows_admin_notification_failure(
 
     mock_appointment_repo.update_appointment_status.assert_called_once_with(
         sample_appointment.id,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        ANY,
     )
 
 
@@ -443,7 +446,8 @@ async def test_full_workflow_pending_to_completed(
     # 4. Verify status was updated to COMPLETED
     mock_appointment_repo.update_appointment_status.assert_called_once_with(
         sample_appointment.id,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        ANY,
     )
 
     # 5. Verify the admin (not the client) was notified about the completion follow-up
@@ -494,7 +498,8 @@ async def test_full_workflow_confirmed_to_completed(
     # 5. Verify status was updated to COMPLETED
     mock_appointment_repo.update_appointment_status.assert_called_once_with(
         sample_appointment.id,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        ANY,
     )
 
     scheduler.shutdown(wait=False)
@@ -550,7 +555,8 @@ async def test_multiple_appointments_independent_lifecycle(
     # Verify appt2 status was updated
     mock_appointment_repo.update_appointment_status.assert_called_with(
         2,
-        AppointmentStatus.COMPLETED
+        AppointmentStatus.COMPLETED,
+        ANY,
     )
 
     scheduler.shutdown(wait=False)

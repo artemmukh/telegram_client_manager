@@ -6,7 +6,7 @@ from math import ceil
 from bot.exceptions.exceptions import PaginationError
 from bot.models.appointment import Appointment
 from bot.repositories.appointment_repository import AppointmentRepository
-from bot.services.utils.date_parser import get_current_tashkent_datetime
+from bot.services.utils.date_parser import get_current_tashkent_datetime, is_appointment_upcoming
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.pagination import APPOINTMENTS_PER_PAGE
 
@@ -25,6 +25,15 @@ class AppointmentPaginationResult:
 class AppointmentPaginationService:
     """Сервис пагинации для листинга записей"""
 
+    _STATUS_TABS = {
+        "confirmed": AppointmentStatus.CONFIRMED,
+        "pending": AppointmentStatus.PENDING,
+        "cancelled": AppointmentStatus.CANCELLED,
+        "no_show": AppointmentStatus.NO_SHOW,
+        "completed": AppointmentStatus.COMPLETED,
+        "expired": AppointmentStatus.EXPIRED,
+    }
+
     def __init__(self, appointment_repository: AppointmentRepository):
         self.appointment_repo = appointment_repository
 
@@ -36,11 +45,85 @@ class AppointmentPaginationService:
 
         return page, total_pages
 
+    def _sort_by_datetime(self, appointments: list[Appointment], reverse: bool) -> list[Appointment]:
+        dated = []
+
+        for appointment in appointments:
+            try:
+                appointment_dt = datetime.fromisoformat(appointment.datetime)
+            except ValueError:
+                logger.warning(
+                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
+                )
+                appointment_dt = datetime.min
+
+            dated.append((appointment_dt, appointment))
+
+        dated.sort(key=lambda pair: (pair[0], pair[1].id), reverse=reverse)
+        return [appointment for _, appointment in dated]
+
+    def _sort_by_created_at(self, appointments: list[Appointment], reverse: bool) -> list[Appointment]:
+        dated = []
+
+        for appointment in appointments:
+            try:
+                created_at = (
+                    datetime.fromisoformat(appointment.created_at)
+                    if appointment.created_at
+                    else datetime.min
+                )
+            except ValueError:
+                logger.warning(
+                    f"Не удалось разобрать дату создания записи {appointment.id}: {appointment.created_at!r}"
+                )
+                created_at = datetime.min
+
+            dated.append((created_at, appointment))
+
+        dated.sort(key=lambda pair: (pair[0], pair[1].id), reverse=reverse)
+        return [appointment for _, appointment in dated]
+
+    def _sort_by_status_updated_at(self, appointments: list[Appointment], reverse: bool) -> list[Appointment]:
+        dated = []
+
+        for appointment in appointments:
+            value = appointment.status_updated_at or appointment.created_at
+            try:
+                status_updated_at = datetime.fromisoformat(value) if value else datetime.min
+            except ValueError:
+                logger.warning(
+                    f"Не удалось разобрать дату смены статуса записи {appointment.id}: {value!r}"
+                )
+                status_updated_at = datetime.min
+
+            dated.append((status_updated_at, appointment))
+
+        dated.sort(key=lambda pair: (pair[0], pair[1].id), reverse=reverse)
+        return [appointment for _, appointment in dated]
+
+    def _sort_bucket_by_status(
+        self, appointments: list[Appointment], status: AppointmentStatus
+    ) -> list[Appointment]:
+        if status == AppointmentStatus.CONFIRMED:
+            return self._sort_by_datetime(appointments, reverse=False)
+        if status == AppointmentStatus.PENDING:
+            return self._sort_by_created_at(appointments, reverse=True)
+        return self._sort_by_status_updated_at(appointments, reverse=True)
+
+    def _filter_by_tab(self, appointments: list[Appointment], tab: str) -> list[Appointment]:
+        if tab not in self._STATUS_TABS:
+            raise PaginationError(f"Неизвестная вкладка: {tab}")
+
+        status = self._STATUS_TABS[tab]
+        bucket = [appointment for appointment in appointments if appointment.status == status]
+        return self._sort_bucket_by_status(bucket, status)
+
     async def paginate_appointments(
         self,
         mode: str,
         page: int,
-        search_data: dict = None
+        search_data: dict = None,
+        tab: str = "confirmed",
     ) -> AppointmentPaginationResult:
         """
         Получить страницу записей с метаданными пагинации
@@ -49,33 +132,34 @@ class AppointmentPaginationService:
             mode: 'list' - все записи, 'search' - поиск по имени, 'phone' - записи клиента
             page: номер страницы
             search_data: dict с 'full_name' для mode='search', 'client_id' для mode='phone'
+            tab: вкладка по статусу ('confirmed'/'pending'/'cancelled'/'no_show'/'completed'/'expired'),
+                применяется только к mode='search' и mode='phone'
 
         Returns:
             AppointmentPaginationResult с информацией о странице
         """
+        ordered = None
+
         if mode == "list":
             total_count = await self.appointment_repo.count_appointments()
             items = await self.appointment_repo.get_appointments_page(page, APPOINTMENTS_PER_PAGE)
         elif mode == "search":
-            if not search_data:
-                search_data = {}
-            full_name = search_data.get("full_name", "")
-            total_count = await self.appointment_repo.count_appointments_by_name(full_name)
-            items = await self.appointment_repo.get_appointments_by_name_page(
-                full_name, page, APPOINTMENTS_PER_PAGE
-            )
+            full_name = (search_data or {}).get("full_name", "")
+            appointments = await self.appointment_repo.get_appointments_by_name(full_name)
+            ordered = self._filter_by_tab(appointments, tab)
+            total_count = len(ordered)
         elif mode == "phone":
-            if not search_data:
-                search_data = {}
-            client_id = search_data.get("client_id")
-            total_count = await self.appointment_repo.count_appointments_by_client_id(client_id)
-            items = await self.appointment_repo.get_appointments_by_client_id_page(
-                client_id, page, APPOINTMENTS_PER_PAGE
-            )
+            client_id = (search_data or {}).get("client_id")
+            appointments = await self.appointment_repo.get_appointments_by_client_id(client_id)
+            ordered = self._filter_by_tab(appointments, tab)
+            total_count = len(ordered)
         else:
             raise PaginationError(f"Неизвестный режим пагинации: {mode}")
 
         page, total_pages = self._paginate_math(total_count, page, APPOINTMENTS_PER_PAGE)
+
+        if ordered is not None:
+            items = ordered[(page - 1) * APPOINTMENTS_PER_PAGE: page * APPOINTMENTS_PER_PAGE]
 
         return AppointmentPaginationResult(
             items=items,
@@ -101,63 +185,13 @@ class AppointmentPaginationService:
 
         Args:
             telegram_id: telegram_user_id клиента
-            tab: 'upcoming' - предстоящие, 'past' - прошедшие, 'all' - все
+            tab: вкладка по статусу ('confirmed'/'pending'/'cancelled'/'no_show'/'completed'/'expired')
             page: номер страницы
         """
         per_page = per_page or APPOINTMENTS_PER_PAGE
 
         appointments = await self.appointment_repo.get_appointments_by_telegram_id(telegram_id)
-        now = get_current_tashkent_datetime()
-
-        upcoming = []
-        past = []
-
-        for appointment in appointments:
-            try:
-                appointment_dt = datetime.fromisoformat(appointment.datetime)
-            except ValueError:
-                logger.warning(
-                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
-                )
-                appointment_dt = datetime.min
-
-            if appointment_dt >= now:
-                upcoming.append((appointment_dt, appointment))
-            else:
-                past.append((appointment_dt, appointment))
-
-        # Статус записи не влияет на распределение по вкладкам - деление
-        # чисто по времени, поэтому отменённая будущая запись всё ещё
-        # считается "предстоящей". Это ожидаемое поведение.
-        upcoming.sort(key=lambda pair: (pair[0], pair[1].id))
-        past.sort(key=lambda pair: (pair[0], pair[1].id), reverse=True)
-
-        if tab == "upcoming":
-            filtered = [appointment for _, appointment in upcoming]
-        elif tab == "past":
-            filtered = [appointment for _, appointment in past]
-        elif tab == "all":
-            dated = []
-
-            for appointment in appointments:
-                try:
-                    created_at = (
-                        datetime.fromisoformat(appointment.created_at)
-                        if appointment.created_at
-                        else datetime.min
-                    )
-                except ValueError:
-                    logger.warning(
-                        f"Не удалось разобрать дату создания записи {appointment.id}: {appointment.created_at!r}"
-                    )
-                    created_at = datetime.min
-
-                dated.append((created_at, appointment))
-
-            dated.sort(key=lambda pair: (pair[0], pair[1].id), reverse=True)
-            filtered = [appointment for _, appointment in dated]
-        else:
-            raise PaginationError(f"Неизвестная вкладка истории: {tab}")
+        filtered = self._filter_by_tab(appointments, tab)
 
         total_count = len(filtered)
         page, total_pages = self._paginate_math(total_count, page, per_page)
@@ -180,49 +214,25 @@ class AppointmentPaginationService:
         """
         Получить страницу списка всех записей (админ, mode="list") по вкладке.
 
-        Как и paginate_client_appointments, фильтрация/сортировка/пагинация
-        выполняется в памяти поверх полного списка записей.
+        В отличие от paginate_client_appointments, здесь используется
+        пагинация на уровне SQL - таблица записей неограниченно растёт,
+        поэтому загружать её целиком в память на каждое переключение
+        вкладки/страницы нельзя.
 
         Args:
-            tab: 'upcoming' - предстоящие, 'past' - прошедшие
+            tab: вкладка по статусу ('confirmed'/'pending'/'cancelled'/'no_show'/'completed'/'expired')
             page: номер страницы
         """
+        if tab not in self._STATUS_TABS:
+            raise PaginationError(f"Неизвестная вкладка: {tab}")
+
         per_page = per_page or APPOINTMENTS_PER_PAGE
+        status = self._STATUS_TABS[tab]
 
-        appointments = await self.appointment_repo.get_all_appointments()
-        now = get_current_tashkent_datetime()
-
-        upcoming = []
-        past = []
-
-        for appointment in appointments:
-            try:
-                appointment_dt = datetime.fromisoformat(appointment.datetime)
-            except ValueError:
-                logger.warning(
-                    f"Не удалось разобрать дату записи {appointment.id}: {appointment.datetime!r}"
-                )
-                appointment_dt = datetime.min
-
-            if appointment_dt >= now:
-                upcoming.append((appointment_dt, appointment))
-            else:
-                past.append((appointment_dt, appointment))
-
-        upcoming.sort(key=lambda pair: (pair[0], pair[1].client_id, pair[1].id))
-        past.sort(key=lambda pair: (pair[0], pair[1].client_id, pair[1].id), reverse=True)
-
-        if tab == "upcoming":
-            filtered = [appointment for _, appointment in upcoming]
-        elif tab == "past":
-            filtered = [appointment for _, appointment in past]
-        else:
-            raise PaginationError(f"Неизвестная вкладка списка записей: {tab}")
-
-        total_count = len(filtered)
+        total_count = await self.appointment_repo.count_appointments_by_status(status)
         page, total_pages = self._paginate_math(total_count, page, per_page)
 
-        items = filtered[(page - 1) * per_page: page * per_page]
+        items = await self.appointment_repo.get_appointments_by_status_page(status, page, per_page)
 
         return AppointmentPaginationResult(
             items=items,
@@ -249,25 +259,18 @@ class AppointmentPaginationService:
         active = []
 
         for appointment in appointments:
+            if appointment.status not in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                continue
+
+            if not is_appointment_upcoming(appointment, now):
+                continue
+
             relevant_datetime = (
                 appointment.proposed_datetime
                 if appointment.proposed_datetime is not None
                 else appointment.datetime
             )
-
-            try:
-                appointment_dt = datetime.fromisoformat(relevant_datetime)
-            except ValueError:
-                logger.warning(
-                    f"Не удалось разобрать дату записи {appointment.id}: {relevant_datetime!r}"
-                )
-                continue
-
-            if appointment_dt < now:
-                continue
-
-            if appointment.status not in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
-                continue
+            appointment_dt = datetime.fromisoformat(relevant_datetime)
 
             active.append((appointment_dt, appointment))
 

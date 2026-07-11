@@ -12,6 +12,7 @@ from bot.handlers.utils.client_utils.booking_helpers import (
     generate_working_days,
 )
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
+from bot.keyboards.client.appointment_history_kb import appointment_history_card_kb
 from bot.keyboards.client.appointment_manage_kb import appointment_manage_card_kb, appointment_manage_empty_kb
 from bot.keyboards.client.reschedule_cb import (
     ClientRescheduleCancelCB,
@@ -31,8 +32,13 @@ from bot.repositories.appointment_repository import AppointmentRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
-from bot.services.utils.date_parser import format_datetime_for_display, get_current_tashkent_datetime
+from bot.services.utils.date_parser import (
+    format_datetime_for_display,
+    get_current_tashkent_datetime,
+    is_appointment_upcoming,
+)
 from bot.states.client.reschedule_states import ClientRescheduleStates
+from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
@@ -83,6 +89,26 @@ def create_client_reschedule_router(
             reply_markup=appointment_manage_card_kb(appointment, page=1),
         )
 
+    async def render_history_card(
+        callback_query: CallbackQuery, appointment_id: int, tab: str, page: int,
+    ) -> None:
+        appointment = await appointment_management_service.get_appointment_for_client(
+            appointment_id, callback_query.from_user.id,
+        )
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        now = get_current_tashkent_datetime()
+        can_cancel = appointment.status == AppointmentStatus.CONFIRMED and is_appointment_upcoming(appointment, now)
+        can_reschedule = can_cancel and appointment.proposed_datetime is None
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_history_card_text(appointment),
+            reply_markup=appointment_history_card_kb(appointment, tab, page, can_cancel, can_reschedule),
+        )
+
     @router.callback_query(ClientRescheduleStartCB.filter())
     async def start_reschedule(
         callback_query: CallbackQuery, callback_data: ClientRescheduleStartCB, state: FSMContext,
@@ -96,8 +122,15 @@ def create_client_reschedule_router(
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return
 
+        origin_data = await state.get_data()
+        origin = origin_data.get("origin", "manage")
+        origin_tab = origin_data.get("tab")
+        origin_page = origin_data.get("page", 1)
+
         await state.clear()
-        await state.update_data(appointment_id=appointment_id)
+        await state.update_data(
+            appointment_id=appointment_id, origin=origin, tab=origin_tab, page=origin_page,
+        )
 
         reference = get_current_tashkent_datetime().date()
         start_offset = find_first_available_week_offset(reference)
@@ -159,6 +192,9 @@ def create_client_reschedule_router(
     ) -> None:
         data = await state.get_data()
         appointment_id = callback_data.appointment_id
+        origin = data.get("origin", "manage")
+        tab = data.get("tab")
+        page = data.get("page", 1)
 
         try:
             appointment = await appointment_management_service.request_reschedule_by_client(
@@ -170,9 +206,14 @@ def create_client_reschedule_router(
 
         await state.clear()
 
+        if origin == "history" and tab:
+            success_kb = appointment_history_card_kb(appointment, tab, page, can_cancel=False, can_reschedule=False)
+        else:
+            success_kb = appointment_manage_empty_kb()
+
         await callback_query.message.edit_text(
             "✅ Заявка на перенос отправлена. Ожидайте решения клиники.",
-            reply_markup=appointment_manage_empty_kb(),
+            reply_markup=success_kb,
         )
         await callback_query.answer()
 
@@ -193,7 +234,17 @@ def create_client_reschedule_router(
     async def cancel_reschedule(
         callback_query: CallbackQuery, callback_data: ClientRescheduleCancelCB, state: FSMContext,
     ) -> None:
+        data = await state.get_data()
+        origin = data.get("origin", "manage")
+        tab = data.get("tab")
+        page = data.get("page", 1)
+
         await state.clear()
-        await render_manage_card(callback_query, callback_data.appointment_id)
+        await state.update_data(origin=origin, tab=tab, page=page)
+
+        if origin == "history" and tab:
+            await render_history_card(callback_query, callback_data.appointment_id, tab, page)
+        else:
+            await render_manage_card(callback_query, callback_data.appointment_id)
 
     return router

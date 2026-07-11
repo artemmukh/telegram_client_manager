@@ -14,6 +14,7 @@ SELECT
     a.created_by,
     a.status,
     a.created_at,
+    a.status_updated_at,
     c.name AS clinic_name,
     a.admin_tg_id,
     u.full_name AS client_full_name,
@@ -22,10 +23,13 @@ SELECT
     a.proposed_datetime,
     a.proposal_message_id,
     a.proposed_by,
-    a.admin_notification_message_id
+    a.admin_notification_message_id,
+    d.full_name AS doctor_full_name,
+    d.phone AS doctor_phone
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
+LEFT JOIN users d ON d.id = a.admin_id
 """
 
 
@@ -59,6 +63,7 @@ class AppointmentRepository:
                 created_by TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status_updated_at TIMESTAMP DEFAULT NULL,
                 admin_tg_id INTEGER DEFAULT NULL,
                 notification_message_id INTEGER DEFAULT NULL,
                 proposed_datetime TIMESTAMP DEFAULT NULL,
@@ -113,6 +118,15 @@ class AppointmentRepository:
                 "ALTER TABLE appointments ADD COLUMN admin_notification_message_id INTEGER DEFAULT NULL"
             )
 
+        # Ensure status_updated_at column exists for existing databases
+        if "status_updated_at" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN status_updated_at TIMESTAMP DEFAULT NULL"
+            )
+            await self.connection.execute(
+                "UPDATE appointments SET status_updated_at = created_at WHERE status_updated_at IS NULL"
+            )
+
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_clinic_datetime
             ON appointments(clinic_id, datetime)
@@ -144,13 +158,16 @@ class AppointmentRepository:
             SELECT
                 a.id, a.clinic_id, a.client_id, a.admin_id,
                 a.datetime, a.purpose, a.created_by, a.status, a.created_at,
+                a.status_updated_at,
                 c.name AS clinic_name, a.admin_tg_id,
                 u.full_name AS client_full_name, u.phone AS client_phone,
                 a.notification_message_id, a.proposed_datetime, a.proposal_message_id,
-                a.proposed_by, a.admin_notification_message_id
+                a.proposed_by, a.admin_notification_message_id,
+                d.full_name AS doctor_full_name, d.phone AS doctor_phone
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
+            LEFT JOIN users d ON d.id = a.admin_id
             WHERE u.telegram_user_id = ?
             ORDER BY a.created_at DESC
             """,
@@ -165,9 +182,9 @@ class AppointmentRepository:
             INSERT INTO appointments(
                 clinic_id, client_id, admin_id,
                 datetime, purpose, created_by, status, admin_tg_id, created_at,
-                notification_message_id
+                status_updated_at, notification_message_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 appointment.clinic_id,
@@ -178,6 +195,7 @@ class AppointmentRepository:
                 appointment.created_by.value,
                 appointment.status.value,
                 appointment.created_by_telegram_id,
+                appointment.created_at,
                 appointment.created_at,
                 appointment.notification_message_id,
             ),
@@ -209,10 +227,12 @@ class AppointmentRepository:
         )
         await self.connection.commit()
 
-    async def update_appointment_status(self, appointment_id: int, status: AppointmentStatus) -> None:
+    async def update_appointment_status(
+        self, appointment_id: int, status: AppointmentStatus, status_updated_at: str
+    ) -> None:
         await self.connection.execute(
-            "UPDATE appointments SET status = ? WHERE id = ?",
-            (status.value, appointment_id),
+            "UPDATE appointments SET status = ?, status_updated_at = ? WHERE id = ?",
+            (status.value, status_updated_at, appointment_id),
         )
         await self.connection.commit()
 
@@ -303,6 +323,24 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
+    async def get_appointments_by_name(self, full_name: str) -> list[Appointment]:
+        """Получить все записи, соответствующие поиску по имени клиента"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
+        conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE ({conditions})
+        ORDER BY a.created_at DESC
+        """
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
     async def get_appointments_by_name_page(
         self, full_name: str, page: int, per_page: int = 10
     ) -> list[Appointment]:
@@ -346,6 +384,40 @@ class AppointmentRepository:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def get_appointments_by_status_page(
+        self, status: AppointmentStatus, page: int, per_page: int = 10
+    ) -> list[Appointment]:
+        """Получить страницу записей с определённым статусом (для вкладок админского списка)"""
+        offset = (page - 1) * per_page
+        order_by = self._status_order_by(status)
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + f"""
+            WHERE a.status = ?
+            ORDER BY {order_by}
+            LIMIT ? OFFSET ?
+            """,
+            (status.value, per_page, offset),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def count_appointments_by_status(self, status: AppointmentStatus) -> int:
+        """Получить количество записей с определённым статусом"""
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM appointments WHERE status = ?",
+            (status.value,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    @staticmethod
+    def _status_order_by(status: AppointmentStatus) -> str:
+        if status == AppointmentStatus.CONFIRMED:
+            return "a.datetime ASC, a.id ASC"
+        if status == AppointmentStatus.PENDING:
+            return "a.created_at DESC, a.id DESC"
+        return "COALESCE(a.status_updated_at, a.created_at) DESC, a.id DESC"
+
     async def get_appointments_by_client_id_page(
         self, client_id: int, page: int, per_page: int = 10
     ) -> list[Appointment]:
@@ -384,13 +456,16 @@ class AppointmentRepository:
             created_by=CreatedBy(row[6]),
             status=AppointmentStatus(row[7]),
             created_at=row[8],
-            clinic_name=row[9],
-            created_by_telegram_id=row[10],
-            client_full_name=row[11],
-            client_phone=row[12],
-            notification_message_id=row[13],
-            proposed_datetime=row[14],
-            proposal_message_id=row[15],
-            proposed_by=CreatedBy(row[16]) if row[16] else None,
-            admin_notification_message_id=row[17],
+            status_updated_at=row[9],
+            clinic_name=row[10],
+            created_by_telegram_id=row[11],
+            client_full_name=row[12],
+            client_phone=row[13],
+            notification_message_id=row[14],
+            proposed_datetime=row[15],
+            proposal_message_id=row[16],
+            proposed_by=CreatedBy(row[17]) if row[17] else None,
+            admin_notification_message_id=row[18],
+            doctor_full_name=row[19],
+            doctor_phone=row[20],
         )

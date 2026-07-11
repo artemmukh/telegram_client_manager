@@ -45,7 +45,7 @@ class FakeAppointmentRepoForIntegration:
     async def appointment_exists(self, appointment_id):
         return any(a.id == appointment_id for a in self.appointments)
 
-    async def update_appointment_status(self, appointment_id, status):
+    async def update_appointment_status(self, appointment_id, status, status_updated_at):
         for appt in self.appointments:
             if appt.id == appointment_id:
                 appt.status = status

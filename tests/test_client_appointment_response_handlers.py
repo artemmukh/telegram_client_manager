@@ -52,7 +52,7 @@ class FakeAppointmentRepo:
     async def get_appointment_by_id(self, appointment_id):
         return next((a for a in self.appointments if a.id == appointment_id), None)
 
-    async def update_appointment_status(self, appointment_id, status):
+    async def update_appointment_status(self, appointment_id, status, status_updated_at):
         self.status_updates.append((appointment_id, status))
         for appt in self.appointments:
             if appt.id == appointment_id:

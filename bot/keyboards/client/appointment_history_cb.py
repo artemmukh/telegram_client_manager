@@ -12,3 +12,11 @@ class ClientHistoryCardCB(CallbackData, prefix="cl_hist_card"):
     appointment_id: int
     tab: str
     page: int
+
+
+class ClientHistoryActionCB(CallbackData, prefix="cl_hist_act"):
+    """Действие над записью в карточке истории (cancel_ask/cancel_yes/cancel_no)."""
+    action: str
+    appointment_id: int
+    tab: str
+    page: int

@@ -5,6 +5,8 @@ import pytz
 import dateparser
 import re
 
+from bot.models.appointment import Appointment
+
 # 'в 4 часов' по умолчанию трактуется dateparser'ом либо как 4 утра,
 # либо вообще как "4-е число месяца". Нормализуем вручную под контекст
 # клиники: рабочий день днём/вечером, поэтому маленькие часы без
@@ -97,3 +99,24 @@ def get_current_tashkent_time() -> str:
 def get_current_tashkent_datetime() -> datetime:
     """Current time in Asia/Tashkent as a naive datetime, comparable to appointment.datetime."""
     return datetime.now(pytz.timezone("Asia/Tashkent")).replace(tzinfo=None)
+
+
+def is_appointment_upcoming(appointment: Appointment, now: datetime) -> bool:
+    """
+    Whether the appointment's relevant datetime (proposed_datetime if present,
+    otherwise datetime) is not before `now`.
+
+    Returns False if the relevant datetime cannot be parsed.
+    """
+    relevant_datetime = (
+        appointment.proposed_datetime
+        if appointment.proposed_datetime is not None
+        else appointment.datetime
+    )
+
+    try:
+        appointment_dt = datetime.fromisoformat(relevant_datetime)
+    except ValueError:
+        return False
+
+    return appointment_dt >= now

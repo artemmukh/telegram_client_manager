@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
@@ -1089,7 +1089,8 @@ async def test_mark_appointment_completed_job_updates_status_if_pending(
 
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 sample_appointment.id,
-                AppointmentStatus.COMPLETED
+                AppointmentStatus.COMPLETED,
+                ANY,
             )
 
 
@@ -1134,7 +1135,8 @@ async def test_mark_appointment_completed_job_updates_status_if_confirmed(
 
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 confirmed_appointment.id,
-                AppointmentStatus.COMPLETED
+                AppointmentStatus.COMPLETED,
+                ANY,
             )
 
 
@@ -1592,6 +1594,7 @@ async def test_expire_pending_request_job_expires_if_pending_and_client_created(
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 client_request.id,
                 AppointmentStatus.EXPIRED,
+                ANY,
             )
             mock_notification_service.notify_client_pending_request_expired.assert_called_once_with(
                 client_request
@@ -1756,6 +1759,7 @@ async def test_expire_pending_request_job_handles_notification_failure(
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 client_request.id,
                 AppointmentStatus.EXPIRED,
+                ANY,
             )
 
 

@@ -13,6 +13,7 @@ class Appointment:
     status: AppointmentStatus
     doctor_id: int | None = None
     created_at: str | None = None
+    status_updated_at: str | None = None
     id: int | None = None
     clinic_name: str | None = None
     created_by_telegram_id: int | None = None
@@ -23,3 +24,5 @@ class Appointment:
     proposal_message_id: int | None = None
     proposed_by: CreatedBy | None = None
     admin_notification_message_id: int | None = None
+    doctor_full_name: str | None = None
+    doctor_phone: str | None = None

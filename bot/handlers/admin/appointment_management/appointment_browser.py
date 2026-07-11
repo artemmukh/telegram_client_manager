@@ -151,7 +151,7 @@ def create_admin_appointment_browser_router(
     @router.callback_query(F.data == "appt_search_all")
     async def search_all(callback_query: CallbackQuery, state: FSMContext):
         await state.clear()
-        await render_list(callback_query, state, mode="list", page=1, tab="upcoming")
+        await render_list(callback_query, state, mode="list", page=1, tab="confirmed")
 
     # --- Resolve the search query and show results ---
 
@@ -166,12 +166,12 @@ def create_admin_appointment_browser_router(
                 return
 
             await state.update_data(search_data={"client_id": client.ID})
-            await render_list(callback_query, state, mode="phone", page=1)
+            await render_list(callback_query, state, mode="phone", page=1, tab="confirmed")
             return
 
         if data.get("full_name"):
             await state.update_data(search_data={"full_name": data["full_name"]})
-            await render_list(callback_query, state, mode="search", page=1)
+            await render_list(callback_query, state, mode="search", page=1, tab="confirmed")
             return
 
         await callback_query.answer("Укажите телефон или ФИО для поиска.", show_alert=True)
@@ -229,7 +229,9 @@ def create_admin_appointment_browser_router(
         await callback_query.answer("Статус обновлён")
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
-            reply_markup=appointment_card_kb(callback_data.appointment_id, callback_data.mode, callback_data.page),
+            reply_markup=appointment_card_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page, status=appointment.status,
+            ),
         )
         await remember_tracked_message(state, callback_query.message)
 
@@ -472,8 +474,9 @@ def create_admin_appointment_browser_router(
         callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, tab: str = "", prefix: str = "",
     ) -> None:
         try:
+            tab = tab or "confirmed"
+
             if mode == "list":
-                tab = tab or "upcoming"
                 result = await pagination_service.paginate_all_appointments_by_tab(tab, page)
             else:
                 search_data = None
@@ -481,7 +484,7 @@ def create_admin_appointment_browser_router(
                     data = await state.get_data()
                     search_data = data.get("search_data") or {}
 
-                result = await pagination_service.paginate_appointments(mode, page, search_data)
+                result = await pagination_service.paginate_appointments(mode, page, search_data, tab)
 
             titles = {
                 "list": "📒 Все записи",
@@ -522,7 +525,7 @@ def create_admin_appointment_browser_router(
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
-            reply_markup=appointment_card_kb(appointment_id, mode, page, tab),
+            reply_markup=appointment_card_kb(appointment_id, mode, page, status=appointment.status, tab=tab),
         )
         await remember_tracked_message(state, callback_query.message)
 

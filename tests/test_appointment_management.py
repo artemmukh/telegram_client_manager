@@ -47,7 +47,7 @@ class FakeAppointmentRepository:
     async def delete_appointment(self, appointment_id):
         self.appointments = [a for a in self.appointments if a.id != appointment_id]
 
-    async def update_appointment_status(self, appointment_id, status):
+    async def update_appointment_status(self, appointment_id, status, status_updated_at):
         self.status_updates.append((appointment_id, status))
 
     async def update_appointment(self, appointment_id, appointment):

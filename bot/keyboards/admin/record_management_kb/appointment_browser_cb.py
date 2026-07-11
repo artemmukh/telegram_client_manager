@@ -4,8 +4,9 @@ from aiogram.filters.callback_data import CallbackData
 class ApptPageCB(CallbackData, prefix="appt_page"):
     """Навигация по странице / переключение вкладки списка записей.
 
-    tab используется только для mode="list" (Предстоящие/Прошедшие),
-    для mode="search"/"phone" остаётся пустой строкой.
+    tab - одна из 6 вкладок по статусу ('confirmed'/'pending'/'cancelled'/
+    'no_show'/'completed'/'expired'), применяется для всех режимов
+    (mode="list"/"search"/"phone").
     """
     mode: str
     page: int

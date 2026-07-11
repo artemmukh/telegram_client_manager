@@ -15,9 +15,9 @@ from bot.utils.pagination import APPOINTMENTS_PER_PAGE
 class FakeAppointmentRepository:
     """Мнимый репозиторий записей для юнит-тестов сервиса пагинации.
 
-    Хранит фиксированные "ответы" на страничные/count-запросы и
-    записывает, с какими аргументами эти методы вызывались, чтобы тесты
-    могли проверить маршрутизацию по режимам (mode).
+    Хранит фиксированные "ответы" на запросы и записывает, с какими
+    аргументами эти методы вызывались, чтобы тесты могли проверить
+    маршрутизацию по режимам (mode).
     """
 
     def __init__(
@@ -37,33 +37,27 @@ class FakeAppointmentRepository:
         self.calls.append(("get_appointments_page", page, per_page))
         return self.page_items
 
-    async def count_appointments_by_name(self, full_name: str) -> int:
-        self.calls.append(("count_appointments_by_name", full_name))
-        return self.total_count
-
-    async def get_appointments_by_name_page(
-        self, full_name: str, page: int, per_page: int
-    ) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_name_page", full_name, page, per_page))
+    async def get_appointments_by_name(self, full_name: str) -> list[Appointment]:
+        self.calls.append(("get_appointments_by_name", full_name))
         return self.page_items
 
-    async def count_appointments_by_client_id(self, client_id: int) -> int:
-        self.calls.append(("count_appointments_by_client_id", client_id))
-        return self.total_count
-
-    async def get_appointments_by_client_id_page(
-        self, client_id: int, page: int, per_page: int
-    ) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_client_id_page", client_id, page, per_page))
+    async def get_appointments_by_client_id(self, client_id: int) -> list[Appointment]:
+        self.calls.append(("get_appointments_by_client_id", client_id))
         return self.page_items
 
     async def get_appointments_by_telegram_id(self, telegram_user_id: int) -> list[Appointment]:
         self.calls.append(("get_appointments_by_telegram_id", telegram_user_id))
         return self.page_items
 
-    async def get_all_appointments(self) -> list[Appointment]:
-        self.calls.append(("get_all_appointments",))
+    async def get_appointments_by_status_page(
+        self, status: AppointmentStatus, page: int, per_page: int
+    ) -> list[Appointment]:
+        self.calls.append(("get_appointments_by_status_page", status, page, per_page))
         return self.page_items
+
+    async def count_appointments_by_status(self, status: AppointmentStatus) -> int:
+        self.calls.append(("count_appointments_by_status", status))
+        return self.total_count
 
 
 def _appointment(appointment_id: int) -> Appointment:
@@ -99,17 +93,16 @@ async def test_paginate_list_mode_returns_all_appointments():
 # --- mode="search" ---
 
 @pytest.mark.asyncio
-async def test_paginate_search_mode_routes_full_name_to_repository():
+async def test_paginate_search_mode_routes_full_name_to_repository_and_filters_by_tab():
     items = [_appointment(1)]
     repo = FakeAppointmentRepository(total_count=1, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("search", 1, {"full_name": "Иванов"})
+    result = await service.paginate_appointments("search", 1, {"full_name": "Иванов"}, tab="pending")
 
     assert result.items == items
     assert result.total_count == 1
-    assert ("count_appointments_by_name", "Иванов") in repo.calls
-    assert ("get_appointments_by_name_page", "Иванов", 1, APPOINTMENTS_PER_PAGE) in repo.calls
+    assert ("get_appointments_by_name", "Иванов") in repo.calls
 
 
 @pytest.mark.asyncio
@@ -117,11 +110,25 @@ async def test_paginate_search_mode_defaults_full_name_when_search_data_missing(
     repo = FakeAppointmentRepository(total_count=0, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("search", 1, None)
+    result = await service.paginate_appointments("search", 1, None, tab="pending")
 
     assert result.total_count == 0
-    assert ("count_appointments_by_name", "") in repo.calls
-    assert ("get_appointments_by_name_page", "", 1, APPOINTMENTS_PER_PAGE) in repo.calls
+    assert ("get_appointments_by_name", "") in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_search_mode_filters_by_status_tab():
+    pending = _appointment(1)
+    pending.status = AppointmentStatus.PENDING
+    confirmed = _appointment(2)
+    confirmed.status = AppointmentStatus.CONFIRMED
+    repo = FakeAppointmentRepository(page_items=[pending, confirmed])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments("search", 1, {"full_name": "Иванов"}, tab="confirmed")
+
+    assert [a.id for a in result.items] == [2]
+    assert result.total_count == 1
 
 
 # --- mode="phone" ---
@@ -132,12 +139,11 @@ async def test_paginate_phone_mode_routes_client_id_to_repository():
     repo = FakeAppointmentRepository(total_count=2, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("phone", 1, {"client_id": 7})
+    result = await service.paginate_appointments("phone", 1, {"client_id": 7}, tab="pending")
 
-    assert result.items == items
+    assert {a.id for a in result.items} == {a.id for a in items}
     assert result.total_count == 2
-    assert ("count_appointments_by_client_id", 7) in repo.calls
-    assert ("get_appointments_by_client_id_page", 7, 1, APPOINTMENTS_PER_PAGE) in repo.calls
+    assert ("get_appointments_by_client_id", 7) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -147,8 +153,21 @@ async def test_paginate_phone_mode_defaults_client_id_when_search_data_missing()
 
     result = await service.paginate_appointments("phone", 1, None)
 
-    assert ("count_appointments_by_client_id", None) in repo.calls
-    assert ("get_appointments_by_client_id_page", None, 1, APPOINTMENTS_PER_PAGE) in repo.calls
+    assert ("get_appointments_by_client_id", None) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_phone_mode_filters_by_status_tab():
+    pending = _appointment(1)
+    pending.status = AppointmentStatus.PENDING
+    cancelled = _appointment(2)
+    cancelled.status = AppointmentStatus.CANCELLED
+    repo = FakeAppointmentRepository(page_items=[pending, cancelled])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments("phone", 1, {"client_id": 7}, tab="pending")
+
+    assert [a.id for a in result.items] == [1]
 
 
 # --- unknown mode ---
@@ -215,6 +234,7 @@ def _appointment_at(
     dt,
     status: AppointmentStatus = AppointmentStatus.PENDING,
     created_at=None,
+    status_updated_at=None,
     client_id: int = 7,
 ) -> Appointment:
     return Appointment(
@@ -226,19 +246,20 @@ def _appointment_at(
         status=status,
         id=appointment_id,
         created_at=created_at.isoformat() if created_at is not None else None,
+        status_updated_at=status_updated_at.isoformat() if status_updated_at is not None else None,
     )
 
 
 @pytest.mark.asyncio
-async def test_paginate_client_appointments_upcoming_only_ascending_order():
+async def test_paginate_client_appointments_confirmed_tab_ascending_by_datetime():
     now = get_current_tashkent_datetime()
-    a1 = _appointment_at(1, now + timedelta(days=2))
-    a2 = _appointment_at(2, now + timedelta(days=1))
-    a3 = _appointment_at(3, now - timedelta(days=1))
+    a1 = _appointment_at(1, now + timedelta(days=2), status=AppointmentStatus.CONFIRMED)
+    a2 = _appointment_at(2, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)
+    a3 = _appointment_at(3, now - timedelta(days=1), status=AppointmentStatus.PENDING)
     repo = FakeAppointmentRepository(page_items=[a1, a2, a3])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_client_appointments(123, "upcoming", 1)
+    result = await service.paginate_client_appointments(123, "confirmed", 1)
 
     assert [a.id for a in result.items] == [2, 1]
     assert result.total_count == 2
@@ -246,46 +267,71 @@ async def test_paginate_client_appointments_upcoming_only_ascending_order():
 
 
 @pytest.mark.asyncio
-async def test_paginate_client_appointments_past_only_descending_order():
+async def test_paginate_client_appointments_pending_tab_descending_by_created_at():
     now = get_current_tashkent_datetime()
-    a1 = _appointment_at(1, now - timedelta(days=2))
-    a2 = _appointment_at(2, now - timedelta(days=1))
-    a3 = _appointment_at(3, now + timedelta(days=1))
+    a1 = _appointment_at(1, now, status=AppointmentStatus.PENDING, created_at=now - timedelta(days=2))
+    a2 = _appointment_at(2, now, status=AppointmentStatus.PENDING, created_at=now - timedelta(days=1))
+    a3 = _appointment_at(3, now, status=AppointmentStatus.CONFIRMED, created_at=now)
     repo = FakeAppointmentRepository(page_items=[a1, a2, a3])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_client_appointments(123, "past", 1)
+    result = await service.paginate_client_appointments(123, "pending", 1)
 
     assert [a.id for a in result.items] == [2, 1]
     assert result.total_count == 2
 
 
 @pytest.mark.asyncio
-async def test_paginate_client_appointments_all_tab_sorted_by_created_at_desc():
+async def test_paginate_client_appointments_cancelled_tab_descending_by_status_updated_at():
     now = get_current_tashkent_datetime()
-    oldest_upcoming = _appointment_at(1, now + timedelta(days=1), created_at=now - timedelta(days=3))
-    newest_past = _appointment_at(2, now - timedelta(days=1), created_at=now - timedelta(days=1))
-    middle_upcoming = _appointment_at(3, now + timedelta(days=2), created_at=now - timedelta(days=2))
-    repo = FakeAppointmentRepository(page_items=[oldest_upcoming, newest_past, middle_upcoming])
+    a1 = _appointment_at(
+        1, now, status=AppointmentStatus.CANCELLED, status_updated_at=now - timedelta(days=2)
+    )
+    a2 = _appointment_at(
+        2, now, status=AppointmentStatus.CANCELLED, status_updated_at=now - timedelta(days=1)
+    )
+    repo = FakeAppointmentRepository(page_items=[a1, a2])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_client_appointments(123, "all", 1)
+    result = await service.paginate_client_appointments(123, "cancelled", 1)
 
-    assert [a.id for a in result.items] == [2, 3, 1]
-    assert result.total_count == 3
+    assert [a.id for a in result.items] == [2, 1]
 
 
 @pytest.mark.asyncio
-async def test_paginate_client_appointments_all_tab_falls_back_to_min_when_created_at_missing():
+async def test_paginate_client_appointments_expired_tab_descending_by_status_updated_at():
     now = get_current_tashkent_datetime()
-    with_created_at = _appointment_at(1, now + timedelta(days=1), created_at=now - timedelta(days=1))
-    without_created_at = _appointment_at(2, now - timedelta(days=1))
-    repo = FakeAppointmentRepository(page_items=[with_created_at, without_created_at])
+    older = _appointment_at(
+        1, now, status=AppointmentStatus.EXPIRED, status_updated_at=now - timedelta(days=3)
+    )
+    newer = _appointment_at(
+        2, now, status=AppointmentStatus.EXPIRED, status_updated_at=now - timedelta(days=1)
+    )
+    other_status = _appointment_at(3, now, status=AppointmentStatus.PENDING)
+    repo = FakeAppointmentRepository(page_items=[older, newer, other_status])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_client_appointments(123, "all", 1)
+    result = await service.paginate_client_appointments(123, "expired", 1)
 
-    assert [a.id for a in result.items] == [1, 2]
+    assert [a.id for a in result.items] == [2, 1]
+    assert result.total_count == 2
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_expired_tab_falls_back_to_created_at_when_status_updated_at_missing():
+    now = get_current_tashkent_datetime()
+    with_status_updated_at = _appointment_at(
+        1, now, status=AppointmentStatus.EXPIRED, status_updated_at=now - timedelta(days=1)
+    )
+    without_status_updated_at = _appointment_at(
+        2, now, status=AppointmentStatus.EXPIRED, created_at=now
+    )
+    repo = FakeAppointmentRepository(page_items=[with_status_updated_at, without_status_updated_at])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "expired", 1)
+
+    assert [a.id for a in result.items] == [2, 1]
 
 
 @pytest.mark.asyncio
@@ -302,7 +348,7 @@ async def test_paginate_client_appointments_empty_result_returns_single_page():
     repo = FakeAppointmentRepository(page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_client_appointments(123, "all", 1)
+    result = await service.paginate_client_appointments(123, "confirmed", 1)
 
     assert result.total_count == 0
     assert result.total_pages == 1
@@ -314,14 +360,14 @@ async def test_paginate_client_appointments_empty_result_returns_single_page():
 async def test_paginate_client_appointments_slices_across_page_boundary():
     now = get_current_tashkent_datetime()
     appointments = [
-        _appointment_at(i, now + timedelta(days=i))
+        _appointment_at(i, now + timedelta(days=i), status=AppointmentStatus.CONFIRMED)
         for i in range(1, APPOINTMENTS_PER_PAGE + 3)
     ]
     repo = FakeAppointmentRepository(page_items=appointments)
     service = AppointmentPaginationService(repo)
 
-    page_1 = await service.paginate_client_appointments(123, "upcoming", 1)
-    page_2 = await service.paginate_client_appointments(123, "upcoming", 2)
+    page_1 = await service.paginate_client_appointments(123, "confirmed", 1)
+    page_2 = await service.paginate_client_appointments(123, "confirmed", 2)
 
     assert len(page_1.items) == APPOINTMENTS_PER_PAGE
     assert len(page_2.items) == 2
@@ -391,36 +437,40 @@ async def test_paginate_active_client_appointments_uses_proposed_datetime_when_p
 
 
 # --- paginate_all_appointments_by_tab ---
+# NOTE: this method is backed by SQL-level pagination (see
+# tests/test_appointment_repository.py for sort-order/COALESCE-fallback
+# correctness against a real SQLite connection). These tests only verify
+# routing: correct status resolved from tab, correct repository calls made,
+# items passed through untouched, and pagination-math/error behaviour.
 
 @pytest.mark.asyncio
-async def test_paginate_all_appointments_by_tab_upcoming_sorted_soonest_first():
-    now = get_current_tashkent_datetime()
-    later = _appointment_at(1, now + timedelta(days=2))
-    sooner = _appointment_at(2, now + timedelta(days=1))
-    past = _appointment_at(3, now - timedelta(days=1))
-    repo = FakeAppointmentRepository(page_items=[later, sooner, past])
+async def test_paginate_all_appointments_by_tab_routes_resolved_status_to_repository():
+    items = [_appointment(1), _appointment(2)]
+    repo = FakeAppointmentRepository(total_count=2, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("upcoming", 1)
+    result = await service.paginate_all_appointments_by_tab("confirmed", 1)
 
-    assert [a.id for a in result.items] == [2, 1]
+    assert result.items == items
     assert result.total_count == 2
-    assert ("get_all_appointments",) in repo.calls
+    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED) in repo.calls
+    assert (
+        "get_appointments_by_status_page",
+        AppointmentStatus.CONFIRMED,
+        1,
+        APPOINTMENTS_PER_PAGE,
+    ) in repo.calls
 
 
 @pytest.mark.asyncio
-async def test_paginate_all_appointments_by_tab_past_sorted_newest_first():
-    now = get_current_tashkent_datetime()
-    older = _appointment_at(1, now - timedelta(days=2))
-    newer = _appointment_at(2, now - timedelta(days=1))
-    future = _appointment_at(3, now + timedelta(days=1))
-    repo = FakeAppointmentRepository(page_items=[older, newer, future])
+async def test_paginate_all_appointments_by_tab_resolves_each_tab_to_its_status():
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("past", 1)
-
-    assert [a.id for a in result.items] == [2, 1]
-    assert result.total_count == 2
+    for tab, status in AppointmentPaginationService._STATUS_TABS.items():
+        repo.calls.clear()
+        await service.paginate_all_appointments_by_tab(tab, 1)
+        assert ("count_appointments_by_status", status) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -433,23 +483,41 @@ async def test_paginate_all_appointments_by_tab_unknown_tab_raises_pagination_er
 
 
 @pytest.mark.asyncio
-async def test_paginate_all_appointments_by_tab_slices_across_page_boundary():
-    now = get_current_tashkent_datetime()
-    appointments = [
-        _appointment_at(i, now + timedelta(days=i))
-        for i in range(1, APPOINTMENTS_PER_PAGE + 3)
-    ]
-    repo = FakeAppointmentRepository(page_items=appointments)
+async def test_paginate_all_appointments_by_tab_unknown_tab_does_not_touch_repository():
+    repo = FakeAppointmentRepository(page_items=[])
     service = AppointmentPaginationService(repo)
 
-    page_1 = await service.paginate_all_appointments_by_tab("upcoming", 1)
-    page_2 = await service.paginate_all_appointments_by_tab("upcoming", 2)
+    with pytest.raises(PaginationError):
+        await service.paginate_all_appointments_by_tab("unknown", 1)
 
-    assert len(page_1.items) == APPOINTMENTS_PER_PAGE
-    assert len(page_2.items) == 2
-    assert page_1.total_pages == 2
-    assert [a.id for a in page_1.items] == list(range(1, APPOINTMENTS_PER_PAGE + 1))
-    assert [a.id for a in page_2.items] == [APPOINTMENTS_PER_PAGE + 1, APPOINTMENTS_PER_PAGE + 2]
+    assert repo.calls == []
+
+
+@pytest.mark.asyncio
+async def test_paginate_all_appointments_by_tab_total_pages_computed_with_ceil():
+    repo = FakeAppointmentRepository(total_count=21, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_all_appointments_by_tab("confirmed", 1)
+
+    assert result.total_pages == 3  # ceil(21 / 10)
+
+
+@pytest.mark.asyncio
+async def test_paginate_all_appointments_by_tab_clamps_page_before_querying_repository():
+    repo = FakeAppointmentRepository(total_count=15, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_all_appointments_by_tab("confirmed", 999)
+
+    assert result.total_pages == 2  # ceil(15 / 10)
+    assert result.current_page == 2
+    assert (
+        "get_appointments_by_status_page",
+        AppointmentStatus.CONFIRMED,
+        2,
+        APPOINTMENTS_PER_PAGE,
+    ) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -457,41 +525,9 @@ async def test_paginate_all_appointments_by_tab_empty_result_returns_single_page
     repo = FakeAppointmentRepository(page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("upcoming", 1)
+    result = await service.paginate_all_appointments_by_tab("confirmed", 1)
 
     assert result.total_count == 0
     assert result.total_pages == 1
     assert result.current_page == 1
     assert result.items == []
-
-
-@pytest.mark.asyncio
-async def test_paginate_all_appointments_by_tab_upcoming_groups_same_client_when_time_ties():
-    now = get_current_tashkent_datetime()
-    same_time = now + timedelta(days=1)
-    client_a_first = _appointment_at(1, same_time, client_id=5)
-    other_client = _appointment_at(2, same_time, client_id=8)
-    client_a_second = _appointment_at(3, same_time, client_id=5)
-    repo = FakeAppointmentRepository(page_items=[client_a_first, other_client, client_a_second])
-    service = AppointmentPaginationService(repo)
-
-    result = await service.paginate_all_appointments_by_tab("upcoming", 1)
-
-    assert [a.id for a in result.items] == [1, 3, 2]
-    assert [a.client_id for a in result.items] == [5, 5, 8]
-
-
-@pytest.mark.asyncio
-async def test_paginate_all_appointments_by_tab_past_groups_same_client_when_time_ties():
-    now = get_current_tashkent_datetime()
-    same_time = now - timedelta(days=1)
-    client_a_first = _appointment_at(1, same_time, client_id=5)
-    other_client = _appointment_at(2, same_time, client_id=8)
-    client_a_second = _appointment_at(3, same_time, client_id=5)
-    repo = FakeAppointmentRepository(page_items=[client_a_first, other_client, client_a_second])
-    service = AppointmentPaginationService(repo)
-
-    result = await service.paginate_all_appointments_by_tab("past", 1)
-
-    assert [a.id for a in result.items] == [2, 3, 1]
-    assert [a.client_id for a in result.items] == [8, 5, 5]
