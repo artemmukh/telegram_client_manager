@@ -1,6 +1,6 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.admin_utils.input_helpers import full_name_processing
@@ -11,6 +11,10 @@ from bot.services.client.client_notifications import ClientNotificationService
 from bot.states.name_change_states import NameChangeStates
 from bot.utils.role import RoleFilter
 from bot.validators.validators import FULL_NAME_PATTERN
+
+_BACK_TO_PROFILE_KB = InlineKeyboardMarkup(
+    inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="profile_back")]]
+)
 
 
 def create_name_change_request_router(
@@ -26,10 +30,11 @@ def create_name_change_request_router(
     async def start_name_change(callback_query: CallbackQuery, state: FSMContext):
         await state.set_state(NameChangeStates.entering_name)
         await callback_query.answer('')
-        await callback_query.message.answer(
+        await callback_query.message.edit_text(
             "👤 Введите ваше новое ФИО.\n\n"
             "Пожалуйста, используйте реальные данные.\n"
-            "Они будут отображаться врачу во время записи на приём."
+            "Они будут отображаться врачу во время записи на приём.",
+            reply_markup=_BACK_TO_PROFILE_KB,
         )
 
     @router.message(NameChangeStates.entering_name, F.text)

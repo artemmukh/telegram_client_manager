@@ -1,6 +1,7 @@
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 
 from bot.exceptions.exceptions import BotException
 from bot.keyboards.admin.admin_reminder_cb import AdminReminderPresetCB
@@ -18,6 +19,12 @@ def create_profile_router(client_management_service: ClientManagement = None):
     router = Router()
 
     router.message.filter(RoleFilter("*"))
+
+    def _with_back_button(reply_markup):
+        reply_markup.inline_keyboard.append(
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="profile_back")]
+        )
+        return reply_markup
 
     def build_profile_text(user: User) -> str:
         role = "администратор" if user.role == Role.ADMIN else "клиент"
@@ -46,7 +53,22 @@ def create_profile_router(client_management_service: ClientManagement = None):
             else:
                 reply_markup = reminder_settings_kb(current_user.reminder_24h, current_user.reminder_2h)
 
-            await callback_query.message.edit_text(build_profile_text(current_user), reply_markup=reply_markup)
+            await callback_query.message.edit_text(
+                build_profile_text(current_user), reply_markup=_with_back_button(reply_markup)
+            )
+            await callback_query.answer()
+
+        @router.callback_query(F.data == "profile_back", RoleFilter("*"))
+        async def back_to_profile(callback_query: CallbackQuery, state: FSMContext, current_user: User | None = None):
+            await state.clear()
+            reply_markup = profile_menu_kb()
+
+            try:
+                await callback_query.message.edit_text(build_profile_text(current_user), reply_markup=reply_markup)
+            except TelegramBadRequest as e:
+                if "message is not modified" not in str(e):
+                    raise
+
             await callback_query.answer()
 
         @router.callback_query(ClientReminderPresetCB.filter(), RoleFilter("client"))
@@ -66,7 +88,9 @@ def create_profile_router(client_management_service: ClientManagement = None):
             try:
                 await callback_query.message.edit_text(
                     build_profile_text(updated_user),
-                    reply_markup=reminder_settings_kb(updated_user.reminder_24h, updated_user.reminder_2h),
+                    reply_markup=_with_back_button(
+                        reminder_settings_kb(updated_user.reminder_24h, updated_user.reminder_2h)
+                    ),
                 )
             except TelegramBadRequest as e:
                 if "message is not modified" not in str(e):
@@ -91,7 +115,9 @@ def create_profile_router(client_management_service: ClientManagement = None):
             try:
                 await callback_query.message.edit_text(
                     build_profile_text(updated_user),
-                    reply_markup=admin_reminder_settings_kb(updated_user.reminder_24h, updated_user.reminder_2h),
+                    reply_markup=_with_back_button(
+                        admin_reminder_settings_kb(updated_user.reminder_24h, updated_user.reminder_2h)
+                    ),
                 )
             except TelegramBadRequest as e:
                 if "message is not modified" not in str(e):

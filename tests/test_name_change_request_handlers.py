@@ -77,6 +77,7 @@ def _callback():
     callback.answer = AsyncMock()
     callback.message = MagicMock()
     callback.message.answer = AsyncMock()
+    callback.message.edit_text = AsyncMock()
     return callback
 
 
