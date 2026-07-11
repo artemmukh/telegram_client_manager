@@ -13,6 +13,7 @@ class FakeUserRepository:
         clients_by_phone=None,
         clients_by_id=None,
         users_by_id=None,
+        staff_by_clinic_id=None,
     ):
         self.existing_phones = set(existing_phones or [])
         self.existing_telegram_ids = set(existing_telegram_ids or [])
@@ -24,9 +25,11 @@ class FakeUserRepository:
         # to additionally register non-client (e.g. admin) users here.
         self.users_by_id = dict(self.clients_by_id)
         self.users_by_id.update(users_by_id or {})
+        self.staff_by_clinic_id = dict(staff_by_clinic_id or {})
         self.created_users: list[User] = []
         self.linked = []
         self.reminder_updates = []
+        self.updated_clients = []
 
     async def phone_exists(self, phone: str) -> bool:
         return phone in self.existing_phones
@@ -54,6 +57,31 @@ class FakeUserRepository:
 
     async def update_reminder_preferences(self, user_id, reminder_24h, reminder_2h):
         self.reminder_updates.append((user_id, reminder_24h, reminder_2h))
+
+    async def update_client(self, user_id, user):
+        self.updated_clients.append((user_id, user))
+        self.clients_by_id[user_id] = user
+        self.users_by_id[user_id] = user
+        return user
+
+    async def get_staff_users_by_clinic_id(self, clinic_id):
+        return self.staff_by_clinic_id.get(clinic_id, [])
+
+    async def set_pending_full_name(self, user_id, new_full_name):
+        user = self.users_by_id.get(user_id)
+        if user is not None:
+            user.pending_full_name = new_full_name
+
+    async def resolve_pending_full_name(self, user_id, approve):
+        user = self.users_by_id.get(user_id)
+        if user is None or user.pending_full_name is None:
+            return None
+
+        if approve:
+            user.full_name = user.pending_full_name
+
+        user.pending_full_name = None
+        return user
 
 
 @pytest.fixture

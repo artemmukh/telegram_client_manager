@@ -1,0 +1,74 @@
+import logging
+
+from aiogram import Bot
+from aiogram.types import InlineKeyboardMarkup
+
+from bot.models.user import User
+from bot.repositories.user_repository import UserRepository
+
+logger = logging.getLogger(__name__)
+
+
+class ClientNotificationService:
+    def __init__(self, bot: Bot, user_repository: UserRepository) -> None:
+        self.bot = bot
+        self.user_repository = user_repository
+
+    async def notify_admins_name_changed_on_registration(
+        self, clinic_id: int, stored_name: str, new_name: str, client_phone: str
+    ) -> None:
+        """Best-effort broadcast informing admins that a client changed their name
+        during registration. Never raises: a failed delivery to one admin must
+        not block delivery to the others."""
+        message_text = (
+            "ℹ️ Клиент изменил ФИО при регистрации.\n"
+            f"Было: {stored_name}\n"
+            f"Стало: {new_name}\n"
+            f"Телефон: {client_phone}"
+        )
+
+        admins = await self.user_repository.get_staff_users_by_clinic_id(clinic_id)
+
+        for admin in admins:
+            if admin.telegram_user_id is None:
+                continue
+
+            try:
+                await self.bot.send_message(
+                    chat_id=admin.telegram_user_id,
+                    text=message_text,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to notify admin {admin.telegram_user_id} about name change on registration: {e}"
+                )
+
+    async def notify_admins_name_change_request(
+        self, user: User, new_full_name: str, reply_markup: InlineKeyboardMarkup
+    ) -> None:
+        """Best-effort broadcast asking admins to approve/reject a client's
+        name-change request. Never raises: a failed delivery to one admin must
+        not block delivery to the others."""
+        message_text = (
+            "✏️ Клиент запросил изменение ФИО\n\n"
+            f"Текущее ФИО: {user.full_name}\n"
+            f"Новое ФИО: {new_full_name}\n"
+            f"Телефон: {user.phone}"
+        )
+
+        admins = await self.user_repository.get_staff_users_by_clinic_id(user.clinic_id)
+
+        for admin in admins:
+            if admin.telegram_user_id is None:
+                continue
+
+            try:
+                await self.bot.send_message(
+                    chat_id=admin.telegram_user_id,
+                    text=message_text,
+                    reply_markup=reply_markup,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to notify admin {admin.telegram_user_id} about name change request: {e}"
+                )

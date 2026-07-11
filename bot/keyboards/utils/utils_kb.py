@@ -20,6 +20,13 @@ def reg_confirm_kb():
     one_time_keyboard=True)
 
 
+def reg_name_conflict_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да", callback_data="reg_name_conflict_yes")],
+        [InlineKeyboardButton(text="❌ Нет", callback_data="reg_name_conflict_no")]
+    ])
+
+
 
 
 

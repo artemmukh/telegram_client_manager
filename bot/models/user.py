@@ -13,5 +13,6 @@ class User:
     clinic_name: str | None = None
     reminder_24h: bool = True
     reminder_2h: bool = True
+    pending_full_name: str | None = None
 
 

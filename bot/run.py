@@ -9,6 +9,7 @@ bot = get_bot()
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
+from bot.handlers.admin.client_management.name_change_approval import create_admin_name_change_router
 from bot.handlers.admin.appointment_management.record_menu import create_admin_record_router
 from bot.handlers.admin.appointment_management.appointment_completion import create_admin_completion_router
 from bot.handlers.admin.appointment_management.appointment_creation import create_admin_appointment_creation_router
@@ -18,6 +19,7 @@ from bot.handlers.admin.appointment_management.reschedule_requests import create
 from bot.handlers.client.appointment_booking import create_client_booking_router
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
+from bot.handlers.client.name_change_request import create_name_change_request_router
 from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
 from bot.handlers.common.profile import create_profile_router
@@ -34,6 +36,7 @@ from bot.services.appointment.appointment_management import AppointmentManagemen
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.client.client_management import ClientManagement
+from bot.services.client.client_notifications import ClientNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,7 @@ async def main():
     client_management_service = ClientManagement(user_repo, staff_repo, clinic_repo)
     appointment_management_service = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
     notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    client_notification_service = ClientNotificationService(bot, user_repo)
 
     # Create and start scheduler for appointment reminders
     scheduler = dp["scheduler"]
@@ -87,13 +91,14 @@ async def main():
     # Routers
 
     #registration
-    dp.include_router(create_reg_router(user_repo, clinic_repo, staff_repo))
+    dp.include_router(create_reg_router(user_repo, clinic_repo, staff_repo, client_notification_service))
 
     #common handlers
     dp.include_router(create_start_router())
     dp.include_router(create_help_router())
     dp.include_router(create_cancel_router())
     dp.include_router(create_profile_router(client_management_service))
+    dp.include_router(create_name_change_request_router(client_management_service, client_notification_service))
 
     #admin handlers
 
@@ -105,6 +110,9 @@ async def main():
 
     #browse (view/edit/delete)
     dp.include_router(create_admin_client_browser_router(user_repo, staff_repo, clinic_repo))
+
+    #name-change approval
+    dp.include_router(create_admin_name_change_router(user_repo, staff_repo, clinic_repo))
 
     #record handlers
     dp.include_router(create_admin_record_router())

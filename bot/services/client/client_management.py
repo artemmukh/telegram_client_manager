@@ -134,6 +134,26 @@ class ClientManagement:
 
         return user
 
+    async def request_name_change(self, user_id: int, new_full_name: str) -> User:
+        new_full_name = new_full_name.strip()
+
+        validate_full_name(new_full_name, FULL_NAME_PATTERN)
+
+        await self.user_repository.set_pending_full_name(user_id, new_full_name)
+
+        user = await self.user_repository.get_user_by_id(user_id)
+
+        if user is None:
+            raise UserNotFoundError("Пользователь не найден.")
+
+        return user
+
+    async def approve_name_change(self, user_id: int) -> User | None:
+        return await self.user_repository.resolve_pending_full_name(user_id, approve=True)
+
+    async def reject_name_change(self, user_id: int) -> User | None:
+        return await self.user_repository.resolve_pending_full_name(user_id, approve=False)
+
     async def update_reminder_preferences(self, user_id: int, preset: str) -> User:
         presets = {
             "both": (True, True),

@@ -183,6 +183,162 @@ async def test_reminder_preferences_default_true_and_persist_updates():
 
 
 @pytest.mark.asyncio
+async def test_set_pending_full_name_stores_pending_value():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+        user = await user_repo.get_user_by_telegram_id(1001)
+
+        await user_repo.set_pending_full_name(user.ID, "Петров Петр")
+
+        updated = await user_repo.get_user_by_telegram_id(1001)
+        assert updated.full_name == "Иванов Иван"
+        assert updated.pending_full_name == "Петров Петр"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_full_name_approve_applies_change():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+        user = await user_repo.get_user_by_telegram_id(1001)
+        await user_repo.set_pending_full_name(user.ID, "Петров Петр")
+
+        resolved = await user_repo.resolve_pending_full_name(user.ID, approve=True)
+
+        assert resolved is not None
+        assert resolved.full_name == "Петров Петр"
+        assert resolved.pending_full_name is None
+
+        # A second resolution attempt finds no pending request left.
+        second_attempt = await user_repo.resolve_pending_full_name(user.ID, approve=True)
+        assert second_attempt is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_full_name_reject_clears_pending_value():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+        user = await user_repo.get_user_by_telegram_id(1001)
+        await user_repo.set_pending_full_name(user.ID, "Петров Петр")
+
+        resolved = await user_repo.resolve_pending_full_name(user.ID, approve=False)
+
+        assert resolved is not None
+        assert resolved.full_name == "Иванов Иван"
+        assert resolved.pending_full_name is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_full_name_returns_none_when_no_pending_request():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+        user = await user_repo.get_user_by_telegram_id(1001)
+
+        resolved = await user_repo.resolve_pending_full_name(user.ID, approve=True)
+
+        assert resolved is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_full_name_migration_adds_column_for_existing_rows():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        # Simulate a pre-migration users table that predates pending_full_name.
+        await connection.execute("""
+            CREATE TABLE users(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER UNIQUE,
+                full_name TEXT NOT NULL,
+                phone TEXT UNIQUE NOT NULL,
+                clinic_id INTEGER DEFAULT NULL,
+                role TEXT DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reminder_24h INTEGER DEFAULT 1,
+                reminder_2h INTEGER DEFAULT 1
+            )
+        """)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, role) VALUES (?, ?, ?, ?)",
+            (2002, "Петров Петр", "+998901234599", Role.CLIENT.value),
+        )
+        await connection.commit()
+
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        user = await user_repo.get_user_by_telegram_id(2002)
+        assert user.pending_full_name is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_reminder_columns_migration_backfills_existing_rows():
     connection = await aiosqlite.connect(":memory:")
     try:

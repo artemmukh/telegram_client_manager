@@ -14,7 +14,8 @@ SELECT
     c.name AS clinic_name,
     u.role,
     u.reminder_24h,
-    u.reminder_2h
+    u.reminder_2h,
+    u.pending_full_name
 FROM users u
 LEFT JOIN clinics c
 ON u.clinic_id = c.id
@@ -36,6 +37,7 @@ class UserRepository:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 reminder_24h INTEGER DEFAULT 1,
                 reminder_2h INTEGER DEFAULT 1,
+                pending_full_name TEXT DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
         """)
@@ -51,6 +53,11 @@ class UserRepository:
         if "reminder_2h" not in columns:
             await self.connection.execute(
                 "ALTER TABLE users ADD COLUMN reminder_2h INTEGER DEFAULT 1"
+            )
+
+        if "pending_full_name" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE users ADD COLUMN pending_full_name TEXT DEFAULT NULL"
             )
 
         await self.connection.commit()
@@ -159,6 +166,39 @@ class UserRepository:
         )
         await self.connection.commit()
 
+    async def set_pending_full_name(self, user_id: int, new_full_name: str) -> None:
+        await self.connection.execute(
+            "UPDATE users SET pending_full_name = ? WHERE id = ?",
+            (new_full_name, user_id),
+        )
+        await self.connection.commit()
+
+    async def resolve_pending_full_name(self, user_id: int, approve: bool) -> User | None:
+        # The "pending_full_name IS NOT NULL" guard makes this update a compare-and-set:
+        # it only applies when a pending request still exists, so a request already
+        # resolved (or never made) cannot be resolved twice.
+        if approve:
+            sql = """
+                UPDATE users
+                SET full_name = pending_full_name,
+                    pending_full_name = NULL
+                WHERE id = ? AND pending_full_name IS NOT NULL
+            """
+        else:
+            sql = """
+                UPDATE users
+                SET pending_full_name = NULL
+                WHERE id = ? AND pending_full_name IS NOT NULL
+            """
+
+        cursor = await self.connection.execute(sql, (user_id,))
+        await self.connection.commit()
+
+        if cursor.rowcount == 0:
+            return None
+
+        return await self.get_user_by_id(user_id)
+
     async def update_user_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
         await self.connection.execute(
             """
@@ -221,6 +261,7 @@ class UserRepository:
             role=Role(row[6]) if row[6] else None,
             reminder_24h=bool(row[7]),
             reminder_2h=bool(row[8]),
+            pending_full_name=row[9],
         )
 
     async def phone_exists(self, phone: str) -> bool:

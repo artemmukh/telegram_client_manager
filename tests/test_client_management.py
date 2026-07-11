@@ -180,3 +180,58 @@ async def test_update_reminder_preferences_works_for_admin_user_id(
     assert user.reminder_24h is expected_24h
     assert user.reminder_2h is expected_2h
     assert repo.reminder_updates == [(2, expected_24h, expected_2h)]
+
+
+@pytest.mark.asyncio
+async def test_request_name_change_sets_pending_full_name(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    user = await service.request_name_change(1, "  Петров Петр  ")
+
+    assert user.pending_full_name == "Петров Петр"
+
+
+@pytest.mark.asyncio
+async def test_request_name_change_rejects_invalid_name(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    with pytest.raises(InvalidFullNameError):
+        await service.request_name_change(1, "Ivan Ivan")
+
+
+@pytest.mark.asyncio
+async def test_approve_name_change_applies_pending_full_name(fake_user_repo_factory):
+    client = _existing_client()
+    client.pending_full_name = "Петров Петр"
+    repo = fake_user_repo_factory(users_by_id={1: client})
+    service = _service(repo)
+
+    user = await service.approve_name_change(1)
+
+    assert user.full_name == "Петров Петр"
+    assert user.pending_full_name is None
+
+
+@pytest.mark.asyncio
+async def test_reject_name_change_clears_pending_full_name(fake_user_repo_factory):
+    client = _existing_client()
+    client.pending_full_name = "Петров Петр"
+    repo = fake_user_repo_factory(users_by_id={1: client})
+    service = _service(repo)
+
+    user = await service.reject_name_change(1)
+
+    assert user.full_name == "Иванов Иван"
+    assert user.pending_full_name is None
+
+
+@pytest.mark.asyncio
+async def test_approve_name_change_returns_none_when_already_resolved(fake_user_repo_factory):
+    repo = fake_user_repo_factory(users_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    result = await service.approve_name_change(1)
+
+    assert result is None

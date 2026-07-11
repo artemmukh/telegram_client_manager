@@ -11,7 +11,7 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     edit_phone, ask_full_name, full_name_processing, phone_processing
 )
 from bot.utils.role import RoleFilter
-from bot.validators.validators import FULL_NAME_PATTERN
+from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 from bot.keyboards.admin.client_management_kb.client_creation_kb import client_creation_back_kb, client_creation_kb
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_creation_states import ClientCreationStates
@@ -46,7 +46,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
 
     @router.message(ClientCreationStates.client_full_name, F.text)
     async def create_client_phone(message: Message, state: FSMContext):
-       if not await full_name_processing(message, state, next_state=ClientCreationStates.client_phone, re_pattern=FULL_NAME_PATTERN):
+       if not await full_name_processing(message, state, next_state=ClientCreationStates.client_phone, re_pattern=SEARCH_NAME_PATTERN):
            return
        await message.answer(text="Введите номер телефона:", reply_markup=client_creation_back_kb())
 
@@ -75,7 +75,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
     async def process_full_name_edition(message: Message, state: FSMContext):
         if not await full_name_processing(
             message, state,
-            next_state=ClientCreationStates.confirm_create, re_pattern=FULL_NAME_PATTERN
+            next_state=ClientCreationStates.confirm_create, re_pattern=SEARCH_NAME_PATTERN
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb())
