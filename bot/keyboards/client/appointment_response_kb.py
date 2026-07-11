@@ -15,6 +15,30 @@ def appointment_response_kb(appointment_id: int):
     return builder.as_markup()
 
 
+def appointment_reminder_details_kb(appointment_id: int):
+    """Keyboard for the 24h reminder (Details only)."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="📋 Детали записи", callback_data=f"appt_details:{appointment_id}")
+
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def appointment_reminder_with_buttons_kb(appointment_id: int):
+    """Keyboard for the 2h reminder (Confirm/Cancel/Details)."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="✅ Приду", callback_data=f"appt_confirm:{appointment_id}")
+    builder.button(text="❌ Не приду", callback_data=f"appt_cancel:{appointment_id}")
+    builder.button(text="📋 Детали записи", callback_data=f"appt_details:{appointment_id}")
+
+    builder.adjust(1, 1, 1)
+
+    return builder.as_markup()
+
+
 def reschedule_proposal_kb(appointment_id: int):
     """Keyboard for client response to a clinic-proposed new time (Accept/Reject)."""
     builder = InlineKeyboardBuilder()

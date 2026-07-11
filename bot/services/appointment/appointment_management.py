@@ -476,6 +476,28 @@ class AppointmentManagement:
 
         return appointment
 
+    def ensure_appointment_awaiting_confirmation(self, appointment: Appointment) -> None:
+        """Reject rebuilding the active confirm/cancel prompt once the client's initial
+        decision is no longer pending.
+
+        The "please confirm your attendance" card only makes sense while the
+        appointment is still PENDING. Once the client has already confirmed
+        (CONFIRMED), or the appointment reached a finalized status, showing that
+        prompt again would incorrectly re-ask a decision that was already made.
+        """
+        if appointment.status == AppointmentStatus.PENDING:
+            return
+
+        if appointment.status == AppointmentStatus.CONFIRMED:
+            raise AppointmentAlreadyFinalizedError(
+                "Эта запись уже подтверждена, дополнительное подтверждение не требуется."
+            )
+
+        self._ensure_not_finalized(
+            appointment,
+            "Эта запись больше недоступна. Возможно, она была отменена или уже завершена. Обновите список записей.",
+        )
+
     def _ensure_not_finalized(self, appointment: Appointment, message: str) -> None:
         if appointment.status in (
             AppointmentStatus.CANCELLED,

@@ -1,13 +1,19 @@
 from datetime import datetime
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import ReplyParameters
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_request_kb
 from bot.keyboards.admin.record_management_kb.completion_followup_kb import completion_followup_kb
 from bot.keyboards.admin.record_management_kb.reschedule_request_kb import reschedule_request_kb
-from bot.keyboards.client.appointment_response_kb import appointment_response_kb, reschedule_proposal_kb
+from bot.keyboards.client.appointment_response_kb import (
+    appointment_reminder_details_kb,
+    appointment_reminder_with_buttons_kb,
+    appointment_response_kb,
+    reschedule_proposal_kb,
+)
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
@@ -70,6 +76,7 @@ class AppointmentNotificationService:
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
             text=REMINDER_TEXT,
+            reply_markup=appointment_reminder_details_kb(appointment.id),
             reply_parameters=self._reply_parameters(appointment),
         )
 
@@ -88,10 +95,48 @@ class AppointmentNotificationService:
         await self.bot.send_message(
             chat_id=client.telegram_user_id,
             text=REMINDER_TEXT,
-            reply_markup=appointment_response_kb(appointment.id),
+            reply_markup=appointment_reminder_with_buttons_kb(appointment.id),
             reply_parameters=self._reply_parameters(appointment),
         )
 
+        return True
+
+    async def notify_client_appointment_details(self, appointment: Appointment) -> bool:
+        """Rebuild the original confirmation message into a full appointment details card.
+
+        Edits the original notification_message_id in place; falls back to sending a
+        new message if that original message is gone/inaccessible.
+
+        Returns True if the card was shown (edited or newly sent), False if the
+        client was not found or has no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
+        message_text = self._build_appointment_message(appointment, admin)
+        reply_markup = appointment_reminder_with_buttons_kb(appointment.id)
+
+        if appointment.notification_message_id is not None:
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=client.telegram_user_id,
+                    message_id=appointment.notification_message_id,
+                    text=message_text,
+                    reply_markup=reply_markup,
+                )
+                return True
+            except TelegramBadRequest as e:
+                if "message is not modified" in str(e):
+                    return True
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_markup=reply_markup,
+        )
         return True
 
     async def notify_client_appointment_cancelled_by_admin(self, appointment: Appointment) -> bool:

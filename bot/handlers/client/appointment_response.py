@@ -303,6 +303,27 @@ def create_client_appointment_router(
             except BotException as e:
                 await callback_query.answer(str(e), show_alert=True)
 
+        @router.callback_query(F.data.startswith("appt_details:"))
+        async def handle_appointment_details(callback_query: CallbackQuery):
+            """Handle appointment details button (rebuild full card on the original message)."""
+            appointment_id = int(callback_query.data.split(":")[1])
+
+            appointment = await appointment_management_service.get_appointment_for_client(
+                appointment_id, callback_query.from_user.id,
+            )
+            if appointment is None:
+                await callback_query.answer("Запись не найдена.", show_alert=True)
+                return
+
+            try:
+                appointment_management_service.ensure_appointment_awaiting_confirmation(appointment)
+            except BotException as e:
+                await callback_query.answer(str(e), show_alert=True)
+                return
+
+            await notification_service.notify_client_appointment_details(appointment)
+            await callback_query.answer()
+
         # Handler for appointment cancellation (shows confirmation dialog)
         @router.callback_query(F.data.startswith("appt_cancel:"))
         async def handle_appointment_cancel(callback_query: CallbackQuery, state: FSMContext):

@@ -1200,3 +1200,51 @@ async def test_reject_client_reschedule_raises_when_proposed_by_admin():
 
     with pytest.raises(NoPendingProposalError):
         await service.reject_client_reschedule(1, staff_telegram_id=999)
+
+
+# --- ensure_appointment_awaiting_confirmation (reminder "Детали записи" guard) ---
+
+
+def test_ensure_appointment_awaiting_confirmation_allows_when_pending():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+    appointment = appt_repo.appointments[0]
+
+    assert service.ensure_appointment_awaiting_confirmation(appointment) is None
+
+
+def test_ensure_appointment_awaiting_confirmation_blocks_reprompt_after_client_already_confirmed():
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+    appointment = appt_repo.appointments[0]
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        service.ensure_appointment_awaiting_confirmation(appointment)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.COMPLETED,
+        AppointmentStatus.NO_SHOW,
+        AppointmentStatus.EXPIRED,
+    ],
+)
+def test_ensure_appointment_awaiting_confirmation_raises_when_finalized(status):
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(days=1), status=status)])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+    appointment = appt_repo.appointments[0]
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        service.ensure_appointment_awaiting_confirmation(appointment)
