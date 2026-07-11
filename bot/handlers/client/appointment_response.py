@@ -25,6 +25,7 @@ from bot.keyboards.client.appointment_manage_kb import (
 )
 from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
 from bot.keyboards.client.appointment_response_kb import (
+    appointment_reminder_details_kb,
     appointment_response_kb,
     cancel_confirmation_kb,
 )
@@ -284,7 +285,10 @@ def create_client_appointment_router(
                 )
 
                 # Send success message to client
-                await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
+                await callback_query.message.edit_text(
+                    "✅ Спасибо! Ваша запись подтверждена",
+                    reply_markup=appointment_reminder_details_kb(appointment.id),
+                )
                 await callback_query.answer()
 
                 # Notify admin about confirmation
@@ -313,12 +317,6 @@ def create_client_appointment_router(
             )
             if appointment is None:
                 await callback_query.answer("Запись не найдена.", show_alert=True)
-                return
-
-            try:
-                appointment_management_service.ensure_appointment_awaiting_confirmation(appointment)
-            except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
                 return
 
             await notification_service.notify_client_appointment_details(appointment)

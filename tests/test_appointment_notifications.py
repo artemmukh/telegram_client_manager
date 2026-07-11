@@ -13,8 +13,10 @@ from bot.services.appointment.appointment_notifications import (
     REMINDER_TEXT,
     AppointmentNotificationService,
 )
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 from bot.utils.role import Role
+
+CONFIRM_CTA = "Пожалуйста, подтвердите вашу готовность посетить запись"
 
 
 class FakeBotMessage:
@@ -1195,3 +1197,94 @@ async def test_notify_client_appointment_details_omits_admin_info_when_doctor_id
 
     msg = bot.sent_messages[0]
     assert "Администратор" not in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_build_appointment_message_pending_shows_confirm_cta():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    assert appointment.status == AppointmentStatus.PENDING
+
+    text = service._build_appointment_message(appointment)
+
+    assert text.splitlines()[-1] == CONFIRM_CTA
+    assert "Статус:" not in text
+
+
+@pytest.mark.asyncio
+async def test_build_appointment_message_confirmed_shows_status_label_instead_of_cta():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+
+    text = service._build_appointment_message(appointment)
+
+    expected_label = APPOINTMENT_STATUS_LABELS[AppointmentStatus.CONFIRMED]
+    assert text.splitlines()[-1] == f"Статус: {expected_label}"
+    assert CONFIRM_CTA not in text
+
+
+@pytest.mark.asyncio
+async def test_build_appointment_message_cancelled_shows_status_label_instead_of_cta():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CANCELLED
+
+    text = service._build_appointment_message(appointment)
+
+    expected_label = APPOINTMENT_STATUS_LABELS[AppointmentStatus.CANCELLED]
+    assert text.splitlines()[-1] == f"Статус: {expected_label}"
+    assert CONFIRM_CTA not in text
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_details_uses_confirm_buttons_keyboard_for_pending():
+    bot = FakeEditBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    assert appointment.status == AppointmentStatus.PENDING
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_appointment_details(appointment)
+
+    assert result is True
+    edited = bot.edited_messages[0]
+    assert edited['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_details_uses_details_only_keyboard_for_confirmed():
+    bot = FakeEditBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.notification_message_id = 555
+
+    result = await service.notify_client_appointment_details(appointment)
+
+    assert result is True
+    assert len(bot.edited_messages) == 1
+    edited = bot.edited_messages[0]
+    assert edited['chat_id'] == 12345
+    assert edited['message_id'] == 555
+    assert edited['reply_markup'] == appointment_reminder_details_kb(appointment.id)
+    assert edited['reply_markup'] != appointment_reminder_with_buttons_kb(appointment.id)
+    assert f"Статус: {APPOINTMENT_STATUS_LABELS[AppointmentStatus.CONFIRMED]}" in edited['text']

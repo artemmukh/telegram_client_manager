@@ -19,6 +19,7 @@ from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import format_datetime_for_display
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus
 
 REMINDER_TEXT = "Напоминаем вам о записи."
 
@@ -117,7 +118,11 @@ class AppointmentNotificationService:
 
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
         message_text = self._build_appointment_message(appointment, admin)
-        reply_markup = appointment_reminder_with_buttons_kb(appointment.id)
+
+        if appointment.status == AppointmentStatus.PENDING:
+            reply_markup = appointment_reminder_with_buttons_kb(appointment.id)
+        else:
+            reply_markup = appointment_reminder_details_kb(appointment.id)
 
         if appointment.notification_message_id is not None:
             try:
@@ -513,11 +518,16 @@ class AppointmentNotificationService:
         if admin:
             admin_info = f"👨‍⚕️ Администратор: {admin.full_name}\n📱 Номер: {admin.phone or '—'}\n\n"
 
+        if appointment.status == AppointmentStatus.PENDING:
+            last_line = "Пожалуйста, подтвердите вашу готовность посетить запись"
+        else:
+            last_line = f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}"
+
         return (
             "Вам назначена запись на прием\n\n"
             f"{admin_info}"
             f"Дата и время: {appointment.datetime}\n"
             f"Услуга: {appointment.purpose}\n"
             f"Клиника: {appointment.clinic_name or 'Информация не доступна'}\n\n"
-            "Пожалуйста, подтвердите вашу готовность посетить запись"
+            f"{last_line}"
         )

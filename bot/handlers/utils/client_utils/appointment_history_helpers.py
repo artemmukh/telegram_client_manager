@@ -2,16 +2,9 @@ from datetime import datetime
 
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import format_datetime_for_display
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, CreatedBy
 
-HISTORY_STATUS_LABELS = {
-    AppointmentStatus.PENDING: "🕐 ожидает",
-    AppointmentStatus.CONFIRMED: "✅ подтверждена",
-    AppointmentStatus.CANCELLED: "❌ отменена",
-    AppointmentStatus.COMPLETED: "✔️ завершена",
-    AppointmentStatus.NO_SHOW: "🙅 неявка",
-    AppointmentStatus.EXPIRED: "⏳ истекла",
-}
+HISTORY_STATUS_LABELS = APPOINTMENT_STATUS_LABELS
 
 
 def _format_appointment_datetime(appointment: Appointment) -> str:
