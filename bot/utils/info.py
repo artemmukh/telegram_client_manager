@@ -46,5 +46,6 @@ async def display_client_help_msg(message: Message):
             "кнопками подтверждения и отмены.\n\n\n"
             "/start - запуск бота.\n"
             "/help - справка.\n"
-            "/profile - личные данные.")
+            "/profile - личные данные.\n"
+            "/price - прайс-лист")
     await message.answer(text=text)
