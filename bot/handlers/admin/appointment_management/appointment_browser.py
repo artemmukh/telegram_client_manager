@@ -14,6 +14,7 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
     datetime_processing,
+    price_processing,
     purpose_processing,
 )
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
@@ -38,6 +39,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_browser_search_kb,
     appointment_card_kb,
     appointment_confirm_new_datetime_kb,
+    appointment_confirm_new_price_kb,
     appointment_confirm_new_purpose_kb,
     appointment_delete_confirm_kb,
     appointment_delete_notify_kb,
@@ -191,7 +193,7 @@ def create_admin_appointment_browser_router(
         await render_card(
             callback_query, state,
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
-            tab=callback_data.tab,
+            tab=callback_data.tab, post_appt=callback_data.post_appt,
         )
 
     # --- Card actions: status ---
@@ -218,7 +220,7 @@ def create_admin_appointment_browser_router(
             elif new_status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
                 await appointment_scheduler.schedule_appointment_completion(appointment)
 
-        if notification_service and new_status == AppointmentStatus.CANCELLED:
+        if notification_service and new_status == AppointmentStatus.CANCELLED and not callback_data.post_appt:
             try:
                 await notification_service.notify_client_appointment_cancelled_by_admin(appointment)
             except Exception as e:
@@ -316,6 +318,7 @@ def create_admin_appointment_browser_router(
         await render_card(
             callback_query, state,
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+            post_appt=callback_data.post_appt,
         )
 
     # --- Collect and confirm new datetime ---
@@ -399,6 +402,7 @@ def create_admin_appointment_browser_router(
     async def start_edit_purpose(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
         await state.update_data(
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+            post_appt=callback_data.post_appt,
         )
         await state.set_state(AppointmentBrowserStates.new_purpose)
         await callback_query.answer('')
@@ -406,6 +410,7 @@ def create_admin_appointment_browser_router(
             "Введите новое описание услуги:",
             reply_markup=appointment_browser_cancel_edit_kb(
                 callback_data.appointment_id, callback_data.mode, callback_data.page,
+                post_appt=callback_data.post_appt,
             ),
         )
 
@@ -419,7 +424,9 @@ def create_admin_appointment_browser_router(
         await edit_tracked_message(
             message.bot, state,
             text=f"Новая услуга: {data['purpose']}",
-            reply_markup=appointment_confirm_new_purpose_kb(data["appointment_id"], data["mode"], data["page"]),
+            reply_markup=appointment_confirm_new_purpose_kb(
+                data["appointment_id"], data["mode"], data["page"], post_appt=data.get("post_appt", False),
+            ),
         )
 
     @router.callback_query(ApptActionCB.filter(F.action == "retry_new_purpose"))
@@ -430,6 +437,7 @@ def create_admin_appointment_browser_router(
             "Введите новое описание услуги:",
             reply_markup=appointment_browser_cancel_edit_kb(
                 callback_data.appointment_id, callback_data.mode, callback_data.page,
+                post_appt=callback_data.post_appt,
             ),
         )
 
@@ -451,7 +459,95 @@ def create_admin_appointment_browser_router(
         await render_card(
             callback_query, state,
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+            post_appt=callback_data.post_appt,
         )
+
+    # --- Collect and confirm new price ---
+
+    @router.callback_query(ApptActionCB.filter(F.action == "edit_price"))
+    async def start_edit_price(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await state.update_data(
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+            post_appt=callback_data.post_appt,
+        )
+        await state.set_state(AppointmentBrowserStates.new_price)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите цену приёма:",
+            reply_markup=appointment_browser_cancel_edit_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+                post_appt=callback_data.post_appt,
+            ),
+        )
+
+    @router.message(AppointmentBrowserStates.new_price, F.text)
+    async def process_new_price(message: Message, state: FSMContext):
+        if not await price_processing(message, state, AppointmentBrowserStates.confirm_new_price):
+            return
+
+        data = await state.get_data()
+        await message.delete()
+        await edit_tracked_message(
+            message.bot, state,
+            text=f"Новая цена: {data['price']}",
+            reply_markup=appointment_confirm_new_price_kb(
+                data["appointment_id"], data["mode"], data["page"], post_appt=data.get("post_appt", False),
+            ),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "retry_new_price"))
+    async def retry_new_price(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        await state.set_state(AppointmentBrowserStates.new_price)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Введите цену приёма:",
+            reply_markup=appointment_browser_cancel_edit_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page,
+                post_appt=callback_data.post_appt,
+            ),
+        )
+
+    @router.callback_query(ApptActionCB.filter(F.action == "approve_new_price"))
+    async def approve_new_price(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        data = await state.get_data()
+
+        try:
+            appointment = await appt_mng.update_price(callback_data.appointment_id, data["price"])
+        except ValidationError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        except BotException as e:
+            await callback_query.answer(f"Ошибка обновления записи: {e}", show_alert=True)
+            return
+
+        await render_card(
+            callback_query, state,
+            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+            post_appt=callback_data.post_appt,
+        )
+
+    # --- Finish appointment (post-appointment window) ---
+
+    @router.callback_query(ApptActionCB.filter(F.action == "finish_appointment"))
+    async def finish_appointment(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        try:
+            appointment = await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        if appointment_scheduler:
+            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
+            await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
+
+        await callback_query.answer("Приём завершён")
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment),
+            reply_markup=appointment_card_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page, status=appointment.status,
+            ),
+        )
+        await remember_tracked_message(state, callback_query.message)
 
     @router.callback_query(F.data == "noop")
     async def noop_button(callback_query: CallbackQuery):
@@ -516,6 +612,7 @@ def create_admin_appointment_browser_router(
 
     async def render_card(
         callback_query: CallbackQuery, state: FSMContext, *, appointment_id: int, mode: str, page: int, tab: str = "",
+        post_appt: bool = False,
     ) -> None:
         appointment = await appt_mng.get_appointment_by_id(appointment_id)
         if appointment is None:
@@ -525,7 +622,9 @@ def create_admin_appointment_browser_router(
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
-            reply_markup=appointment_card_kb(appointment_id, mode, page, status=appointment.status, tab=tab),
+            reply_markup=appointment_card_kb(
+                appointment_id, mode, page, status=appointment.status, tab=tab, post_appt=post_appt,
+            ),
         )
         await remember_tracked_message(state, callback_query.message)
 

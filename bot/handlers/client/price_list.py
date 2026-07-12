@@ -10,7 +10,7 @@ def create_price_list_router():
     router.message.filter(RoleFilter("client"))
 
     @router.message(F.text.in_({"/price", "📋 Прайс-лист"}), RoleFilter("client"))
-    async def help_client(message: Message):
+    async def price_client(message: Message):
         media = [
             InputMediaPhoto(media=FSInputFile("data/price_list/rus_1pg.png")),
             InputMediaPhoto(media=FSInputFile("data/price_list/rus_2pg.png"), caption="Прайс лист оказываемых услуг.")

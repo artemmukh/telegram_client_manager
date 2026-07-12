@@ -23,7 +23,7 @@ from bot.services.utils.date_parser import get_current_tashkent_time, get_curren
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_datetime, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
+from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 CANCELLATION_CUTOFF_HOURS = 2
 
@@ -445,6 +445,14 @@ class AppointmentManagement:
 
         appointment.purpose = validate_purpose(new_purpose)
         await self.appointment_repository.update_appointment(appointment_id, appointment)
+
+        return appointment
+
+    async def update_price(self, appointment_id: int, new_price: float) -> Appointment:
+        appointment = await self._get_or_raise(appointment_id)
+
+        appointment.price = validate_price(str(new_price))
+        await self.appointment_repository.update_appointment_price(appointment_id, appointment.price)
 
         return appointment
 

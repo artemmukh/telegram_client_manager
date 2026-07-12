@@ -534,3 +534,34 @@ async def test_update_proposed_by_round_trips_via_get_by_id_and_by_telegram_id()
         assert by_telegram_cleared[0].proposed_by is None
     finally:
         await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_update_appointment_price_round_trips_via_get_by_id_and_by_telegram_id():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, telegram_user_id=2005)
+        )
+        client = await user_repo.get_user_by_telegram_id(2005)
+
+        created = await appointment_repo.create_appointment(_appointment_for(client.ID, "2026-07-01 10:00:00"))
+        assert created.price is None
+
+        await appointment_repo.update_appointment_price(created.id, 150000.0)
+
+        by_id = await appointment_repo.get_appointment_by_id(created.id)
+        by_telegram = await appointment_repo.get_appointments_by_telegram_id(2005)
+
+        assert by_id.price == 150000.0
+        assert by_telegram[0].price == 150000.0
+
+        await appointment_repo.update_appointment_price(created.id, None)
+
+        by_id_cleared = await appointment_repo.get_appointment_by_id(created.id)
+        by_telegram_cleared = await appointment_repo.get_appointments_by_telegram_id(2005)
+
+        assert by_id_cleared.price is None
+        assert by_telegram_cleared[0].price is None
+    finally:
+        await connection.close()

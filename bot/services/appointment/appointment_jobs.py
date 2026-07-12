@@ -152,18 +152,20 @@ async def complete_appointment(
     notification_service: AppointmentNotificationService,
     appointment_id: int,
 ) -> None:
-    """Mark appointment as completed and notify the admin.
+    """Ask the admin whether to make post-appointment corrections.
 
     Shared by the standalone APScheduler job function and by
     AppointmentScheduler (for callers that inject repositories/notification
     service directly, e.g. tests).
 
-    Updates status to COMPLETED if appointment is still PENDING or CONFIRMED.
+    Fires 1 hour after the appointment. Does NOT change the appointment's
+    status - it stays PENDING/CONFIRMED until the admin answers the prompt
+    (see appointment_completion.py handlers).
 
     Args:
-        appointment_repo: Repository used to fetch/update the appointment
+        appointment_repo: Repository used to fetch the appointment
         notification_service: Service used to notify the admin
-        appointment_id: The ID of the appointment to mark as completed
+        appointment_id: The ID of the appointment that just finished
     """
     appointment = await appointment_repo.get_appointment_by_id(appointment_id)
 
@@ -184,16 +186,6 @@ async def complete_appointment(
             f"with status {appointment.status.value}"
         )
         return
-
-    await appointment_repo.update_appointment_status(
-        appointment_id,
-        AppointmentStatus.COMPLETED,
-        get_current_tashkent_time(),
-    )
-
-    logger.info(
-        f"Appointment {appointment_id} auto-completed"
-    )
 
     if appointment.created_by_telegram_id:
         try:

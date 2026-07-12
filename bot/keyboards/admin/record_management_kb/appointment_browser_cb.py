@@ -14,18 +14,29 @@ class ApptPageCB(CallbackData, prefix="appt_page"):
 
 
 class ApptCardCB(CallbackData, prefix="appt_card"):
-    """Открыть карточку записи / вернуться к списку (mode+page+tab - куда вернуться)."""
+    """Открыть карточку записи / вернуться к списку (mode+page+tab - куда вернуться).
+
+    post_appt - открыта ли карточка в режиме послеприёмного редактирования
+    (отдельно от mode, который сохраняет семантику списка/поиска).
+    """
     appointment_id: int
     mode: str
     page: int
     tab: str = ""
+    post_appt: bool = False
 
 
 class ApptActionCB(CallbackData, prefix="appt_act"):
-    """Действие в карточке записи: set_status, edit_datetime, edit_purpose, delete,
-    confirm_delete, cancel_delete, confirm_delete_notify, confirm_delete_silent."""
+    """Действие в карточке записи: set_status, edit_datetime, edit_purpose, edit_price,
+    finish_appointment, delete, confirm_delete, cancel_delete, confirm_delete_notify,
+    confirm_delete_silent.
+
+    post_appt - выполняется ли действие в режиме послеприёмного редактирования
+    (отдельно от mode, который сохраняет семантику списка/поиска).
+    """
     action: str
     appointment_id: int
     mode: str
     page: int
     value: str = ""
+    post_appt: bool = False

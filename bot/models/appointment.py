@@ -26,3 +26,4 @@ class Appointment:
     admin_notification_message_id: int | None = None
     doctor_full_name: str | None = None
     doctor_phone: str | None = None
+    price: float | None = None

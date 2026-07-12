@@ -16,4 +16,7 @@ class AppointmentBrowserStates(StatesGroup):
     new_purpose = State()
     confirm_new_purpose = State()
 
+    new_price = State()
+    confirm_new_price = State()
+
     confirm_delete = State()

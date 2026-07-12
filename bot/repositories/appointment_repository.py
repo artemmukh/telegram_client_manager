@@ -25,7 +25,8 @@ SELECT
     a.proposed_by,
     a.admin_notification_message_id,
     d.full_name AS doctor_full_name,
-    d.phone AS doctor_phone
+    d.phone AS doctor_phone,
+    a.price
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
@@ -70,6 +71,7 @@ class AppointmentRepository:
                 proposal_message_id INTEGER DEFAULT NULL,
                 proposed_by TEXT DEFAULT NULL,
                 admin_notification_message_id INTEGER DEFAULT NULL,
+                price REAL DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -127,6 +129,12 @@ class AppointmentRepository:
                 "UPDATE appointments SET status_updated_at = created_at WHERE status_updated_at IS NULL"
             )
 
+        # Ensure price column exists for existing databases
+        if "price" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN price REAL DEFAULT NULL"
+            )
+
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_clinic_datetime
             ON appointments(clinic_id, datetime)
@@ -163,7 +171,8 @@ class AppointmentRepository:
                 u.full_name AS client_full_name, u.phone AS client_phone,
                 a.notification_message_id, a.proposed_datetime, a.proposal_message_id,
                 a.proposed_by, a.admin_notification_message_id,
-                d.full_name AS doctor_full_name, d.phone AS doctor_phone
+                d.full_name AS doctor_full_name, d.phone AS doctor_phone,
+                a.price
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -240,6 +249,13 @@ class AppointmentRepository:
         await self.connection.execute(
             "UPDATE appointments SET notification_message_id = ? WHERE id = ?",
             (message_id, appointment_id),
+        )
+        await self.connection.commit()
+
+    async def update_appointment_price(self, appointment_id: int, price: float | None) -> None:
+        await self.connection.execute(
+            "UPDATE appointments SET price = ? WHERE id = ?",
+            (price, appointment_id),
         )
         await self.connection.commit()
 
@@ -468,4 +484,5 @@ class AppointmentRepository:
             admin_notification_message_id=row[18],
             doctor_full_name=row[19],
             doctor_phone=row[20],
+            price=row[21],
         )

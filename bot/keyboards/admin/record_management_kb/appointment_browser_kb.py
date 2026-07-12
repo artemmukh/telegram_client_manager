@@ -21,6 +21,16 @@ _STATUS_ACTION_BUTTONS = [
     (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
 ]
 
+_POST_APPT_STATUS_BUTTONS = [
+    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
+    (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
+]
+
+_STATUS_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}
+_SERVICE_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED}
+_PRICE_EDITABLE_STATUSES = {AppointmentStatus.COMPLETED}
+_TIME_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}
+
 
 def appointment_browser_back_to_search_kb() -> InlineKeyboardMarkup:
     """Единственная кнопка "к меню поиска" - для экранов ввода (ФИО/телефон)."""
@@ -29,13 +39,15 @@ def appointment_browser_back_to_search_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def appointment_browser_cancel_edit_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def appointment_browser_cancel_edit_kb(
+    appointment_id: int, mode: str, page: int, post_appt: bool = False,
+) -> InlineKeyboardMarkup:
     """Единственная кнопка "отменить" - возврат к карточке записи без изменений."""
     builder = InlineKeyboardBuilder()
     builder.button(
         text="❌ Отменить",
         callback_data=ApptActionCB(
-            action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page,
+            action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
     )
     return builder.as_markup()
@@ -127,42 +139,94 @@ def appointment_list_kb(
 
 def appointment_card_kb(
     appointment_id: int, mode: str, page: int, status: AppointmentStatus, tab: str = "",
+    post_appt: bool = False,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    rows = []
 
-    status_buttons_added = 0
-    for button_status, text in _STATUS_ACTION_BUTTONS:
-        if button_status == status:
-            continue
+    if post_appt:
+        for button_status, text in _POST_APPT_STATUS_BUTTONS:
+            builder.button(
+                text=text,
+                callback_data=ApptActionCB(
+                    action="set_status", appointment_id=appointment_id, mode=mode, page=page,
+                    value=button_status.value, post_appt=True,
+                ).pack(),
+            )
+        rows.append(2)
 
         builder.button(
-            text=text,
+            text="📝 Изменить услугу",
             callback_data=ApptActionCB(
-                action="set_status", appointment_id=appointment_id, mode=mode, page=page,
-                value=button_status.value,
+                action="edit_purpose", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
             ).pack(),
         )
-        status_buttons_added += 1
+        builder.button(
+            text="💰 Цена",
+            callback_data=ApptActionCB(
+                action="edit_price", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
+            ).pack(),
+        )
+        rows.append(2)
 
-    builder.button(
-        text="🕐 Изменить время",
-        callback_data=ApptActionCB(action="edit_datetime", appointment_id=appointment_id, mode=mode, page=page).pack(),
-    )
-    builder.button(
-        text="📝 Изменить услугу",
-        callback_data=ApptActionCB(action="edit_purpose", appointment_id=appointment_id, mode=mode, page=page).pack(),
-    )
-    builder.button(
-        text="🗑 Удалить",
-        callback_data=ApptActionCB(action="delete", appointment_id=appointment_id, mode=mode, page=page).pack(),
-    )
+        builder.button(
+            text="✅ Завершить приём",
+            callback_data=ApptActionCB(
+                action="finish_appointment", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
+            ).pack(),
+        )
+        rows.append(1)
+
+        builder.adjust(*rows)
+        return builder.as_markup()
+
+    status_buttons_added = 0
+    if status in _STATUS_EDITABLE_STATUSES:
+        for button_status, text in _STATUS_ACTION_BUTTONS:
+            if button_status == status:
+                continue
+
+            builder.button(
+                text=text,
+                callback_data=ApptActionCB(
+                    action="set_status", appointment_id=appointment_id, mode=mode, page=page,
+                    value=button_status.value,
+                ).pack(),
+            )
+            status_buttons_added += 1
+
+        rows += [2, 2] if status_buttons_added == 4 else [2, 1]
+
+    editing_buttons_added = 0
+    if status in _TIME_EDITABLE_STATUSES:
+        builder.button(
+            text="🕐 Изменить время",
+            callback_data=ApptActionCB(action="edit_datetime", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        )
+        editing_buttons_added += 1
+    if status in _SERVICE_EDITABLE_STATUSES:
+        builder.button(
+            text="📝 Изменить услугу",
+            callback_data=ApptActionCB(action="edit_purpose", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        )
+        editing_buttons_added += 1
+    if status in _PRICE_EDITABLE_STATUSES:
+        builder.button(
+            text="💰 Цена",
+            callback_data=ApptActionCB(action="edit_price", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        )
+        editing_buttons_added += 1
+
+    if editing_buttons_added:
+        rows.append(editing_buttons_added)
+
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ApptPageCB(mode=mode, page=page, tab=tab).pack(),
     )
+    rows.append(1)
 
-    status_rows = (2, 2) if status_buttons_added == 4 else (2, 1)
-    builder.adjust(*status_rows, 2, 1, 1)
+    builder.adjust(*rows)
     return builder.as_markup()
 
 
@@ -222,20 +286,56 @@ def appointment_confirm_new_datetime_kb(appointment_id: int, mode: str, page: in
     return builder.as_markup()
 
 
-def appointment_confirm_new_purpose_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def appointment_confirm_new_purpose_kb(
+    appointment_id: int, mode: str, page: int, post_appt: bool = False,
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
         text="✅ Подтвердить",
-        callback_data=ApptActionCB(action="approve_new_purpose", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        callback_data=ApptActionCB(
+            action="approve_new_purpose", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        ).pack(),
     )
     builder.button(
         text="📝 Ввести заново",
-        callback_data=ApptActionCB(action="retry_new_purpose", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        callback_data=ApptActionCB(
+            action="retry_new_purpose", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        ).pack(),
     )
     builder.button(
         text="❌ Отменить",
-        callback_data=ApptActionCB(action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        callback_data=ApptActionCB(
+            action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        ).pack(),
+    )
+
+    builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+def appointment_confirm_new_price_kb(
+    appointment_id: int, mode: str, page: int, post_appt: bool = False,
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="✅ Подтвердить",
+        callback_data=ApptActionCB(
+            action="approve_new_price", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        ).pack(),
+    )
+    builder.button(
+        text="💰 Ввести заново",
+        callback_data=ApptActionCB(
+            action="retry_new_price", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        ).pack(),
+    )
+    builder.button(
+        text="❌ Отменить",
+        callback_data=ApptActionCB(
+            action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        ).pack(),
     )
 
     builder.adjust(1, 1, 1)

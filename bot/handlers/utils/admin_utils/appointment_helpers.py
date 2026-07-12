@@ -7,6 +7,7 @@ from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_display
 from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus
 from bot.validators.validators import (
+    validate_price,
     validate_purpose,
 )
 
@@ -42,6 +43,9 @@ def build_appointment_card(appointment: Appointment) -> str:
         f"Услуга: {appointment.purpose}",
         f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}",
     ]
+
+    if appointment.price is not None:
+        lines.append(f"Цена: {appointment.price}")
 
     if appointment.created_at:
         lines.append(f"Создана: {appointment.created_at}")
@@ -102,5 +106,17 @@ async def purpose_processing(message: Message, state: FSMContext, next_state: St
         return False
 
     await state.update_data(purpose=value)
+    await state.set_state(next_state)
+    return True
+
+
+async def price_processing(message: Message, state: FSMContext, next_state: State) -> bool:
+    try:
+        value = validate_price(message.text.strip())
+    except ValidationError as e:
+        await message.answer(str(e))
+        return False
+
+    await state.update_data(price=value)
     await state.set_state(next_state)
     return True

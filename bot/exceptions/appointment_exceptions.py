@@ -37,6 +37,11 @@ class InvalidPurposeError(ValidationError):
     pass
 
 
+class InvalidPriceError(ValidationError):
+    """Некорректная цена приёма."""
+    pass
+
+
 class NegotiationInProgressError(ValidationError):
     """Действие недоступно: по заявке уже есть предложенное время, ожидающее ответа клиента."""
     pass

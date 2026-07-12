@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 
-from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPurposeError
+from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPriceError, InvalidPurposeError
 from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError, PhoneAlreadyExistsError, ValidationError
 from bot.repositories.user_repository import UserRepository
 from bot.utils.tools import normalize_phone
@@ -94,6 +94,23 @@ def validate_purpose(value: str) -> str:
         )
 
     return value
+
+
+def validate_price(value: str) -> float:
+    value = value.strip().replace(",", ".")
+
+    try:
+        price = float(value)
+    except ValueError:
+        raise InvalidPriceError(
+            "Введите цену числом.\n"
+            "Например: 150000, 99.90."
+        )
+
+    if price < 0:
+        raise InvalidPriceError("Цена не может быть отрицательной.")
+
+    return price
 
 
 

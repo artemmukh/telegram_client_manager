@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+from bot.handlers.client.geolocation import create_price_geo_router
 from bot.handlers.client.price_list import create_price_list_router
 from bot.loader import get_bot
 from bot.create_bot import dp, db
@@ -141,6 +142,7 @@ async def main():
         appointment_repo, appointment_management_service, notification_service, appointment_scheduler
     ))
     dp.include_router(create_price_list_router())
+    dp.include_router(create_price_geo_router())
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)

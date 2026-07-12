@@ -42,7 +42,7 @@ def create_reg_router(
         token = command.args
 
         if not token:
-            await message.answer("Пожалуйста, отсканируйте QR-код клиники или пригласительной ссылкой.")
+            await message.answer("Пожалуйста, отсканируйте QR-код клиники или воспользуйтесь пригласительной ссылкой.")
             return
 
         clinic = await reg.get_clinic_by_token(token)

@@ -1059,46 +1059,26 @@ async def test_cancel_completions_idempotent_no_error(
 
 
 @pytest.mark.asyncio
-async def test_mark_appointment_completed_job_updates_status_if_pending(
-    appointment_scheduler, mock_appointment_repo, sample_appointment
+async def test_mark_appointment_completed_job_sends_prompt_and_keeps_status_if_pending(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
 ):
-    """Test that completion job updates status to COMPLETED if appointment is PENDING."""
+    """Test that completion job sends the admin follow-up prompt without changing status if PENDING."""
+    sample_appointment.created_by_telegram_id = 54321
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
-    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
-         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
-         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+    await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-        mock_get_bot.return_value = AsyncMock()
-        mock_load_config.return_value = MagicMock(database_path=":memory:")
-
-        mock_connection = AsyncMock()
-        mock_db_instance = MagicMock()
-        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
-        mock_db_class.return_value = mock_db_instance
-
-        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
-             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
-             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
-
-            mock_repo_class.return_value = mock_appointment_repo
-            mock_user_repo_class.return_value = AsyncMock()
-            mock_notif_class.return_value = AsyncMock()
-
-            await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
-
-            mock_appointment_repo.update_appointment_status.assert_called_once_with(
-                sample_appointment.id,
-                AppointmentStatus.COMPLETED,
-                ANY,
-            )
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    mock_notification_service.notify_admin_completion.assert_called_once_with(
+        54321, sample_appointment,
+    )
 
 
 @pytest.mark.asyncio
-async def test_mark_appointment_completed_job_updates_status_if_confirmed(
-    appointment_scheduler, mock_appointment_repo, sample_appointment
+async def test_mark_appointment_completed_job_sends_prompt_and_keeps_status_if_confirmed(
+    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
 ):
-    """Test that completion job updates status to COMPLETED if appointment is CONFIRMED."""
+    """Test that completion job sends the admin follow-up prompt without changing status if CONFIRMED."""
     confirmed_appointment = Appointment(
         id=1,
         clinic_id=1,
@@ -1108,36 +1088,16 @@ async def test_mark_appointment_completed_job_updates_status_if_confirmed(
         created_by=CreatedBy.ADMIN,
         status=AppointmentStatus.CONFIRMED,
         clinic_name="Test Clinic",
+        created_by_telegram_id=54321,
     )
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
 
-    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
-         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
-         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+    await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
 
-        mock_get_bot.return_value = AsyncMock()
-        mock_load_config.return_value = MagicMock(database_path=":memory:")
-
-        mock_connection = AsyncMock()
-        mock_db_instance = MagicMock()
-        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
-        mock_db_class.return_value = mock_db_instance
-
-        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
-             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
-             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
-
-            mock_repo_class.return_value = mock_appointment_repo
-            mock_user_repo_class.return_value = AsyncMock()
-            mock_notif_class.return_value = AsyncMock()
-
-            await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
-
-            mock_appointment_repo.update_appointment_status.assert_called_once_with(
-                confirmed_appointment.id,
-                AppointmentStatus.COMPLETED,
-                ANY,
-            )
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    mock_notification_service.notify_admin_completion.assert_called_once_with(
+        54321, confirmed_appointment,
+    )
 
 
 @pytest.mark.asyncio

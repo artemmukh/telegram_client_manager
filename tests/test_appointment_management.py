@@ -30,6 +30,7 @@ class FakeAppointmentRepository:
         self.updated = []
         self.proposed_datetime_updates = []
         self.proposed_by_updates = []
+        self.price_updates = []
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -52,6 +53,9 @@ class FakeAppointmentRepository:
 
     async def update_appointment(self, appointment_id, appointment):
         self.updated.append((appointment_id, appointment))
+
+    async def update_appointment_price(self, appointment_id, price):
+        self.price_updates.append((appointment_id, price))
 
     async def update_proposed_datetime(self, appointment_id, proposed_datetime):
         self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
@@ -421,6 +425,28 @@ async def test_update_datetime_validates_and_persists():
 
     assert appointment.datetime == "2026-08-01 09:00"
     assert appt_repo.updated[0][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_update_price_validates_and_persists():
+    appt_repo = FakeAppointmentRepository([_appointment()])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.update_price(1, 150000.0)
+
+    assert appointment.price == 150000.0
+    assert appt_repo.price_updates == [(1, 150000.0)]
+
+
+@pytest.mark.asyncio
+async def test_update_price_rejects_negative_price():
+    from bot.exceptions.appointment_exceptions import InvalidPriceError
+
+    appt_repo = FakeAppointmentRepository([_appointment()])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(InvalidPriceError):
+        await service.update_price(1, -100.0)
 
 
 @pytest.mark.asyncio

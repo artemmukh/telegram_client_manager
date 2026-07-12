@@ -11,7 +11,7 @@ Tests the complete workflow of appointment auto-completion:
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
@@ -254,29 +254,26 @@ async def test_status_change_back_to_confirmed_reschedules_completion(
 
 
 @pytest.mark.asyncio
-async def test_completion_job_updates_pending_to_completed(
-    appointment_scheduler, mock_appointment_repo, mock_user_repo, sample_appointment
+async def test_completion_job_sends_followup_prompt_and_keeps_pending_status(
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Completion job changes PENDING status to COMPLETED."""
-    # Mock the fetch of appointment data
+    """Test: Completion job asks the admin instead of auto-completing a PENDING appointment."""
+    sample_appointment.created_by_telegram_id = 54321
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
-    # Run completion job
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    # Verify status update was called
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        sample_appointment.id,
-        AppointmentStatus.COMPLETED,
-        ANY,
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    mock_notification_service.notify_admin_completion.assert_called_once_with(
+        54321, sample_appointment
     )
 
 
 @pytest.mark.asyncio
-async def test_completion_job_updates_confirmed_to_completed(
-    appointment_scheduler, mock_appointment_repo, mock_user_repo, sample_appointment
+async def test_completion_job_sends_followup_prompt_and_keeps_confirmed_status(
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Completion job changes CONFIRMED status to COMPLETED."""
+    """Test: Completion job asks the admin instead of auto-completing a CONFIRMED appointment."""
     confirmed_appointment = Appointment(
         id=1,
         clinic_id=1,
@@ -286,16 +283,16 @@ async def test_completion_job_updates_confirmed_to_completed(
         created_by=CreatedBy.ADMIN,
         status=AppointmentStatus.CONFIRMED,
         clinic_name="Test Clinic",
+        created_by_telegram_id=54321,
     )
 
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
 
     await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
 
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        confirmed_appointment.id,
-        AppointmentStatus.COMPLETED,
-        ANY,
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    mock_notification_service.notify_admin_completion.assert_called_once_with(
+        54321, confirmed_appointment
     )
 
 
@@ -400,8 +397,8 @@ async def test_completion_job_skips_admin_notification_when_no_creator(
     # Should not raise error
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    # Status update should still happen
-    mock_appointment_repo.update_appointment_status.assert_called_once()
+    # Status must stay unchanged; no admin to notify since there's no creator
+    mock_appointment_repo.update_appointment_status.assert_not_called()
     mock_notification_service.notify_admin_completion.assert_not_called()
 
 
@@ -409,7 +406,7 @@ async def test_completion_job_skips_admin_notification_when_no_creator(
 async def test_completion_job_swallows_admin_notification_failure(
     appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
 ):
-    """Test: A failed admin completion notification must not crash the job; status update already committed."""
+    """Test: A failed admin follow-up notification must not crash the job."""
     sample_appointment.created_by_telegram_id = 54321
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
     mock_notification_service.notify_admin_completion.side_effect = Exception("boom")
@@ -417,18 +414,14 @@ async def test_completion_job_swallows_admin_notification_failure(
     # Should not raise error
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        sample_appointment.id,
-        AppointmentStatus.COMPLETED,
-        ANY,
-    )
+    mock_appointment_repo.update_appointment_status.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_full_workflow_pending_to_completed(
     appointment_scheduler, scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Full workflow - create → stay PENDING → auto-complete after 1h → admin follow-up notified."""
+    """Test: Full workflow - create → stay PENDING → 1h follow-up prompt sent, status untouched."""
     scheduler.start()
 
     sample_appointment.created_by_telegram_id = 54321
@@ -443,14 +436,11 @@ async def test_full_workflow_pending_to_completed(
     # 3. Run completion job (simulating time passing)
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    # 4. Verify status was updated to COMPLETED
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        sample_appointment.id,
-        AppointmentStatus.COMPLETED,
-        ANY,
-    )
+    # 4. Verify status was NOT changed - stays PENDING until the admin answers the prompt
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    assert sample_appointment.status is AppointmentStatus.PENDING
 
-    # 5. Verify the admin (not the client) was notified about the completion follow-up
+    # 5. Verify the admin (not the client) was notified with the follow-up prompt
     mock_notification_service.notify_admin_completion.assert_called_once_with(
         54321, sample_appointment
     )
@@ -463,7 +453,7 @@ async def test_full_workflow_pending_to_completed(
 async def test_full_workflow_confirmed_to_completed(
     appointment_scheduler, scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Full workflow - create → client confirms → auto-complete after 1h."""
+    """Test: Full workflow - create → client confirms → 1h follow-up prompt sent, status untouched."""
     scheduler.start()
 
     # 1. Create appointment (initially PENDING)
@@ -495,12 +485,9 @@ async def test_full_workflow_confirmed_to_completed(
     # 4. Run completion job (simulating time passing after appointment)
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    # 5. Verify status was updated to COMPLETED
-    mock_appointment_repo.update_appointment_status.assert_called_once_with(
-        sample_appointment.id,
-        AppointmentStatus.COMPLETED,
-        ANY,
-    )
+    # 5. Verify status was NOT changed - stays CONFIRMED until the admin answers the prompt
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    assert confirmed_appointment.status is AppointmentStatus.CONFIRMED
 
     scheduler.shutdown(wait=False)
 
@@ -547,16 +534,12 @@ async def test_multiple_appointments_independent_lifecycle(
     assert len(jobs) == 1
     assert jobs[0].id == "appt_2_complete"
 
-    # Complete appt2
+    # appt2's 1h follow-up fires
     mock_appointment_repo.get_appointment_by_id.return_value = appt2
     mock_user_repo.get_client_by_id.return_value = None
     await appointment_scheduler._mark_appointment_completed_job(2)
 
-    # Verify appt2 status was updated
-    mock_appointment_repo.update_appointment_status.assert_called_with(
-        2,
-        AppointmentStatus.COMPLETED,
-        ANY,
-    )
+    # Verify appt2's status was left untouched - only the follow-up prompt fires
+    mock_appointment_repo.update_appointment_status.assert_not_called()
 
     scheduler.shutdown(wait=False)

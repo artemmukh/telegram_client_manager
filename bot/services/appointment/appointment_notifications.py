@@ -279,10 +279,10 @@ class AppointmentNotificationService:
         )
 
     async def notify_admin_completion(self, admin_telegram_id: int, appointment: Appointment) -> None:
-        """Notify admin that the appointment auto-completed, asking to fill in service details."""
+        """Ask admin whether to make post-appointment corrections before finalizing the status."""
         await self.bot.send_message(
             chat_id=admin_telegram_id,
-            text="Приём завершён. Дополнить информацию об услуге?",
+            text="Приём завершён. Внести исправления?",
             reply_markup=completion_followup_kb(appointment.id),
             reply_parameters=self._admin_reply_parameters(appointment),
         )
