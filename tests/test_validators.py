@@ -7,6 +7,7 @@ from bot.exceptions.user_exceptions import (
     ValidationError,
 )
 from bot.validators.validators import (
+    FULL_NAME_PATTERN,
     validate_fields_filled,
     validate_full_name,
     validate_phone,
@@ -31,7 +32,7 @@ class PhoneLookupRepository:
     ],
 )
 def test_validate_full_name_accepts_valid_cyrillic_names(full_name):
-    assert validate_full_name(full_name) is None
+    assert validate_full_name(full_name, FULL_NAME_PATTERN) == full_name
 
 
 @pytest.mark.parametrize(
@@ -47,7 +48,7 @@ def test_validate_full_name_accepts_valid_cyrillic_names(full_name):
 )
 def test_validate_full_name_rejects_invalid_names(full_name):
     with pytest.raises(InvalidFullNameError):
-        validate_full_name(full_name)
+        validate_full_name(full_name, FULL_NAME_PATTERN)
 
 
 @pytest.mark.parametrize(

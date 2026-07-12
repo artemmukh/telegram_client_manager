@@ -9,7 +9,7 @@ Tests verify:
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
@@ -222,16 +222,41 @@ async def test_phase3_appointment_deletion_cancels_reminders(
 
 @pytest.mark.asyncio
 async def test_phase3_reminder_sends_with_buttons(
-    scheduler_service, async_scheduler, sample_appointment, mock_repos
+    scheduler_service, async_scheduler, sample_appointment, mock_repos, mock_notification_service
 ):
     """Test that reminder sends with appointment response buttons.
 
     Integration: Reminder job executes -> notification sent with buttons
+
+    ``_send_reminder_job`` delegates to the module-level ``send_reminder_job``
+    in ``appointment_jobs.py``, which is self-connecting (builds its own
+    bot/config/DB/repos so it stays picklable for real APScheduler
+    persistence). To observe it through this scheduler's injected mocks, the
+    Telegram/config/DB boundary and the repo/service classes it constructs
+    must be patched (same pattern as tests/test_appointment_scheduler.py).
     """
     mock_repos['appointment_repo'].get_appointment_by_id.return_value = sample_appointment
 
-    # Execute reminder job
-    await scheduler_service._send_reminder_job(sample_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=AsyncMock())
+        mock_db_class.return_value = mock_db_instance
+
+        mock_repo_class.return_value = mock_repos['appointment_repo']
+        mock_user_repo_class.return_value = mock_repos['user_repo']
+        mock_notif_class.return_value = mock_notification_service
+
+        # Execute reminder job
+        await scheduler_service._send_reminder_job(sample_appointment.id)
 
     # Verify notification called with appointment (which includes client response buttons)
     mock_repos['appointment_repo'].get_appointment_by_id.assert_called_once()
@@ -241,11 +266,14 @@ async def test_phase3_reminder_sends_with_buttons(
 
 @pytest.mark.asyncio
 async def test_phase3_reminder_respects_appointment_status(
-    scheduler_service, sample_appointment, mock_repos
+    scheduler_service, sample_appointment, mock_repos, mock_notification_service
 ):
     """Test that reminder respects appointment status.
 
     Only send reminders for PENDING or CONFIRMED appointments.
+
+    See test_phase3_reminder_sends_with_buttons for why the
+    appointment_jobs.py boundary needs patching here.
     """
     # Test with CANCELLED status
     cancelled_appointment = Appointment(
@@ -260,11 +288,30 @@ async def test_phase3_reminder_respects_appointment_status(
     )
     mock_repos['appointment_repo'].get_appointment_by_id.return_value = cancelled_appointment
 
-    await scheduler_service._send_reminder_job(cancelled_appointment.id)
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=AsyncMock())
+        mock_db_class.return_value = mock_db_instance
+
+        mock_repo_class.return_value = mock_repos['appointment_repo']
+        mock_user_repo_class.return_value = mock_repos['user_repo']
+        mock_notif_class.return_value = mock_notification_service
+
+        await scheduler_service._send_reminder_job(cancelled_appointment.id)
 
     # Notification should NOT be called for CANCELLED appointment
     mock_repos['appointment_repo'].get_appointment_by_id.assert_called_once()
-    # In the actual implementation, notification is not called for non-PENDING/CONFIRMED
+    mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
+    mock_notification_service.notify_client_reminder_with_buttons.assert_not_called()
 
 
 @pytest.mark.asyncio

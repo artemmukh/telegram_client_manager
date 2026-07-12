@@ -28,7 +28,7 @@ from bot.services.appointment.appointment_management import AppointmentManagemen
 from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.role import RoleFilter
-from bot.validators.validators import FULL_NAME_PATTERN
+from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 
 def create_admin_appointment_creation_router(
@@ -60,7 +60,7 @@ def create_admin_appointment_creation_router(
 
     @router.message(AppointmentCreationStates.client_full_name, F.text)
     async def get_name(message: Message, state: FSMContext):
-        if not await full_name_processing(message, state, AppointmentCreationStates.client_phone, re_pattern=FULL_NAME_PATTERN):
+        if not await full_name_processing(message, state, AppointmentCreationStates.client_phone, re_pattern=SEARCH_NAME_PATTERN):
             return
         await message.answer("Введите номер телефона клиента:", reply_markup=back_to_records_kb())
 
