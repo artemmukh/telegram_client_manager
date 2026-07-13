@@ -11,7 +11,11 @@ def create_price_geo_router():
 
     @router.message(F.text.in_({"/geo", "📍 Локация"}), RoleFilter("client"))
     async def geo_client(message: Message):
-        pass
+        media = [
+            InputMediaPhoto(media=FSInputFile("data/location/location.png"), caption="https://yandex.uz/maps/-/CTBl4J6V\n"
+                                                                                     "ул. Мирзо Улугбека 105/3 (вход со стороны дороги).\n"
+                                                                                     'Ориентир: магазин "Чимган".')]
+        await message.answer_media_group(media)
 
 
 
