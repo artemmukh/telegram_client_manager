@@ -181,6 +181,7 @@ def create_client_appointment_router(
                         await appointment_scheduler.cancel_appointment_completions(appointment_id)
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
                         await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
+                        await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
                     await callback_query.message.edit_text("✅ Ваша запись отменена")
                     await callback_query.answer()
@@ -217,6 +218,7 @@ def create_client_appointment_router(
 
                     if appointment_scheduler:
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.cancel_auto_confirm(appointment_id)
                         await appointment_scheduler.schedule_appointment_reminders(appointment)
                         await appointment_scheduler.schedule_appointment_completion(appointment)
 
@@ -260,6 +262,7 @@ def create_client_appointment_router(
 
                     if appointment_scheduler:
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
                     await callback_query.message.edit_text(
                         "❌ Вы отклонили предложенное время. Если запись всё ещё нужна, "
@@ -327,6 +330,7 @@ def create_client_appointment_router(
                         await appointment_scheduler.cancel_appointment_completions(appointment_id)
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
                         await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
+                        await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
                     if notification_service and appointment.created_by_telegram_id:
                         try:
@@ -364,6 +368,9 @@ def create_client_appointment_router(
                 appointment, client = await appointment_management_service.get_appointment_with_client_info(
                     appointment_id
                 )
+
+                if appointment_scheduler:
+                    await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
                 # Send success message to client
                 await callback_query.message.edit_text(
@@ -448,6 +455,7 @@ def create_client_appointment_router(
                     await appointment_scheduler.cancel_appointment_completions(appointment_id)
                     await appointment_scheduler.cancel_pending_expiry(appointment_id)
                     await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
+                    await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
                 await callback_query.message.edit_text("✅ Ваша запись отменена")
                 await callback_query.answer()

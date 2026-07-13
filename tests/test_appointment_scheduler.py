@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.services.appointment.appointment_jobs import (
+    auto_confirm_pending_job,
     expire_pending_request_job,
     expire_reschedule_request_job,
 )
@@ -2131,3 +2132,299 @@ async def test_expire_reschedule_request_job_handles_notification_failure(
             mock_appointment_repo.update_proposed_by.assert_called_once_with(
                 sample_reschedule_appointment.id, None
             )
+
+
+# Auto-Confirm Tests: PENDING -> CONFIRMED 2h before appointment (admin-created only)
+
+
+@pytest.mark.asyncio
+async def test_schedule_auto_confirm_creates_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that scheduling auto-confirm creates exactly 1 job for an
+    admin-created PENDING appointment."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_appointment.id}_autoconf"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_auto_confirm_time_calculated_correctly(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that auto-confirm runs 2 hours before the appointment datetime."""
+    scheduler.start()
+
+    appointment_dt = datetime.fromisoformat(sample_appointment.datetime)
+    expected_autoconf_time = appointment_dt - timedelta(hours=2)
+
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    actual_autoconf_time = jobs[0].next_run_time
+
+    if actual_autoconf_time.tzinfo:
+        expected_autoconf_time = expected_autoconf_time.replace(tzinfo=actual_autoconf_time.tzinfo)
+
+    assert abs(
+        (actual_autoconf_time - expected_autoconf_time).total_seconds()
+    ) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_auto_confirm_removes_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling auto-confirm removes the scheduled job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+    assert len(scheduler.get_jobs()) == 1
+
+    await appointment_scheduler.cancel_auto_confirm(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_auto_confirm_idempotent_no_error(
+    appointment_scheduler, scheduler
+):
+    """Test that cancelling non-existent auto-confirm doesn't raise error."""
+    scheduler.start()
+
+    await appointment_scheduler.cancel_auto_confirm(999)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_appointment_without_id_auto_confirm_not_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that appointments without ID are not scheduled for auto-confirm."""
+    scheduler.start()
+
+    sample_appointment.id = None
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_schedule_auto_confirm_skips_if_not_pending(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that auto-confirm is not scheduled for a non-PENDING appointment."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_schedule_auto_confirm_skips_if_not_admin_created(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that auto-confirm is never scheduled for a client self-booking
+    request, even while it is still PENDING. Only admin-created appointments
+    are locked in automatically."""
+    scheduler.start()
+
+    sample_appointment.created_by = CreatedBy.CLIENT
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_auto_confirm_not_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """When the auto-confirm time (2h before appointment) is already in the
+    past, no job should be scheduled."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(hours=1)).isoformat()
+
+    await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_auto_confirm_scheduling_does_not_call_add_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Regression test for the past-due guard: add_job must not be invoked
+    when the computed auto-confirm time is already in the past."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(minutes=30)).isoformat()
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.schedule_auto_confirm(sample_appointment)
+
+        mock_add_job.assert_not_called()
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_auto_confirm_pending_job_confirms_if_pending_and_admin_created(
+    mock_appointment_repo, sample_appointment
+):
+    """Test that the auto-confirm job transitions an admin-created PENDING
+    appointment to CONFIRMED."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_confirm_pending_job(sample_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                sample_appointment.id,
+                AppointmentStatus.CONFIRMED,
+                ANY,
+            )
+
+
+@pytest.mark.asyncio
+async def test_auto_confirm_pending_job_skips_if_not_pending(
+    mock_appointment_repo, sample_appointment
+):
+    """Test that the auto-confirm job skips an appointment that is no longer
+    PENDING (e.g. already cancelled by the client before the job fired)."""
+    cancelled_appointment = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CANCELLED,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = cancelled_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_confirm_pending_job(cancelled_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_confirm_pending_job_skips_if_not_admin_created(
+    mock_appointment_repo, sample_appointment
+):
+    """Test that the auto-confirm job never confirms a client self-booking
+    request, even if it is still PENDING when the job fires. This guards
+    against a stray job (e.g. left over from before this guard existed)
+    silently confirming a request the clinic never approved."""
+    client_request = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Test Clinic",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = client_request
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_confirm_pending_job(client_request.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_confirm_pending_job_handles_missing_appointment(
+    mock_appointment_repo,
+):
+    """Test that the auto-confirm job handles the case where the appointment
+    is not found."""
+    mock_appointment_repo.get_appointment_by_id.return_value = None
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            # Should not raise error
+            await auto_confirm_pending_job(999)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()

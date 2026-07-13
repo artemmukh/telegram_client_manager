@@ -319,6 +319,27 @@ class AppointmentNotificationService:
 
         return sent_message.message_id
 
+    async def notify_client_auto_confirmed(self, appointment: Appointment) -> bool:
+        """Notify client that their appointment was auto-confirmed by the system.
+
+        Called 2 hours before the appointment when the admin did not manually
+        confirm a PENDING appointment.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text="✅ Ваша запись подтверждена (автоматически за 2 часа до приема).",
+            reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return True
+
     async def notify_client_pending_request_expired(self, appointment: Appointment) -> bool:
         """Notify client that their unanswered self-booking request has expired.
 

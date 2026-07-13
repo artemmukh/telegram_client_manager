@@ -298,7 +298,7 @@ class AppointmentScheduler:
     async def schedule_pending_expiry(self, appointment: Appointment) -> None:
         """Schedule an expiry job for a client self-booking request.
 
-        Runs at the appointment's requested datetime; if the clinic has not
+        Runs 2 hours before the appointment's requested datetime; if the clinic has not
         responded by then, the request auto-expires.
 
         Job ID: appt_{appointment_id}_expire
@@ -309,12 +309,13 @@ class AppointmentScheduler:
 
         try:
             appointment_dt = datetime.fromisoformat(appointment.datetime)
+            expiry_time = appointment_dt - timedelta(hours=2)
             now = _current_tashkent_time()
 
-            if appointment_dt <= now:
+            if expiry_time <= now:
                 logger.info(
                     f"Skipping past-due pending expiry for appointment {appointment.id} "
-                    f"(would have run at {appointment_dt.isoformat()})"
+                    f"(would have run at {expiry_time.isoformat()})"
                 )
                 return
 
@@ -324,7 +325,7 @@ class AppointmentScheduler:
                 self.scheduler.add_job(
                     expire_pending_request_job,
                     "date",
-                    run_date=appointment_dt,
+                    run_date=expiry_time,
                     args=(appointment.id,),
                     id=job_id,
                     replace_existing=True,
@@ -336,7 +337,7 @@ class AppointmentScheduler:
 
             logger.info(
                 f"Scheduled pending expiry for appointment {appointment.id} "
-                f"at {appointment_dt.isoformat()}"
+                f"at {expiry_time.isoformat()} (2 hours before appointment)"
             )
         except JobSchedulingError as e:
             logger.error(

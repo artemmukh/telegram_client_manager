@@ -63,6 +63,7 @@ def create_admin_booking_requests_router(
 
         if appointment_scheduler:
             await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
+            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
             await appointment_scheduler.schedule_appointment_reminders(appointment)
             await appointment_scheduler.schedule_appointment_completion(appointment)
 
@@ -86,6 +87,7 @@ def create_admin_booking_requests_router(
 
         if appointment_scheduler:
             await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
+            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
 
         if notification_service:
             try:

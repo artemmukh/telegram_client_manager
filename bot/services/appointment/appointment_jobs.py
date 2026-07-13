@@ -202,10 +202,11 @@ async def complete_appointment(
 
 
 async def expire_pending_request_job(appointment_id: int) -> None:
-    """Expire an unanswered client self-booking request once its requested time passes.
+    """Expire an unanswered client self-booking request 2 hours before its requested time.
 
-    This job is called by APScheduler at the appointment's requested datetime
+    This job is called by APScheduler 2 hours before the appointment's requested datetime
     (or, if the clinic proposed a new time, at the proposed datetime).
+    Prevents stale client requests from remaining open during the 2h reminder window.
 
     Args:
         appointment_id: The ID of the appointment/request to expire
@@ -387,6 +388,7 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
         connection = await db.connect()
 
         appointment_repo = AppointmentRepository(connection)
+        user_repo = UserRepository(connection)
 
         appointment = await appointment_repo.get_appointment_by_id(appointment_id)
 
@@ -413,6 +415,23 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
         )
 
         logger.info(f"Appointment {appointment_id} auto-confirmed (2h before)")
+
+        # Notify client about auto-confirmation
+        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+        try:
+            notification_sent = await notification_service.notify_client_auto_confirmed(appointment)
+            if notification_sent:
+                logger.info(f"Auto-confirm notification sent to client for appointment {appointment_id}")
+            else:
+                logger.warning(
+                    f"Failed to send auto-confirm notification for appointment {appointment_id} "
+                    f"(client not found or no telegram_id)"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to send auto-confirm notification for appointment {appointment_id}: {e}"
+            )
 
     except AppointmentNotFoundError:
         logger.warning(f"Auto-confirm job: appointment {appointment_id} not found")

@@ -260,6 +260,9 @@ def create_admin_appointment_creation_router(
             await scheduler.schedule_appointment_completion(appointment)
             notification_text += "\n✅ Автозавершение: через 1ч после приема"
 
+        if scheduler:
+            await scheduler.schedule_auto_confirm(appointment)
+
         await callback_query.message.edit_text(
             notification_text,
             reply_markup=back_to_records_kb(),
