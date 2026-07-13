@@ -371,8 +371,9 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
     """Auto-confirm PENDING appointment 2 hours before it starts.
 
     This job is called by APScheduler 2 hours before the appointment datetime.
-    Transitions PENDING → CONFIRMED to lock in the appointment once cancellation
-    window closes (cutoff is 1h, so 2h gives a buffer).
+    Transitions PENDING → CONFIRMED to default an unanswered admin-created
+    appointment. Fires 2h before (after the 2h reminder is sent, but before the
+    1h cancellation cutoff window closes).
 
     Args:
         appointment_id: The ID of the appointment to auto-confirm
@@ -397,6 +398,13 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
             logger.info(
                 f"Auto-confirm job: skipping appointment {appointment_id} "
                 f"with status {appointment.status.value}"
+            )
+            return
+
+        if appointment.created_by != CreatedBy.ADMIN:
+            logger.info(
+                f"Auto-confirm job: skipping appointment {appointment_id} "
+                f"created by {appointment.created_by.value}"
             )
             return
 
