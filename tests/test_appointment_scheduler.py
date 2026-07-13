@@ -1410,10 +1410,10 @@ async def test_pending_expiry_job_id_correct(
 async def test_pending_expiry_time_calculated_correctly(
     appointment_scheduler, scheduler, sample_appointment
 ):
-    """Test that pending expiry runs at the appointment's requested datetime."""
+    """Test that pending expiry runs 2 hours before the appointment's requested datetime."""
     scheduler.start()
 
-    expected_expiry_time = datetime.fromisoformat(sample_appointment.datetime)
+    expected_expiry_time = datetime.fromisoformat(sample_appointment.datetime) - timedelta(hours=2)
 
     await appointment_scheduler.schedule_pending_expiry(sample_appointment)
 
