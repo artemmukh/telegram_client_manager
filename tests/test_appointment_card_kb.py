@@ -49,12 +49,15 @@ def _back_cb(mode, page, tab):
     return ApptPageCB(mode=mode, page=page, tab=tab).pack()
 
 
-def test_pending_shows_all_four_status_buttons_and_service_and_time():
+def test_pending_shows_two_status_buttons_and_service_and_time():
     markup = appointment_card_kb(1, "list", 1, status=AppointmentStatus.PENDING, tab="pending")
     callback_datas = _callback_datas(markup)
 
-    for status_value in ("confirmed", "cancelled", "completed", "no_show"):
+    for status_value in ("confirmed", "cancelled"):
         assert _status_cb(1, "list", 1, status_value) in callback_datas
+
+    assert _status_cb(1, "list", 1, "completed") not in callback_datas
+    assert _status_cb(1, "list", 1, "no_show") not in callback_datas
 
     assert _action_cb("edit_purpose", 1, "list", 1) in callback_datas
     assert _action_cb("edit_datetime", 1, "list", 1) in callback_datas

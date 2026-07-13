@@ -21,6 +21,11 @@ _STATUS_ACTION_BUTTONS = [
     (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
 ]
 
+_PENDING_ACTION_BUTTONS = [
+    (AppointmentStatus.CONFIRMED, "✅ Подтвердить"),
+    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
+]
+
 _POST_APPT_STATUS_BUTTONS = [
     (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
     (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
@@ -182,7 +187,9 @@ def appointment_card_kb(
 
     status_buttons_added = 0
     if status in _STATUS_EDITABLE_STATUSES:
-        for button_status, text in _STATUS_ACTION_BUTTONS:
+        action_buttons = _PENDING_ACTION_BUTTONS if status == AppointmentStatus.PENDING else _STATUS_ACTION_BUTTONS
+
+        for button_status, text in action_buttons:
             if button_status == status:
                 continue
 
@@ -195,7 +202,7 @@ def appointment_card_kb(
             )
             status_buttons_added += 1
 
-        rows += [2, 2] if status_buttons_added == 4 else [2, 1]
+        rows += [2, 2] if status_buttons_added == 4 else [2] if status_buttons_added == 2 else [2, 1]
 
     editing_buttons_added = 0
     if status in _TIME_EDITABLE_STATUSES:

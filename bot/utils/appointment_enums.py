@@ -38,6 +38,6 @@ APPOINTMENT_TAB_LABELS = {
     AppointmentStatus.PENDING: "🕐 Ожидание",
     AppointmentStatus.CANCELLED: "❌ Отменённые",
     AppointmentStatus.NO_SHOW: "🙅 Неявка",
-    AppointmentStatus.COMPLETED: "Завершённые",
+    AppointmentStatus.COMPLETED: "✔️ Завершённые",
     AppointmentStatus.EXPIRED: "⏳ Истёкшие",
 }
