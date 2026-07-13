@@ -204,9 +204,10 @@ async def complete_appointment(
 async def expire_pending_request_job(appointment_id: int) -> None:
     """Expire an unanswered client self-booking request 2 hours before its requested time.
 
-    This job is called by APScheduler 2 hours before the appointment's requested datetime
-    (or, if the clinic proposed a new time, at the proposed datetime).
+    This job is called by APScheduler 2 hours before the appointment's requested datetime.
     Prevents stale client requests from remaining open during the 2h reminder window.
+
+    Note: For proposed/rescheduled times, see expire_reschedule_request_job().
 
     Args:
         appointment_id: The ID of the appointment/request to expire
