@@ -1,4 +1,4 @@
-import re
+﻿import re
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPriceError, InvalidPurposeError
@@ -24,7 +24,7 @@ SEARCH_NAME_PATTERN = re.compile(
 def validate_full_name(full_name: str, pattern) -> str:
     if not pattern.fullmatch(full_name.strip()):
         raise InvalidFullNameError(
-            "Введите ФИО корректно.\n\n"
+            "Введите ФИ корректно.\n\n"
             "Например:\n"
             "Иван, Иван Иванов, Иван Иванов Иванович."
         )
@@ -58,7 +58,7 @@ async def validate_phone_available(
 
 def validate_fields_filled(data):
     if "full_name" not in data:
-        raise ValidationError("ФИО отсутствует.")
+        raise ValidationError("ФИ отсутствует.")
 
     if "phone" not in data:
         raise ValidationError("Телефон отсутствует.")

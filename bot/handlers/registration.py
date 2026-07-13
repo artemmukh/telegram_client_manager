@@ -1,4 +1,4 @@
-from aiogram import Router, F
+﻿from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
@@ -98,7 +98,7 @@ def create_reg_router(
 
         await state.set_state(RegisterStates.full_name)
         await message.answer(
-            "👤 Введите ваше настоящее ФИО.\n\n"
+            "👤 Введите ваше настоящее ФИ.\n\n"
             "Пожалуйста, используйте реальные данные.\n"
             "Они будут отображаться врачу во время записи на приём."
         )
@@ -127,7 +127,7 @@ def create_reg_router(
         await state.set_state(RegisterStates.full_name)
         await callback.answer('')
         await callback.message.answer(
-            "👤 Введите ваше настоящее ФИО.\n\n"
+            "👤 Введите ваше настоящее ФИ.\n\n"
             "Пожалуйста, используйте реальные данные.\n"
             "Они будут отображаться врачу во время записи на приём."
         )

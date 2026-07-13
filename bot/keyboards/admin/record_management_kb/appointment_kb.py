@@ -1,11 +1,11 @@
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+﻿from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def client_creation_confirm_kb():
     builder = InlineKeyboardBuilder()
 
     builder.button(text="✅ Подтвердить", callback_data="confirm_client_creation")
-    builder.button(text="📝 Изменить ФИО", callback_data="edit_client_name_in_appointment")
+    builder.button(text="📝 Изменить ФИ", callback_data="edit_client_name_in_appointment")
     builder.button(text="📲 Изменить номер", callback_data="edit_client_phone_in_appointment")
     builder.button(text="❌ Отменить", callback_data="back_to_main_records")
 

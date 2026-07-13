@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup
+﻿from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.keyboards.admin.client_management_kb.client_browser_cb import (
@@ -12,7 +12,7 @@ from bot.utils.pagination import get_circular_page
 
 
 def client_browser_back_to_search_kb() -> InlineKeyboardMarkup:
-    """Единственная кнопка "к меню поиска" - для экранов ввода (ФИО/телефон)."""
+    """Единственная кнопка "к меню поиска" - для экранов ввода (ФИ/телефон)."""
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ К меню поиска", callback_data="browse_clients")
     return builder.as_markup()
@@ -44,7 +44,7 @@ def client_browser_confirm_name_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(text="✅ Подтвердить", callback_data="cl_approve_search")
-    builder.button(text="📝 Изменить ФИО", callback_data="cl_edit_search_name")
+    builder.button(text="📝 Изменить ФИ", callback_data="cl_edit_search_name")
     builder.button(text="⬅️ К меню поиска", callback_data="browse_clients")
 
     builder.adjust(1, 1, 1)
@@ -107,7 +107,7 @@ def client_card_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✏️ Изменить ФИО",
+        text="✏️ Изменить ФИ",
         callback_data=ClientActionCB(action="edit_name", client_id=client_id, mode=mode, page=page).pack(),
     )
     builder.button(

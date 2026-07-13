@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup
+﻿from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import build_appointment_button_text
@@ -38,7 +38,7 @@ _TIME_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRME
 
 
 def appointment_browser_back_to_search_kb() -> InlineKeyboardMarkup:
-    """Единственная кнопка "к меню поиска" - для экранов ввода (ФИО/телефон)."""
+    """Единственная кнопка "к меню поиска" - для экранов ввода (ФИ/телефон)."""
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
     return builder.as_markup()
@@ -74,7 +74,7 @@ def appointment_browser_confirm_name_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(text="✅ Подтвердить", callback_data="appt_approve_search")
-    builder.button(text="📝 Изменить ФИО", callback_data="appt_edit_search_name")
+    builder.button(text="📝 Изменить ФИ", callback_data="appt_edit_search_name")
     builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
 
     builder.adjust(1, 1, 1)

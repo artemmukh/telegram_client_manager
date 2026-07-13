@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -285,7 +285,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
         await message.delete()
         await edit_tracked_message(
             message.bot, state,
-            text=build_client_text("Новое ФИО:", {"full_name": data["full_name"]}),
+            text=build_client_text("Новое ФИ:", {"full_name": data["full_name"]}),
             reply_markup=client_confirm_new_name_kb(data["client_id"], data["mode"], data["page"]),
         )
 

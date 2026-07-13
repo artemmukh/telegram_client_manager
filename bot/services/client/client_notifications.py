@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
@@ -21,7 +21,7 @@ class ClientNotificationService:
         during registration. Never raises: a failed delivery to one admin must
         not block delivery to the others."""
         message_text = (
-            "ℹ️ Клиент изменил ФИО при регистрации.\n"
+            "ℹ️ Клиент изменил ФИ при регистрации.\n"
             f"Было: {stored_name}\n"
             f"Стало: {new_name}\n"
             f"Телефон: {client_phone}"
@@ -50,9 +50,9 @@ class ClientNotificationService:
         name-change request. Never raises: a failed delivery to one admin must
         not block delivery to the others."""
         message_text = (
-            "✏️ Клиент запросил изменение ФИО\n\n"
-            f"Текущее ФИО: {user.full_name}\n"
-            f"Новое ФИО: {new_full_name}\n"
+            "✏️ Клиент запросил изменение ФИ\n\n"
+            f"Текущее ФИ: {user.full_name}\n"
+            f"Новое ФИ: {new_full_name}\n"
             f"Телефон: {user.phone}"
         )
 

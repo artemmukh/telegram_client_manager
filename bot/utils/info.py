@@ -1,4 +1,4 @@
-from aiogram.types import Message
+﻿from aiogram.types import Message
 
 from bot.keyboards.admin.admin_main_menu_kb import start_admin_keyboard
 from bot.keyboards.client.client_main_keyboard import start_client_keyboard
@@ -25,7 +25,7 @@ async def display_admin_help_msg(message: Message):
             "/client_managing:\n\n"
             "  1. Добавить клиента.\n"
             "  2. Клиенты - поиск по имени или номеру телефона, либо список "
-            "всех клиентов; в карточке клиента доступны изменение ФИО/телефона "
+            "всех клиентов; в карточке клиента доступны изменение ФИ/телефона "
             "и удаление.\n\n\n"
             "/record_managing:\n\n"
             "  1. Создать запись.\n"

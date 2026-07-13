@@ -1,11 +1,11 @@
-from aiogram.fsm.context import FSMContext
+﻿from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.admin.client_management_kb.client_main_menu_kb import back_to_menu_kb
 
 FIELDS = {
     "user_id": "ID клиента",
-    "full_name": "ФИО",
+    "full_name": "ФИ",
     "phone": "Телефон",
     "clinic_name": "Клиника"
 }

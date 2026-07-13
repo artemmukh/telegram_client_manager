@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -176,7 +176,7 @@ def create_admin_appointment_browser_router(
             await render_list(callback_query, state, mode="search", page=1, tab="confirmed")
             return
 
-        await callback_query.answer("Укажите телефон или ФИО для поиска.", show_alert=True)
+        await callback_query.answer("Укажите телефон или ФИ для поиска.", show_alert=True)
 
     # --- Pagination ---
 

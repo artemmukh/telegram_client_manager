@@ -1,4 +1,4 @@
-from collections.abc import Callable, Awaitable
+﻿from collections.abc import Callable, Awaitable
 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
@@ -12,7 +12,7 @@ async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: 
     await state.set_state(next_state)
     await callback.answer('')
     await callback.message.edit_text(
-        "Введите ФИО:",
+        "Введите ФИ:",
         reply_markup=reply_markup
     )
 
@@ -66,7 +66,7 @@ async def edit_full_name(callback: CallbackQuery, state: FSMContext, edit_state:
     await state.set_state(edit_state)
     await callback.answer('')
     await callback.message.edit_text(
-        "Введите новое ФИО:",
+        "Введите новое ФИ:",
         reply_markup=reply_markup
     )
 

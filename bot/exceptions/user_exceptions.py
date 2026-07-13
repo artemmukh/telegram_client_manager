@@ -1,4 +1,4 @@
-from bot.exceptions.exceptions import BotException
+﻿from bot.exceptions.exceptions import BotException
 
 class ValidationError(BotException):
     """Некорректный ввод."""
@@ -28,7 +28,7 @@ class SamePhoneError(ValidationError):
 
 
 class InvalidFullNameError(ValidationError):
-    """Некорректное ФИО."""
+    """Некорректное ФИ."""
     pass
 
 

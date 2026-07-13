@@ -1,4 +1,4 @@
-from aiogram import F, Router
+﻿from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
@@ -31,7 +31,7 @@ def create_profile_router(client_management_service: ClientManagement = None):
 
         return (
             "Профиль\n\n"
-            f"ФИО: {user.full_name}\n"
+            f"ФИ: {user.full_name}\n"
             f"ID клиента: {user.ID}\n"
             f"Номер телефона: {user.phone}\n"
             f"Тип пользователя: {role}\n"

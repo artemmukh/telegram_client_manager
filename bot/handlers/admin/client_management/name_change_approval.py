@@ -1,4 +1,4 @@
-from aiogram import F, Router
+﻿from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
 
@@ -31,12 +31,12 @@ def create_admin_name_change_router(user_repo, staff_repo, clinic_repo) -> Route
             return
 
         await callback_query.answer('')
-        await callback_query.message.edit_text(f"✅ ФИО обновлено: {user.full_name}")
+        await callback_query.message.edit_text(f"✅ ФИ обновлено: {user.full_name}")
 
         if user.telegram_user_id is not None:
             await callback_query.bot.send_message(
                 chat_id=user.telegram_user_id,
-                text=f"✅ Ваш запрос на смену ФИО одобрен.\nНовое ФИО: {user.full_name}",
+                text=f"✅ Ваш запрос на смену ФИ одобрен.\nНовое ФИ: {user.full_name}",
             )
 
     @router.callback_query(NameChangeApprovalCB.filter(F.action == "reject"))
@@ -48,12 +48,12 @@ def create_admin_name_change_router(user_repo, staff_repo, clinic_repo) -> Route
             return
 
         await callback_query.answer('')
-        await callback_query.message.edit_text("❌ Запрос на смену ФИО отклонён.")
+        await callback_query.message.edit_text("❌ Запрос на смену ФИ отклонён.")
 
         if user.telegram_user_id is not None:
             await callback_query.bot.send_message(
                 chat_id=user.telegram_user_id,
-                text="❌ Ваш запрос на смену ФИО отклонён администратором.",
+                text="❌ Ваш запрос на смену ФИ отклонён администратором.",
             )
 
     return router

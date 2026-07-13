@@ -1,4 +1,4 @@
-from aiogram import F, Router
+﻿from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -31,7 +31,7 @@ def create_name_change_request_router(
         await state.set_state(NameChangeStates.entering_name)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            "👤 Введите ваше новое ФИО.\n\n"
+            "👤 Введите ваше новое ФИ.\n\n"
             "Пожалуйста, используйте реальные данные.\n"
             "Они будут отображаться врачу во время записи на приём.",
             reply_markup=_BACK_TO_PROFILE_KB,
@@ -56,7 +56,7 @@ def create_name_change_request_router(
             user, new_full_name, reply_markup=name_change_approval_kb(user.ID),
         )
 
-        await message.answer("✅ Запрос на смену ФИО отправлен администратору клиники. Ожидайте решения.")
+        await message.answer("✅ Запрос на смену ФИ отправлен администратору клиники. Ожидайте решения.")
         await state.clear()
 
     return router
