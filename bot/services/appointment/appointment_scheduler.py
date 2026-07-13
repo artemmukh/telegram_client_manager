@@ -19,8 +19,10 @@ from bot.services.appointment.appointment_jobs import (
     complete_appointment,
     expire_pending_request_job,
     expire_reschedule_request_job,
+    auto_confirm_pending_job,
 )
 from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,11 @@ class AppointmentScheduler:
                        f"with status {appointment.status.value}")
             return
 
+        if appointment.created_by != CreatedBy.ADMIN:
+            logger.info(f"Skipping auto-confirm for appointment {appointment.id} "
+                       f"created by {appointment.created_by.value}")
+            return
+
         try:
             appointment_dt = datetime.fromisoformat(appointment.datetime)
             autoconf_time = appointment_dt - timedelta(hours=2)
@@ -218,8 +225,6 @@ class AppointmentScheduler:
             job_id = f"appt_{appointment.id}_autoconf"
 
             try:
-                from bot.services.appointment.appointment_jobs import auto_confirm_pending_job
-
                 self.scheduler.add_job(
                     auto_confirm_pending_job,
                     "date",
