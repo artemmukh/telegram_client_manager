@@ -365,3 +365,51 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
     finally:
         if connection is not None:
             await connection.close()
+
+
+async def auto_confirm_pending_job(appointment_id: int) -> None:
+    """Auto-confirm PENDING appointment 2 hours before it starts.
+
+    This job is called by APScheduler 2 hours before the appointment datetime.
+    Transitions PENDING → CONFIRMED to lock in the appointment once cancellation
+    window closes (cutoff is 1h, so 2h gives a buffer).
+
+    Args:
+        appointment_id: The ID of the appointment to auto-confirm
+    """
+    connection = None
+    try:
+        bot = get_bot()
+        config = load_config()
+
+        db = Database(config.database_path)
+        connection = await db.connect()
+
+        appointment_repo = AppointmentRepository(connection)
+
+        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+
+        if appointment is None:
+            logger.warning(f"Auto-confirm job: appointment {appointment_id} not found")
+            return
+
+        if appointment.status != AppointmentStatus.PENDING:
+            logger.info(
+                f"Auto-confirm job: skipping appointment {appointment_id} "
+                f"with status {appointment.status.value}"
+            )
+            return
+
+        await appointment_repo.update_appointment_status(
+            appointment_id, AppointmentStatus.CONFIRMED, get_current_tashkent_time()
+        )
+
+        logger.info(f"Appointment {appointment_id} auto-confirmed (2h before)")
+
+    except AppointmentNotFoundError:
+        logger.warning(f"Auto-confirm job: appointment {appointment_id} not found")
+    except Exception as e:
+        logger.exception(f"Error in auto_confirm_pending_job({appointment_id}): {e}")
+    finally:
+        if connection is not None:
+            await connection.close()

@@ -187,6 +187,61 @@ class AppointmentScheduler:
                 f"Failed to schedule completion for appointment {appointment.id}: {e}"
             )
 
+    async def schedule_auto_confirm(self, appointment: Appointment) -> None:
+        """Schedule auto-confirm job for a PENDING appointment.
+
+        Creates a scheduled job that runs 2 hours before appointment datetime
+        to automatically confirm PENDING appointments (after cancellation cutoff closes).
+
+        Job ID: appt_{appointment_id}_autoconf
+        """
+        if not appointment.id:
+            logger.warning("Cannot schedule auto-confirm for appointment without ID")
+            return
+
+        if appointment.status != AppointmentStatus.PENDING:
+            logger.info(f"Skipping auto-confirm for appointment {appointment.id} "
+                       f"with status {appointment.status.value}")
+            return
+
+        try:
+            appointment_dt = datetime.fromisoformat(appointment.datetime)
+            autoconf_time = appointment_dt - timedelta(hours=2)
+
+            if autoconf_time <= _current_tashkent_time():
+                logger.info(
+                    f"Skipping past-due auto-confirm for appointment {appointment.id} "
+                    f"(would have run at {autoconf_time.isoformat()})"
+                )
+                return
+
+            job_id = f"appt_{appointment.id}_autoconf"
+
+            try:
+                from bot.services.appointment.appointment_jobs import auto_confirm_pending_job
+
+                self.scheduler.add_job(
+                    auto_confirm_pending_job,
+                    "date",
+                    run_date=autoconf_time,
+                    args=(appointment.id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule auto-confirm job {job_id}: {exc}"
+                ) from exc
+
+            logger.info(
+                f"Scheduled auto-confirm for appointment {appointment.id} "
+                f"at {autoconf_time.isoformat()}"
+            )
+        except JobSchedulingError as e:
+            logger.error(
+                f"Failed to schedule auto-confirm for appointment {appointment.id}: {e}"
+            )
+
     async def cancel_appointment_completions(self, appointment_id: int) -> None:
         """Cancel completion job for an appointment.
 
@@ -209,6 +264,30 @@ class AppointmentScheduler:
         except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel completion for appointment {appointment_id}: {e}"
+            )
+
+    async def cancel_auto_confirm(self, appointment_id: int) -> None:
+        """Cancel auto-confirm job for an appointment.
+
+        Removes job with ID: appt_{appointment_id}_autoconf
+        """
+        from apscheduler.jobstores.base import JobLookupError
+
+        try:
+            job_id = f"appt_{appointment_id}_autoconf"
+
+            try:
+                self.scheduler.remove_job(job_id)
+                logger.info(f"Cancelled auto-confirm job: {job_id}")
+            except JobLookupError:
+                logger.debug(f"Auto-confirm job {job_id} does not exist (already ran or cancelled)")
+            except Exception as exc:
+                raise JobCancellationError(
+                    f"Failed to remove auto-confirm job {job_id}: {exc}"
+                ) from exc
+        except JobCancellationError as e:
+            logger.error(
+                f"Failed to cancel auto-confirm for appointment {appointment_id}: {e}"
             )
 
     async def schedule_pending_expiry(self, appointment: Appointment) -> None:
