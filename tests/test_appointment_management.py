@@ -626,9 +626,9 @@ async def test_confirm_appointment_by_client_raises_when_no_show():
 
 
 @pytest.mark.asyncio
-async def test_cancel_appointment_by_client_blocked_within_2h_when_cutoff_enforced():
+async def test_cancel_appointment_by_client_blocked_within_1h_when_cutoff_enforced():
     now = get_current_tashkent_datetime()
-    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(hours=1))])
+    appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(minutes=30))])
     client = _owning_client()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
@@ -650,7 +650,7 @@ async def test_cancel_appointment_by_client_blocked_for_past_appointment_when_cu
 
 
 @pytest.mark.asyncio
-async def test_cancel_appointment_by_client_allowed_outside_2h_window():
+async def test_cancel_appointment_by_client_allowed_outside_1h_window():
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository([_appointment_at(1, now + timedelta(hours=3))])
     client = _owning_client()
@@ -1112,7 +1112,7 @@ async def test_request_reschedule_by_client_raises_when_new_time_within_cutoff()
     client = _owning_client()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
-    new_dt = (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")
+    new_dt = (now + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M")
     with pytest.raises(CancellationWindowExpiredError):
         await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
 

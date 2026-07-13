@@ -42,7 +42,6 @@ from bot.services.appointment.appointment_pagination_service import AppointmentP
 from bot.services.utils.date_parser import get_current_tashkent_datetime, is_appointment_upcoming
 from bot.states.client.appointment_states import AppointmentResponseStates
 from bot.utils.appointment_enums import (
-    APPOINTMENT_STATUS_LABELS,
     APPOINTMENT_TAB_LABELS,
     APPOINTMENT_TAB_ORDER,
     AppointmentStatus,
@@ -52,7 +51,7 @@ from bot.utils.role import RoleFilter
 logger = logging.getLogger(__name__)
 
 _HISTORY_TAB_TITLES = {
-    status.value: f"{APPOINTMENT_STATUS_LABELS[status].split()[0]} {APPOINTMENT_TAB_LABELS[status]}"
+    status.value: APPOINTMENT_TAB_LABELS[status]
     for status in APPOINTMENT_TAB_ORDER
 }
 
@@ -433,7 +432,7 @@ def create_client_appointment_router(
                 data = await state.get_data()
                 appointment_id = data.get("appointment_id")
 
-                # Update status to CANCELLED (2h cutoff does not apply to the
+                # Update status to CANCELLED (1h cutoff does not apply to the
                 # reminder-triggered flow)
                 appointment = await appointment_management_service.cancel_appointment_by_client(
                     appointment_id, callback_query.from_user.id, enforce_cutoff=False

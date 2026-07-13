@@ -23,7 +23,7 @@ class PendingRequestLimitExceededError(ValidationError):
 
 
 class CancellationWindowExpiredError(ValidationError):
-    """Отмена записи менее чем за 2 часа до приёма."""
+    """Отмена записи менее чем за 1 час до приёма."""
     pass
 
 

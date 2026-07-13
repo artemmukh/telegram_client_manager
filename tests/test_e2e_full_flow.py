@@ -330,7 +330,7 @@ async def test_appointment_lifecycle_admin_created_confirm_reschedule_cancel(e2e
     assert reschedule_accepted.datetime == client_proposed_time
     assert reschedule_accepted.proposed_datetime is None
 
-    # Cancellation by the client, well outside the 2h cutoff window.
+    # Cancellation by the client, well outside the 1h cutoff window.
     cancelled = await e2e.appointment_management.cancel_appointment_by_client(appointment.id, client.telegram_user_id)
     assert cancelled.status is AppointmentStatus.CANCELLED
 

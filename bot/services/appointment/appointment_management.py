@@ -25,7 +25,7 @@ from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
 
-CANCELLATION_CUTOFF_HOURS = 2
+CANCELLATION_CUTOFF_HOURS = 1
 
 
 class AppointmentManagement:
@@ -249,7 +249,7 @@ class AppointmentManagement:
 
         if enforce_cutoff and self._is_within_cancellation_cutoff(appointment):
             raise CancellationWindowExpiredError(
-                "Отмена возможна не позднее чем за 2 часа, свяжитесь с клиникой"
+                "Отмена возможна не позднее чем за 1 час, свяжитесь с клиникой"
             )
 
         if appointment.proposed_datetime is not None:
@@ -362,7 +362,7 @@ class AppointmentManagement:
 
         if self._is_new_datetime_within_cutoff(validated):
             raise CancellationWindowExpiredError(
-                "Новое время должно быть не менее чем через 2 часа от текущего момента, "
+                "Новое время должно быть не менее чем через 1 час от текущего момента, "
                 "свяжитесь с клиникой."
             )
 
