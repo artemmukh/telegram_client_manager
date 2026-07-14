@@ -7,13 +7,20 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name, full_name_processing
 
 )
-from bot.keyboards.utils.utils_kb import cancel_kb, contact_keyboard, reg_confirm_kb, reg_name_conflict_kb
+from bot.keyboards.utils.utils_kb import (
+    cancel_kb,
+    contact_keyboard,
+    reg_confirm_kb,
+    reg_guide_kb,
+    reg_name_conflict_kb,
+)
 
 from bot.services.client.client_notifications import ClientNotificationService
 from bot.services.utils.auth import AuthService
 from bot.services.utils.registration import RegistrationService
 from bot.states.register_states import RegisterStates
 from bot.utils.info import (
+    display_registration_guide_msg,
     show_main_admin_menu,
     show_main_client_menu,
 )
@@ -58,9 +65,14 @@ def create_reg_router(
             clinic_name=clinic.name,
         )
 
-        await message.answer("Пройдите регистрацию для дальнейшего взаимодействия.")
+        await message.answer("Пройдите регистрацию для дальнейшего взаимодействия.", reply_markup=reg_guide_kb())
         await state.set_state(RegisterStates.phone)
         await message.answer("Отправьте ваш контакт: ", reply_markup=contact_keyboard())
+
+    @router.callback_query(F.data == "reg_guide")
+    async def show_registration_guide(callback: CallbackQuery) -> None:
+        await display_registration_guide_msg(callback.message)
+        await callback.answer()
 
     # ---------- registration ----------
 

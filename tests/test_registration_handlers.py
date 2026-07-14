@@ -393,6 +393,45 @@ async def test_final_reg_existing_user_no_conflict_then_edit_saves_edited_name_w
 
 
 @pytest.mark.asyncio
+async def test_start_guest_with_valid_token_sends_guide_prompt_with_reg_guide_button(
+        fsm_context, notification_service):
+    clinic = Clinic(name="Клиника Тест", token="abc123", clinic_id=1)
+    clinic_repo = FakeClinicRepository(clinics=[clinic])
+    router, _ = _build_router(
+        existing_clients=[], notification_service=notification_service, clinic_repo=clinic_repo,
+    )
+    start_guest = _get_handler(router.message, "start_guest")
+
+    message = _message()
+
+    await start_guest(message, fsm_context, _command(args="abc123"))
+
+    guide_call = next(
+        call for call in message.answer.call_args_list
+        if call.args and "Пройдите регистрацию" in call.args[0]
+    )
+    reply_markup = guide_call.kwargs["reply_markup"]
+    assert reply_markup.inline_keyboard[0][0].callback_data == "reg_guide"
+
+
+@pytest.mark.asyncio
+async def test_show_registration_guide_sends_contact_button_instructions(notification_service):
+    router, _ = _build_router(existing_clients=[], notification_service=notification_service)
+    show_registration_guide = _get_handler(router.callback_query, "show_registration_guide")
+
+    callback = _callback(data="reg_guide")
+
+    await show_registration_guide(callback)
+
+    callback.message.answer.assert_awaited_once()
+    sent_text = callback.message.answer.call_args.args[0]
+    assert "📱 Отправить контакт" in sent_text
+    assert "вручную" in sent_text.lower()
+    assert "нельзя" in sent_text.lower()
+    callback.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_rescanning_qr_clears_stale_fsm_data_before_new_registration(
         fsm_context, existing_client, notification_service):
     clinic = Clinic(name="Клиника Тест", token="abc123", clinic_id=1)

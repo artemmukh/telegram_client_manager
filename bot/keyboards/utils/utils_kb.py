@@ -20,6 +20,12 @@ def reg_confirm_kb():
     one_time_keyboard=True)
 
 
+def reg_guide_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❓ Как пройти рег", callback_data="reg_guide")]
+    ])
+
+
 def reg_name_conflict_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да", callback_data="reg_name_conflict_yes")],

@@ -6,7 +6,7 @@ def start_client_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="📋 Управление записями")],
             [KeyboardButton(text="👤 Профиль"),
-             KeyboardButton(text="❓ Справка")],
+             KeyboardButton(text="❓ Помощь")],
              [KeyboardButton(text="📋 Прайс-лист"),
               KeyboardButton(text="📍 Локация")],
         ],
