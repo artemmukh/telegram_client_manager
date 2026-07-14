@@ -3,7 +3,11 @@ from datetime import datetime
 import pytz
 
 from bot.models.appointment import Appointment
-from bot.services.utils.date_parser import get_current_tashkent_datetime, is_appointment_upcoming
+from bot.services.utils.date_parser import (
+    format_appointment_card_datetime,
+    get_current_tashkent_datetime,
+    is_appointment_upcoming,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 
@@ -19,6 +23,18 @@ def test_get_current_tashkent_datetime_is_close_to_real_now():
     real_now = datetime.now(pytz.timezone("Asia/Tashkent")).replace(tzinfo=None)
 
     assert abs((result - real_now).total_seconds()) < 5
+
+
+def test_format_appointment_card_datetime_formats_with_seconds():
+    assert format_appointment_card_datetime("2026-07-16 14:30:00") == "16.07.2026 14:30"
+
+
+def test_format_appointment_card_datetime_formats_without_seconds():
+    assert format_appointment_card_datetime("2026-07-16 14:30") == "16.07.2026 14:30"
+
+
+def test_format_appointment_card_datetime_falls_back_to_raw_value_when_unparseable():
+    assert format_appointment_card_datetime("not-a-real-datetime") == "not-a-real-datetime"
 
 
 def _appointment(**overrides):

@@ -76,6 +76,20 @@ def format_datetime_for_display(dt: datetime) -> str:
     return f"{dt.day} {month_name} {dt.year}, {dt.hour:02d}:{dt.minute:02d}"
 
 
+def format_appointment_card_datetime(appointment_time: str) -> str:
+    """
+    Format a stored appointment datetime for display in the appointment card.
+
+    Example: "2026-07-16 14:30:00" -> "16.07.2026 14:30"
+    """
+    try:
+        dt = datetime.fromisoformat(appointment_time)
+    except ValueError:
+        return appointment_time
+
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
 def format_datetime_for_db(dt: datetime) -> str:
     """
     Format datetime for database storage (strips timezone information).
