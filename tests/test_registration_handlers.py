@@ -133,6 +133,7 @@ def _callback(data=None):
     callback.answer = AsyncMock()
     callback.message = MagicMock()
     callback.message.answer = AsyncMock()
+    callback.message.edit_text = AsyncMock()
     return callback
 
 
@@ -423,8 +424,8 @@ async def test_show_registration_guide_sends_contact_button_instructions(notific
 
     await show_registration_guide(callback)
 
-    callback.message.answer.assert_awaited_once()
-    sent_text = callback.message.answer.call_args.args[0]
+    callback.message.edit_text.assert_awaited_once()
+    sent_text = callback.message.edit_text.call_args.args[0]
     assert "📱 Отправить контакт" in sent_text
     assert "вручную" in sent_text.lower()
     assert "нельзя" in sent_text.lower()

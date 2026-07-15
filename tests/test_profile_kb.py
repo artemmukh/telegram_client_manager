@@ -19,7 +19,7 @@ def test_profile_menu_kb_has_change_name_and_reminder_settings_buttons():
 
     texts_by_callback = {button.callback_data: button.text for button in _all_buttons(markup)}
 
-    assert texts_by_callback["profile_change_name"] == "📝 Изменить ФИО"
+    assert texts_by_callback["profile_change_name"] == "📝 Изменить ФИ"
     assert texts_by_callback["profile_reminder_settings"] == "🔔 Настройки уведомлений"
     assert len(texts_by_callback) == 2
 

@@ -4,6 +4,7 @@ import pytest_asyncio
 
 from bot.exceptions.user_exceptions import UserAlreadyExistsError
 from bot.models.user import User
+from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.role import Role
@@ -11,9 +12,15 @@ from bot.utils.role import Role
 
 @pytest_asyncio.fixture
 async def user_repo(tmp_path):
-    repo = UserRepository(str(tmp_path / "test.db"))
+    connection = await aiosqlite.connect(tmp_path / "test.db")
+    clinic_repo = ClinicRepository(connection)
+    repo = UserRepository(connection)
+    await clinic_repo.init()
     await repo.init()
-    return repo
+
+    yield repo
+
+    await connection.close()
 
 
 @pytest.mark.asyncio
@@ -34,7 +41,7 @@ async def test_user_repository_creates_and_reads_user_by_phone_and_telegram_id(u
     assert by_phone.ID is not None
     assert by_phone.full_name == user.full_name
     assert by_phone.phone == user.phone
-    assert by_phone.role == Role.CLIENT.value
+    assert by_phone.role == Role.CLIENT
     assert by_telegram == by_phone
     assert await user_repo.phone_exists("+998901234567") is True
     assert await user_repo.user_exists(1001) is True
@@ -51,19 +58,20 @@ async def test_user_repository_updates_user(user_repo):
             telegram_user_id=1001,
         )
     )
+    created = await user_repo.get_user_by_telegram_id(1001)
 
     updated = User(
         full_name="\u041f\u0435\u0442\u0440\u043e\u0432 \u041f\u0435\u0442\u0440",
         phone="+998901234568",
         role=Role.ADMIN,
     )
-    await user_repo.update_client(1001, updated)
+    await user_repo.update_client(created.ID, updated)
 
     user = await user_repo.get_user_by_telegram_id(1001)
 
     assert user.full_name == updated.full_name
     assert user.phone == updated.phone
-    assert user.role == Role.ADMIN.value
+    assert user.role == Role.ADMIN
 
 
 @pytest.mark.asyncio
@@ -76,8 +84,9 @@ async def test_user_repository_deletes_user(user_repo):
             telegram_user_id=1001,
         )
     )
+    created = await user_repo.get_user_by_telegram_id(1001)
 
-    await user_repo.delete_client(1001)
+    await user_repo.delete_client(created.ID)
 
     assert await user_repo.get_user_by_telegram_id(1001) is None
     assert await user_repo.user_exists(1001) is False

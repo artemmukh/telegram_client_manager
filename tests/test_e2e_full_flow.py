@@ -430,8 +430,8 @@ async def test_appointment_completion_follow_up_and_pagination_by_tab(e2e):
     await e2e.appointment_management.confirm_appointment_by_client(confirmed_appt.id, client.telegram_user_id)
 
     # Pagination reflects the just-created rows in the correct tabs.
-    pending_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("pending", page=1)
-    confirmed_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("confirmed", page=1)
+    pending_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("pending", page=1, clinic_id=1)
+    confirmed_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("confirmed", page=1, clinic_id=1)
     assert pending_appt.id in {a.id for a in pending_page.items}
     assert confirmed_appt.id in {a.id for a in confirmed_page.items}
     assert confirmed_appt.id not in {a.id for a in pending_page.items}
@@ -447,8 +447,8 @@ async def test_appointment_completion_follow_up_and_pagination_by_tab(e2e):
     finalized = await e2e.appointment_management.update_status(confirmed_appt.id, AppointmentStatus.COMPLETED)
     assert finalized.status is AppointmentStatus.COMPLETED
 
-    completed_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("completed", page=1)
-    confirmed_page_after = await e2e.appointment_pagination.paginate_all_appointments_by_tab("confirmed", page=1)
+    completed_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("completed", page=1, clinic_id=1)
+    confirmed_page_after = await e2e.appointment_pagination.paginate_all_appointments_by_tab("confirmed", page=1, clinic_id=1)
     assert confirmed_appt.id in {a.id for a in completed_page.items}
     assert confirmed_appt.id not in {a.id for a in confirmed_page_after.items}
 
