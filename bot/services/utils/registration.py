@@ -8,6 +8,7 @@ from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 
@@ -103,6 +104,7 @@ class RegistrationService:
             clinic_id=clinic_id,
             role=role,
             telegram_user_id=telegram_user_id,
+            created_at=get_current_tashkent_time(),
         )
 
         await self.user_repository.create_user(user)

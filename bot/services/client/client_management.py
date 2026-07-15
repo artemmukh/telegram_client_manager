@@ -6,6 +6,7 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
@@ -45,6 +46,7 @@ class ClientManagement:
             role=Role.CLIENT,
             clinic_id=clinic.clinic_id,
             clinic_name=clinic.name,
+            created_at=get_current_tashkent_time(),
         )
 
         await self.user_repository.create_user(user)

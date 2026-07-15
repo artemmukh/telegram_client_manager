@@ -15,7 +15,8 @@ SELECT
     u.role,
     u.reminder_24h,
     u.reminder_2h,
-    u.pending_full_name
+    u.pending_full_name,
+    u.created_at
 FROM users u
 LEFT JOIN clinics c
 ON u.clinic_id = c.id
@@ -78,11 +79,12 @@ class UserRepository:
                 INSERT INTO users(
                     telegram_user_id,
                     full_name,
-                    phone,   
+                    phone,
                     clinic_id,
-                    role
+                    role,
+                    created_at
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.telegram_user_id,
@@ -90,6 +92,7 @@ class UserRepository:
                     user.phone,
                     user.clinic_id,
                     user.role.value,
+                    user.created_at,
                 )
             )
             await self.connection.commit()
@@ -262,6 +265,7 @@ class UserRepository:
             reminder_24h=bool(row[7]),
             reminder_2h=bool(row[8]),
             pending_full_name=row[9],
+            created_at=row[10],
         )
 
     async def phone_exists(self, phone: str) -> bool:

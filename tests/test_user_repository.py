@@ -5,6 +5,7 @@ import pytest_asyncio
 from bot.exceptions.user_exceptions import UserAlreadyExistsError
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.role import Role
 
 
@@ -369,5 +370,67 @@ async def test_reminder_columns_migration_backfills_existing_rows():
         user = await user_repo.get_user_by_telegram_id(2002)
         assert user.reminder_24h is True
         assert user.reminder_2h is True
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_user_persists_explicit_tashkent_created_at():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        tashkent_time = get_current_tashkent_time()
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+                created_at=tashkent_time,
+            )
+        )
+
+        by_telegram = await user_repo.get_user_by_telegram_id(1001)
+        by_phone = await user_repo.get_client_by_phone("+998901234567")
+
+        # The stored value must match the explicit Python-side timestamp
+        # exactly, proving create_user() writes it (rather than falling
+        # back to SQLite's CURRENT_TIMESTAMP default, which is UTC).
+        assert by_telegram.created_at == tashkent_time
+        assert by_phone.created_at == tashkent_time
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_user_without_created_at_stores_null_not_sql_default():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234567",
+                role=Role.CLIENT,
+                telegram_user_id=1001,
+            )
+        )
+
+        user = await user_repo.get_user_by_telegram_id(1001)
+
+        # created_at defaults to None on the model, and since the column
+        # is now explicitly listed in the INSERT, SQLite does NOT fall
+        # back to its CURRENT_TIMESTAMP default -- NULL is written as-is.
+        assert user.created_at is None
     finally:
         await connection.close()

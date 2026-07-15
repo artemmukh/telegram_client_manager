@@ -14,5 +14,6 @@ class User:
     reminder_24h: bool = True
     reminder_2h: bool = True
     pending_full_name: str | None = None
+    created_at: str | None = None
 
 
