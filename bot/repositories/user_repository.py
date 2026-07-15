@@ -16,7 +16,8 @@ SELECT
     u.reminder_24h,
     u.reminder_2h,
     u.pending_full_name,
-    u.created_at
+    u.created_at,
+    u.visibility_scope
 FROM users u
 LEFT JOIN clinics c
 ON u.clinic_id = c.id
@@ -39,6 +40,7 @@ class UserRepository:
                 reminder_24h INTEGER DEFAULT 1,
                 reminder_2h INTEGER DEFAULT 1,
                 pending_full_name TEXT DEFAULT NULL,
+                visibility_scope TEXT DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
         """)
@@ -59,6 +61,11 @@ class UserRepository:
         if "pending_full_name" not in columns:
             await self.connection.execute(
                 "ALTER TABLE users ADD COLUMN pending_full_name TEXT DEFAULT NULL"
+            )
+
+        if "visibility_scope" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE users ADD COLUMN visibility_scope TEXT DEFAULT NULL"
             )
 
         await self.connection.commit()
@@ -266,6 +273,7 @@ class UserRepository:
             reminder_2h=bool(row[8]),
             pending_full_name=row[9],
             created_at=row[10],
+            visibility_scope=row[11],
         )
 
     async def phone_exists(self, phone: str) -> bool:

@@ -153,13 +153,17 @@ def create_admin_appointment_browser_router(
     @router.callback_query(F.data == "appt_search_all")
     async def search_all(callback_query: CallbackQuery, state: FSMContext):
         await state.clear()
-        await render_list(callback_query, state, mode="list", page=1, tab="confirmed")
+        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+        await render_list(
+            callback_query, state, mode="list", page=1, tab="confirmed", clinic_id=clinic_id, doctor_id=doctor_id,
+        )
 
     # --- Resolve the search query and show results ---
 
     @router.callback_query(AppointmentBrowserStates.confirm_search, F.data == "appt_approve_search")
     async def approve_search(callback_query: CallbackQuery, state: FSMContext):
         data = await state.get_data()
+        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
 
         if data.get("phone"):
             client = await appt_mng.find_client_by_phone(data["phone"])
@@ -168,12 +172,18 @@ def create_admin_appointment_browser_router(
                 return
 
             await state.update_data(search_data={"client_id": client.ID})
-            await render_list(callback_query, state, mode="phone", page=1, tab="confirmed")
+            await render_list(
+                callback_query, state, mode="phone", page=1, tab="confirmed",
+                clinic_id=clinic_id, doctor_id=doctor_id,
+            )
             return
 
         if data.get("full_name"):
             await state.update_data(search_data={"full_name": data["full_name"]})
-            await render_list(callback_query, state, mode="search", page=1, tab="confirmed")
+            await render_list(
+                callback_query, state, mode="search", page=1, tab="confirmed",
+                clinic_id=clinic_id, doctor_id=doctor_id,
+            )
             return
 
         await callback_query.answer("Укажите телефон или ФИ для поиска.", show_alert=True)
@@ -182,8 +192,10 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptPageCB.filter())
     async def paginate(callback_query: CallbackQuery, callback_data: ApptPageCB, state: FSMContext):
+        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
         await render_list(
             callback_query, state, mode=callback_data.mode, page=callback_data.page, tab=callback_data.tab,
+            clinic_id=clinic_id, doctor_id=doctor_id,
         )
 
     # --- Open an appointment's card ---
@@ -201,6 +213,13 @@ def create_admin_appointment_browser_router(
     @router.callback_query(ApptActionCB.filter(F.action == "set_status"))
     async def set_status(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
         new_status = AppointmentStatus(callback_data.value)
+
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
 
         try:
             appointment = await appt_mng.update_status(callback_data.appointment_id, new_status)
@@ -245,7 +264,7 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "delete"))
     async def start_delete(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
         if appointment is None:
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return
@@ -268,7 +287,7 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "confirm_delete"))
     async def confirm_delete(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
         if appointment is None:
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return
@@ -292,7 +311,10 @@ def create_admin_appointment_browser_router(
     async def finish_delete(
         callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext, *, notify: bool,
     ) -> None:
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
 
         try:
             await appt_mng.delete_appointment(callback_data.appointment_id)
@@ -313,9 +335,11 @@ def create_admin_appointment_browser_router(
                     f"Failed to notify client about deletion for appointment {callback_data.appointment_id}: {e}"
                 )
 
+        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
         await render_list(
             callback_query, state,
             mode=callback_data.mode, page=callback_data.page, prefix="✅ Запись удалена.\n\n",
+            clinic_id=clinic_id, doctor_id=doctor_id,
         )
 
     @router.callback_query(ApptActionCB.filter(F.action == "cancel_edit"))
@@ -330,6 +354,11 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "edit_datetime"))
     async def start_edit_datetime(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         await state.update_data(
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
         )
@@ -379,6 +408,13 @@ def create_admin_appointment_browser_router(
 
         db_datetime = format_datetime_for_db(parsed_dt)
 
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.propose_new_datetime(
                 callback_data.appointment_id, callback_query.from_user.id, db_datetime,
@@ -414,6 +450,11 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "edit_purpose"))
     async def start_edit_purpose(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         await state.update_data(
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
             post_appt=callback_data.post_appt,
@@ -459,6 +500,13 @@ def create_admin_appointment_browser_router(
     async def approve_new_purpose(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
         data = await state.get_data()
 
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.update_purpose(callback_data.appointment_id, data["purpose"])
         except ValidationError as e:
@@ -480,6 +528,11 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "edit_price"))
     async def start_edit_price(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         await state.update_data(
             appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
             post_appt=callback_data.post_appt,
@@ -525,6 +578,13 @@ def create_admin_appointment_browser_router(
     async def approve_new_price(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
         data = await state.get_data()
 
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.update_price(callback_data.appointment_id, data["price"])
         except ValidationError as e:
@@ -544,6 +604,13 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "finish_appointment"))
     async def finish_appointment(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
         except BotException as e:
@@ -582,20 +649,25 @@ def create_admin_appointment_browser_router(
             )
 
     async def render_list(
-        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, tab: str = "", prefix: str = "",
+        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, clinic_id: int,
+        doctor_id: int | None = None, tab: str = "", prefix: str = "",
     ) -> None:
         try:
             tab = tab or "confirmed"
 
             if mode == "list":
-                result = await pagination_service.paginate_all_appointments_by_tab(tab, page)
+                result = await pagination_service.paginate_all_appointments_by_tab(
+                    tab, page, clinic_id, doctor_id
+                )
             else:
                 search_data = None
                 if mode in ("search", "phone"):
                     data = await state.get_data()
                     search_data = data.get("search_data") or {}
 
-                result = await pagination_service.paginate_appointments(mode, page, search_data, tab)
+                result = await pagination_service.paginate_appointments(
+                    mode, page, clinic_id, doctor_id, search_data, tab
+                )
 
             titles = {
                 "list": "📒 Все записи",
@@ -629,7 +701,7 @@ def create_admin_appointment_browser_router(
         callback_query: CallbackQuery, state: FSMContext, *, appointment_id: int, mode: str, page: int, tab: str = "",
         post_appt: bool = False,
     ) -> None:
-        appointment = await appt_mng.get_appointment_by_id(appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(appointment_id, callback_query.from_user.id)
         if appointment is None:
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return

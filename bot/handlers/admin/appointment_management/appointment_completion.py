@@ -20,7 +20,7 @@ def create_admin_completion_router(appointment_repo, user_repo, staff_repo, clin
 
     @router.callback_query(CompletionFollowupCB.filter(F.action == "edit"))
     async def open_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB, state: FSMContext):
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
         if appointment is None:
             await callback_query.answer("Запись не найдена.", show_alert=True)
             return
@@ -36,6 +36,13 @@ def create_admin_completion_router(appointment_repo, user_repo, staff_repo, clin
 
     @router.callback_query(CompletionFollowupCB.filter(F.action == "skip"))
     async def skip_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB):
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
         try:
             await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
         except BotException as e:

@@ -50,6 +50,13 @@ def create_admin_booking_requests_router(
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "confirm"))
     async def confirm_request(callback_query: CallbackQuery, callback_data: BookingRequestActionCB):
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.confirm_pending_request(
                 callback_data.appointment_id, callback_query.from_user.id
@@ -75,6 +82,13 @@ def create_admin_booking_requests_router(
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "reject"))
     async def reject_request(callback_query: CallbackQuery, callback_data: BookingRequestActionCB):
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.reject_pending_request(
                 callback_data.appointment_id, callback_query.from_user.id
@@ -138,7 +152,7 @@ def create_admin_booking_requests_router(
     @router.callback_query(BookingRequestActionCB.filter(F.action == "cancel_propose"))
     async def cancel_propose(callback_query: CallbackQuery, callback_data: BookingRequestActionCB, state: FSMContext):
         await state.clear()
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
         if appointment is None:
             await callback_query.answer("Заявка не найдена.", show_alert=True)
             return
@@ -161,6 +175,13 @@ def create_admin_booking_requests_router(
             return
 
         db_datetime = format_datetime_for_db(parsed_dt)
+
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
 
         try:
             appointment = await appt_mng.propose_new_datetime(

@@ -21,7 +21,14 @@ from bot.handlers.admin.appointment_management.appointment_browser import (
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptActionCB
 from bot.models.appointment import Appointment
+from bot.models.clinic import Clinic
+from bot.models.staff import Staff
+from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.role import Role
+
+
+ADMIN_TELEGRAM_ID = 999
 
 
 class FakeAppointmentRepository:
@@ -46,6 +53,30 @@ class FakeAppointmentRepository:
         self.proposal_message_id_updates.append((appointment_id, message_id))
 
 
+class FakeUserRepo:
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        return User(
+            full_name="Петров Петр",
+            phone="+998907654321",
+            role=Role.ADMIN,
+            telegram_user_id=ADMIN_TELEGRAM_ID,
+            ID=1,
+            clinic_id=1,
+            clinic_name="Зуб Мудрости",
+            visibility_scope="clinic",
+        )
+
+
+class FakeStaffRepo:
+    async def get_staff(self, telegram_user_id):
+        return Staff(telegram_user_id=telegram_user_id, clinic_id=1)
+
+
+class FakeClinicRepo:
+    async def get_clinic_by_id(self, clinic_id):
+        return Clinic(clinic_id=1, name="Зуб Мудрости", token="t")
+
+
 def _confirmed_appointment():
     return Appointment(
         clinic_id=1,
@@ -67,7 +98,7 @@ def _get_approve_new_datetime_handler(router):
 
 def _make_callback_query():
     callback_query = MagicMock()
-    callback_query.from_user.id = 999
+    callback_query.from_user.id = ADMIN_TELEGRAM_ID
     callback_query.message.edit_text = AsyncMock()
     callback_query.answer = AsyncMock()
     return callback_query
@@ -98,7 +129,7 @@ async def test_approve_new_datetime_proposes_instead_of_forcing_and_resyncs_jobs
     notification_service.notify_client_appointment_reschedule_proposed = AsyncMock(return_value=321)
 
     router = create_admin_appointment_browser_router(
-        appt_repo, MagicMock(), MagicMock(), MagicMock(),
+        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     approve_new_datetime = _get_approve_new_datetime_handler(router)

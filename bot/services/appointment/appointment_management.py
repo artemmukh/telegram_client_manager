@@ -73,7 +73,18 @@ class AppointmentManagement:
         if client is None or client.clinic_id is None:
             raise UserNotFoundError("Клиент не найден или не привязан к клинике.")
 
-        return await self.user_repository.get_staff_users_by_clinic_id(client.clinic_id)
+        staff = await self.user_repository.get_staff_users_by_clinic_id(client.clinic_id)
+
+        return [member for member in staff if member.visibility_scope != "clinic"]
+
+    async def resolve_admin_appointment_filter(self, admin_telegram_id: int) -> tuple[int, int | None]:
+        clinic = await self.get_admin_clinic(admin_telegram_id)
+        admin_user = await self.user_repository.get_user_by_telegram_id(admin_telegram_id)
+
+        if admin_user is None or admin_user.visibility_scope in (None, "own"):
+            return clinic.clinic_id, admin_user.ID if admin_user else None
+
+        return clinic.clinic_id, None
 
     async def create_self_booking(self, client_telegram_id: int, data: dict) -> Appointment:
         client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
@@ -175,7 +186,9 @@ class AppointmentManagement:
             if client is None:
                 raise UserNotFoundError("Клиент не был найден.")
 
-            appointments = await self.appointment_repository.get_appointments_by_client_id(client.ID)
+            appointments = await self.appointment_repository.get_appointments_by_client_id(
+                client.ID, client.clinic_id
+            )
             if not appointments:
                 raise AppointmentNotFoundError("У клиента нет записей.")
 
@@ -189,7 +202,9 @@ class AppointmentManagement:
                 raise UserNotFoundError("Клиент не был найден.")
 
             client_ids = [client.ID for client in clients]
-            appointments = await self.appointment_repository.get_appointments_by_client_ids(client_ids)
+            appointments = await self.appointment_repository.get_appointments_by_client_ids(
+                client_ids, clients[0].clinic_id
+            )
 
             if not appointments:
                 raise AppointmentNotFoundError("У найденных клиентов нет записей.")
@@ -215,6 +230,30 @@ class AppointmentManagement:
 
         client = await self.user_repository.get_user_by_telegram_id(telegram_user_id)
         if client is None or appointment.client_id != client.ID:
+            return None
+
+        return appointment
+
+    async def get_appointment_for_admin(
+        self, appointment_id: int, admin_telegram_id: int
+    ) -> Appointment | None:
+        """Return the appointment only if it exists and is within the admin's
+        resolved clinic/doctor scope. Returns None otherwise (including when the
+        admin_telegram_id has no matching User row)."""
+        appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            return None
+
+        admin_user = await self.user_repository.get_user_by_telegram_id(admin_telegram_id)
+        if admin_user is None:
+            return None
+
+        clinic_id, doctor_id = await self.resolve_admin_appointment_filter(admin_telegram_id)
+
+        if appointment.clinic_id != clinic_id:
+            return None
+
+        if doctor_id is not None and appointment.doctor_id != doctor_id:
             return None
 
         return appointment

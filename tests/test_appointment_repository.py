@@ -56,7 +56,7 @@ async def test_creates_and_reads_appointment(appointment_setup):
 
     await appointment_repo.create_appointment(_appointment(user.ID))
 
-    by_client = await appointment_repo.get_appointments_by_client_id(user.ID)
+    by_client = await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1)
     by_telegram = await appointment_repo.get_appointments_by_telegram_id(1001)
     by_id = await appointment_repo.get_appointment_by_id(by_client[0].id)
 
@@ -73,7 +73,7 @@ async def test_creates_and_reads_appointment(appointment_setup):
 async def test_updates_appointment_status(appointment_setup):
     appointment_repo, user = appointment_setup
     await appointment_repo.create_appointment(_appointment(user.ID))
-    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID))[0].id
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
 
     await appointment_repo.update_appointment_status(
         appointment_id, AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00"
@@ -88,7 +88,7 @@ async def test_updates_appointment_status(appointment_setup):
 async def test_deletes_appointment(appointment_setup):
     appointment_repo, user = appointment_setup
     await appointment_repo.create_appointment(_appointment(user.ID))
-    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID))[0].id
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
 
     await appointment_repo.delete_appointment(appointment_id)
 
@@ -141,11 +141,11 @@ async def test_get_appointments_page_paginates_with_correct_offset_and_ordering(
                 _appointment_for(client.ID, created_at=f"2026-07-0{i} 10:00:00")
             )
 
-        assert await appointment_repo.count_appointments() == 5
+        assert await appointment_repo.count_appointments(clinic_id=1) == 5
 
-        page_one = await appointment_repo.get_appointments_page(1, per_page=2)
-        page_two = await appointment_repo.get_appointments_page(2, per_page=2)
-        page_three = await appointment_repo.get_appointments_page(3, per_page=2)
+        page_one = await appointment_repo.get_appointments_page(1, clinic_id=1, per_page=2)
+        page_two = await appointment_repo.get_appointments_page(2, clinic_id=1, per_page=2)
+        page_three = await appointment_repo.get_appointments_page(3, clinic_id=1, per_page=2)
 
         # Newest created_at first (DESC), page 1 = offset 0.
         assert [a.created_at for a in page_one] == ["2026-07-05 10:00:00", "2026-07-04 10:00:00"]
@@ -168,8 +168,8 @@ async def test_get_appointments_by_name_page_matches_multi_token_full_name():
         await appointment_repo.create_appointment(_appointment_for(sidorov.ID, "2026-07-03 10:00:00"))
 
         # Multi-token search matches either token (OR), so both "Иванов" and "Пётр" match.
-        count = await appointment_repo.count_appointments_by_name("Иванов Пётр")
-        page = await appointment_repo.get_appointments_by_name_page("Иванов Пётр", 1, per_page=10)
+        count = await appointment_repo.count_appointments_by_name("Иванов Пётр", clinic_id=1)
+        page = await appointment_repo.get_appointments_by_name_page("Иванов Пётр", 1, clinic_id=1, per_page=10)
 
         assert count == 2
         assert count == len(page)
@@ -187,8 +187,8 @@ async def test_get_appointments_by_name_page_normalizes_case_before_matching():
         await appointment_repo.create_appointment(_appointment_for(ivanov.ID, "2026-07-01 10:00:00"))
 
         # Input is lower-cased; repository .title()-normalizes it before LIKE.
-        count = await appointment_repo.count_appointments_by_name("иванов")
-        page = await appointment_repo.get_appointments_by_name_page("иванов", 1, per_page=10)
+        count = await appointment_repo.count_appointments_by_name("иванов", clinic_id=1)
+        page = await appointment_repo.get_appointments_by_name_page("иванов", 1, clinic_id=1, per_page=10)
 
         assert count == 1
         assert len(page) == 1
@@ -204,12 +204,12 @@ async def test_get_appointments_by_name_page_empty_full_name_is_defensive_guard(
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         await appointment_repo.create_appointment(_appointment_for(client.ID, "2026-07-01 10:00:00"))
 
-        assert await appointment_repo.get_appointments_by_name_page("", 1, per_page=10) == []
-        assert await appointment_repo.count_appointments_by_name("") == 0
+        assert await appointment_repo.get_appointments_by_name_page("", 1, clinic_id=1, per_page=10) == []
+        assert await appointment_repo.count_appointments_by_name("", clinic_id=1) == 0
 
         # Whitespace-only input also strips down to an empty token list.
-        assert await appointment_repo.get_appointments_by_name_page("   ", 1, per_page=10) == []
-        assert await appointment_repo.count_appointments_by_name("   ") == 0
+        assert await appointment_repo.get_appointments_by_name_page("   ", 1, clinic_id=1, per_page=10) == []
+        assert await appointment_repo.count_appointments_by_name("   ", clinic_id=1) == 0
     finally:
         await connection.close()
 
@@ -227,9 +227,9 @@ async def test_get_appointments_by_client_id_page_paginates_single_client_appoin
             )
         await appointment_repo.create_appointment(_appointment_for(other.ID, "2026-07-04 10:00:00"))
 
-        total_count = await appointment_repo.count_appointments_by_client_id(target.ID)
-        page_one = await appointment_repo.get_appointments_by_client_id_page(target.ID, 1, per_page=2)
-        page_two = await appointment_repo.get_appointments_by_client_id_page(target.ID, 2, per_page=2)
+        total_count = await appointment_repo.count_appointments_by_client_id(target.ID, clinic_id=1)
+        page_one = await appointment_repo.get_appointments_by_client_id_page(target.ID, 1, clinic_id=1, per_page=2)
+        page_two = await appointment_repo.get_appointments_by_client_id_page(target.ID, 2, clinic_id=1, per_page=2)
 
         assert total_count == 3
         assert all(a.client_id == target.ID for a in page_one + page_two)
@@ -244,13 +244,13 @@ async def test_count_and_page_results_stay_consistent_for_client_id():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
-        assert await appointment_repo.count_appointments_by_client_id(client.ID) == 0
-        assert await appointment_repo.get_appointments_by_client_id_page(client.ID, 1, per_page=10) == []
+        assert await appointment_repo.count_appointments_by_client_id(client.ID, clinic_id=1) == 0
+        assert await appointment_repo.get_appointments_by_client_id_page(client.ID, 1, clinic_id=1, per_page=10) == []
 
         await appointment_repo.create_appointment(_appointment_for(client.ID, "2026-07-01 10:00:00"))
 
-        count = await appointment_repo.count_appointments_by_client_id(client.ID)
-        page = await appointment_repo.get_appointments_by_client_id_page(client.ID, 1, per_page=10)
+        count = await appointment_repo.count_appointments_by_client_id(client.ID, clinic_id=1)
+        page = await appointment_repo.get_appointments_by_client_id_page(client.ID, 1, clinic_id=1, per_page=10)
 
         assert count == len(page) == 1
     finally:
@@ -297,9 +297,9 @@ async def test_get_appointments_by_status_page_confirmed_sorted_soonest_first_wi
             _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, "2026-07-04 10:00:00")
         )
 
-        count = await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED)
+        count = await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED, clinic_id=1)
         page = await appointment_repo.get_appointments_by_status_page(
-            AppointmentStatus.CONFIRMED, 1, per_page=10
+            AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10
         )
 
         assert count == 3
@@ -324,9 +324,9 @@ async def test_get_appointments_by_status_page_pending_sorted_by_created_at_desc
             _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-03 10:00:00")
         )
 
-        count = await appointment_repo.count_appointments_by_status(AppointmentStatus.PENDING)
+        count = await appointment_repo.count_appointments_by_status(AppointmentStatus.PENDING, clinic_id=1)
         page = await appointment_repo.get_appointments_by_status_page(
-            AppointmentStatus.PENDING, 1, per_page=10
+            AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
         )
 
         assert count == 2
@@ -362,7 +362,7 @@ async def test_get_appointments_by_status_page_cancelled_sorted_by_status_update
         await connection.commit()
 
         page = await appointment_repo.get_appointments_by_status_page(
-            AppointmentStatus.CANCELLED, 1, per_page=10
+            AppointmentStatus.CANCELLED, 1, clinic_id=1, per_page=10
         )
 
         # fallback_to_created_at has NULL status_updated_at, so COALESCE falls back
@@ -386,10 +386,10 @@ async def test_get_appointments_by_status_page_paginates_with_offset():
             )
 
         page_one = await appointment_repo.get_appointments_by_status_page(
-            AppointmentStatus.PENDING, 1, per_page=2
+            AppointmentStatus.PENDING, 1, clinic_id=1, per_page=2
         )
         page_two = await appointment_repo.get_appointments_by_status_page(
-            AppointmentStatus.PENDING, 2, per_page=2
+            AppointmentStatus.PENDING, 2, clinic_id=1, per_page=2
         )
 
         assert [a.created_at for a in page_one] == ["2026-07-03 10:00:00", "2026-07-02 10:00:00"]
@@ -407,7 +407,70 @@ async def test_count_appointments_by_status_returns_zero_when_no_matches():
             _appointment_with_status(client.ID, "2026-07-01 10:00:00", AppointmentStatus.PENDING, "2026-07-01 10:00:00")
         )
 
-        assert await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED) == 0
+        assert await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED, clinic_id=1) == 0
+    finally:
+        await connection.close()
+
+
+# --- Visibility scope: clinic_id/doctor_id filtering (admin_visibility_scope feature) ---
+
+@pytest.mark.asyncio
+async def test_clinic_and_doctor_filters_exclude_other_clinics_and_other_doctors():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        await connection.execute(
+            "INSERT INTO clinics (id, name, token) VALUES (2, 'Клиника 2', 'tok2')"
+        )
+        await connection.commit()
+
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        own_doctor = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=100,
+                datetime="2026-07-01 10:00", purpose="Consultation",
+                created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+        other_doctor = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=200,
+                datetime="2026-07-02 10:00", purpose="Consultation",
+                created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+        other_clinic = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=2, client_id=client.ID, doctor_id=100,
+                datetime="2026-07-03 10:00", purpose="Consultation",
+                created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+
+        own_only = await appointment_repo.get_appointments_page(1, clinic_id=1, doctor_id=100, per_page=10)
+        assert [a.id for a in own_only] == [own_doctor.id]
+        assert await appointment_repo.count_appointments(clinic_id=1, doctor_id=100) == 1
+
+        clinic_wide = await appointment_repo.get_appointments_page(1, clinic_id=1, per_page=10)
+        assert {a.id for a in clinic_wide} == {own_doctor.id, other_doctor.id}
+        assert await appointment_repo.count_appointments(clinic_id=1) == 2
+
+        assert other_clinic.id not in {a.id for a in clinic_wide}
+        assert await appointment_repo.count_appointments(clinic_id=2) == 1
+
+        by_status = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.PENDING, 1, clinic_id=1, doctor_id=100, per_page=10
+        )
+        assert [a.id for a in by_status] == [own_doctor.id]
+        assert await appointment_repo.count_appointments_by_status(
+            AppointmentStatus.PENDING, clinic_id=1, doctor_id=100
+        ) == 1
+
+        by_name = await appointment_repo.get_appointments_by_name("Иванов", clinic_id=1, doctor_id=100)
+        assert [a.id for a in by_name] == [own_doctor.id]
+
+        by_client = await appointment_repo.get_appointments_by_client_id(client.ID, clinic_id=1, doctor_id=100)
+        assert [a.id for a in by_client] == [own_doctor.id]
     finally:
         await connection.close()
 

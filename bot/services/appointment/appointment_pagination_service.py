@@ -122,6 +122,8 @@ class AppointmentPaginationService:
         self,
         mode: str,
         page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
         search_data: dict = None,
         tab: str = "confirmed",
     ) -> AppointmentPaginationResult:
@@ -131,6 +133,8 @@ class AppointmentPaginationService:
         Args:
             mode: 'list' - все записи, 'search' - поиск по имени, 'phone' - записи клиента
             page: номер страницы
+            clinic_id: клиника, к которой скоупится выборка
+            doctor_id: если задан, ограничивает выборку записями этого врача
             search_data: dict с 'full_name' для mode='search', 'client_id' для mode='phone'
             tab: вкладка по статусу ('confirmed'/'pending'/'cancelled'/'no_show'/'completed'/'expired'),
                 применяется только к mode='search' и mode='phone'
@@ -141,16 +145,20 @@ class AppointmentPaginationService:
         ordered = None
 
         if mode == "list":
-            total_count = await self.appointment_repo.count_appointments()
-            items = await self.appointment_repo.get_appointments_page(page, APPOINTMENTS_PER_PAGE)
+            total_count = await self.appointment_repo.count_appointments(clinic_id, doctor_id)
+            items = await self.appointment_repo.get_appointments_page(
+                page, clinic_id, doctor_id, APPOINTMENTS_PER_PAGE
+            )
         elif mode == "search":
             full_name = (search_data or {}).get("full_name", "")
-            appointments = await self.appointment_repo.get_appointments_by_name(full_name)
+            appointments = await self.appointment_repo.get_appointments_by_name(full_name, clinic_id, doctor_id)
             ordered = self._filter_by_tab(appointments, tab)
             total_count = len(ordered)
         elif mode == "phone":
             client_id = (search_data or {}).get("client_id")
-            appointments = await self.appointment_repo.get_appointments_by_client_id(client_id)
+            appointments = await self.appointment_repo.get_appointments_by_client_id(
+                client_id, clinic_id, doctor_id
+            )
             ordered = self._filter_by_tab(appointments, tab)
             total_count = len(ordered)
         else:
@@ -209,6 +217,8 @@ class AppointmentPaginationService:
         self,
         tab: str,
         page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
         per_page: int | None = None,
     ) -> AppointmentPaginationResult:
         """
@@ -222,6 +232,8 @@ class AppointmentPaginationService:
         Args:
             tab: вкладка по статусу ('confirmed'/'pending'/'cancelled'/'no_show'/'completed'/'expired')
             page: номер страницы
+            clinic_id: клиника, к которой скоупится выборка
+            doctor_id: если задан, ограничивает выборку записями этого врача
         """
         if tab not in self._STATUS_TABS:
             raise PaginationError(f"Неизвестная вкладка: {tab}")
@@ -229,10 +241,12 @@ class AppointmentPaginationService:
         per_page = per_page or APPOINTMENTS_PER_PAGE
         status = self._STATUS_TABS[tab]
 
-        total_count = await self.appointment_repo.count_appointments_by_status(status)
+        total_count = await self.appointment_repo.count_appointments_by_status(status, clinic_id, doctor_id)
         page, total_pages = self._paginate_math(total_count, page, per_page)
 
-        items = await self.appointment_repo.get_appointments_by_status_page(status, page, per_page)
+        items = await self.appointment_repo.get_appointments_by_status_page(
+            status, page, clinic_id, doctor_id, per_page
+        )
 
         return AppointmentPaginationResult(
             items=items,

@@ -29,20 +29,26 @@ class FakeAppointmentRepository:
         self.page_items = list(page_items or [])
         self.calls: list[tuple] = []
 
-    async def count_appointments(self) -> int:
-        self.calls.append(("count_appointments",))
+    async def count_appointments(self, clinic_id: int, doctor_id: int | None = None) -> int:
+        self.calls.append(("count_appointments", clinic_id, doctor_id))
         return self.total_count
 
-    async def get_appointments_page(self, page: int, per_page: int) -> list[Appointment]:
-        self.calls.append(("get_appointments_page", page, per_page))
+    async def get_appointments_page(
+        self, page: int, clinic_id: int, doctor_id: int | None, per_page: int
+    ) -> list[Appointment]:
+        self.calls.append(("get_appointments_page", page, clinic_id, doctor_id, per_page))
         return self.page_items
 
-    async def get_appointments_by_name(self, full_name: str) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_name", full_name))
+    async def get_appointments_by_name(
+        self, full_name: str, clinic_id: int, doctor_id: int | None = None
+    ) -> list[Appointment]:
+        self.calls.append(("get_appointments_by_name", full_name, clinic_id, doctor_id))
         return self.page_items
 
-    async def get_appointments_by_client_id(self, client_id: int) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_client_id", client_id))
+    async def get_appointments_by_client_id(
+        self, client_id: int, clinic_id: int, doctor_id: int | None = None
+    ) -> list[Appointment]:
+        self.calls.append(("get_appointments_by_client_id", client_id, clinic_id, doctor_id))
         return self.page_items
 
     async def get_appointments_by_telegram_id(self, telegram_user_id: int) -> list[Appointment]:
@@ -50,13 +56,15 @@ class FakeAppointmentRepository:
         return self.page_items
 
     async def get_appointments_by_status_page(
-        self, status: AppointmentStatus, page: int, per_page: int
+        self, status: AppointmentStatus, page: int, clinic_id: int, doctor_id: int | None, per_page: int
     ) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_status_page", status, page, per_page))
+        self.calls.append(("get_appointments_by_status_page", status, page, clinic_id, doctor_id, per_page))
         return self.page_items
 
-    async def count_appointments_by_status(self, status: AppointmentStatus) -> int:
-        self.calls.append(("count_appointments_by_status", status))
+    async def count_appointments_by_status(
+        self, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+    ) -> int:
+        self.calls.append(("count_appointments_by_status", status, clinic_id, doctor_id))
         return self.total_count
 
 
@@ -80,14 +88,27 @@ async def test_paginate_list_mode_returns_all_appointments():
     repo = FakeAppointmentRepository(total_count=2, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("list", 1)
+    result = await service.paginate_appointments("list", 1, clinic_id=1)
 
     assert result.items == items
     assert result.current_page == 1
     assert result.total_count == 2
     assert result.total_pages == 1
-    assert ("count_appointments",) in repo.calls
-    assert ("get_appointments_page", 1, APPOINTMENTS_PER_PAGE) in repo.calls
+    assert ("count_appointments", 1, None) in repo.calls
+    assert ("get_appointments_page", 1, 1, None, APPOINTMENTS_PER_PAGE) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_list_mode_forwards_concrete_doctor_id_to_repository():
+    """Admin_visibility_scope feature: an 'own'-scope admin's doctor_id must reach
+    the repository call, not just the clinic_id."""
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_appointments("list", 1, clinic_id=1, doctor_id=5)
+
+    assert ("count_appointments", 1, 5) in repo.calls
+    assert ("get_appointments_page", 1, 1, 5, APPOINTMENTS_PER_PAGE) in repo.calls
 
 
 # --- mode="search" ---
@@ -98,11 +119,13 @@ async def test_paginate_search_mode_routes_full_name_to_repository_and_filters_b
     repo = FakeAppointmentRepository(total_count=1, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("search", 1, {"full_name": "Иванов"}, tab="pending")
+    result = await service.paginate_appointments(
+        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="pending"
+    )
 
     assert result.items == items
     assert result.total_count == 1
-    assert ("get_appointments_by_name", "Иванов") in repo.calls
+    assert ("get_appointments_by_name", "Иванов", 1, None) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -110,10 +133,10 @@ async def test_paginate_search_mode_defaults_full_name_when_search_data_missing(
     repo = FakeAppointmentRepository(total_count=0, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("search", 1, None, tab="pending")
+    result = await service.paginate_appointments("search", 1, clinic_id=1, search_data=None, tab="pending")
 
     assert result.total_count == 0
-    assert ("get_appointments_by_name", "") in repo.calls
+    assert ("get_appointments_by_name", "", 1, None) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -125,10 +148,24 @@ async def test_paginate_search_mode_filters_by_status_tab():
     repo = FakeAppointmentRepository(page_items=[pending, confirmed])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("search", 1, {"full_name": "Иванов"}, tab="confirmed")
+    result = await service.paginate_appointments(
+        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="confirmed"
+    )
 
     assert [a.id for a in result.items] == [2]
     assert result.total_count == 1
+
+
+@pytest.mark.asyncio
+async def test_paginate_search_mode_forwards_concrete_doctor_id_to_repository():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_appointments(
+        "search", 1, clinic_id=1, doctor_id=5, search_data={"full_name": "Иванов"}, tab="pending"
+    )
+
+    assert ("get_appointments_by_name", "Иванов", 1, 5) in repo.calls
 
 
 # --- mode="phone" ---
@@ -139,11 +176,11 @@ async def test_paginate_phone_mode_routes_client_id_to_repository():
     repo = FakeAppointmentRepository(total_count=2, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("phone", 1, {"client_id": 7}, tab="pending")
+    result = await service.paginate_appointments("phone", 1, clinic_id=1, search_data={"client_id": 7}, tab="pending")
 
     assert {a.id for a in result.items} == {a.id for a in items}
     assert result.total_count == 2
-    assert ("get_appointments_by_client_id", 7) in repo.calls
+    assert ("get_appointments_by_client_id", 7, 1, None) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -151,9 +188,9 @@ async def test_paginate_phone_mode_defaults_client_id_when_search_data_missing()
     repo = FakeAppointmentRepository(total_count=0, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("phone", 1, None)
+    result = await service.paginate_appointments("phone", 1, clinic_id=1, search_data=None)
 
-    assert ("get_appointments_by_client_id", None) in repo.calls
+    assert ("get_appointments_by_client_id", None, 1, None) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -165,9 +202,21 @@ async def test_paginate_phone_mode_filters_by_status_tab():
     repo = FakeAppointmentRepository(page_items=[pending, cancelled])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("phone", 1, {"client_id": 7}, tab="pending")
+    result = await service.paginate_appointments("phone", 1, clinic_id=1, search_data={"client_id": 7}, tab="pending")
 
     assert [a.id for a in result.items] == [1]
+
+
+@pytest.mark.asyncio
+async def test_paginate_phone_mode_forwards_concrete_doctor_id_to_repository():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_appointments(
+        "phone", 1, clinic_id=1, doctor_id=5, search_data={"client_id": 7}, tab="pending"
+    )
+
+    assert ("get_appointments_by_client_id", 7, 1, 5) in repo.calls
 
 
 # --- unknown mode ---
@@ -178,7 +227,7 @@ async def test_paginate_unknown_mode_raises_pagination_error():
     service = AppointmentPaginationService(repo)
 
     with pytest.raises(PaginationError):
-        await service.paginate_appointments("unknown", 1)
+        await service.paginate_appointments("unknown", 1, clinic_id=1)
 
 
 # --- total_pages / page clamping ---
@@ -188,7 +237,7 @@ async def test_total_pages_computed_with_ceil():
     repo = FakeAppointmentRepository(total_count=21, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("list", 1)
+    result = await service.paginate_appointments("list", 1, clinic_id=1)
 
     assert result.total_pages == 3  # ceil(21 / 10)
 
@@ -198,7 +247,7 @@ async def test_page_clamped_to_total_pages_when_too_high():
     repo = FakeAppointmentRepository(total_count=15, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("list", 999)
+    result = await service.paginate_appointments("list", 999, clinic_id=1)
 
     assert result.total_pages == 2  # ceil(15 / 10)
     assert result.current_page == 2
@@ -209,7 +258,7 @@ async def test_page_clamped_to_one_when_below_range():
     repo = FakeAppointmentRepository(total_count=15, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("list", 0)
+    result = await service.paginate_appointments("list", 0, clinic_id=1)
 
     assert result.current_page == 1
 
@@ -219,7 +268,7 @@ async def test_empty_result_set_returns_valid_result_with_single_page():
     repo = FakeAppointmentRepository(total_count=0, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_appointments("list", 1)
+    result = await service.paginate_appointments("list", 1, clinic_id=1)
 
     assert result.total_count == 0
     assert result.total_pages == 1
@@ -449,15 +498,35 @@ async def test_paginate_all_appointments_by_tab_routes_resolved_status_to_reposi
     repo = FakeAppointmentRepository(total_count=2, page_items=items)
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("confirmed", 1)
+    result = await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1)
 
     assert result.items == items
     assert result.total_count == 2
-    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED) in repo.calls
+    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED, 1, None) in repo.calls
     assert (
         "get_appointments_by_status_page",
         AppointmentStatus.CONFIRMED,
         1,
+        1,
+        None,
+        APPOINTMENTS_PER_PAGE,
+    ) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_all_appointments_by_tab_forwards_concrete_doctor_id_to_repository():
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1, doctor_id=5)
+
+    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED, 1, 5) in repo.calls
+    assert (
+        "get_appointments_by_status_page",
+        AppointmentStatus.CONFIRMED,
+        1,
+        1,
+        5,
         APPOINTMENTS_PER_PAGE,
     ) in repo.calls
 
@@ -469,8 +538,8 @@ async def test_paginate_all_appointments_by_tab_resolves_each_tab_to_its_status(
 
     for tab, status in AppointmentPaginationService._STATUS_TABS.items():
         repo.calls.clear()
-        await service.paginate_all_appointments_by_tab(tab, 1)
-        assert ("count_appointments_by_status", status) in repo.calls
+        await service.paginate_all_appointments_by_tab(tab, 1, clinic_id=1)
+        assert ("count_appointments_by_status", status, 1, None) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -479,7 +548,7 @@ async def test_paginate_all_appointments_by_tab_unknown_tab_raises_pagination_er
     service = AppointmentPaginationService(repo)
 
     with pytest.raises(PaginationError):
-        await service.paginate_all_appointments_by_tab("unknown", 1)
+        await service.paginate_all_appointments_by_tab("unknown", 1, clinic_id=1)
 
 
 @pytest.mark.asyncio
@@ -488,7 +557,7 @@ async def test_paginate_all_appointments_by_tab_unknown_tab_does_not_touch_repos
     service = AppointmentPaginationService(repo)
 
     with pytest.raises(PaginationError):
-        await service.paginate_all_appointments_by_tab("unknown", 1)
+        await service.paginate_all_appointments_by_tab("unknown", 1, clinic_id=1)
 
     assert repo.calls == []
 
@@ -498,7 +567,7 @@ async def test_paginate_all_appointments_by_tab_total_pages_computed_with_ceil()
     repo = FakeAppointmentRepository(total_count=21, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("confirmed", 1)
+    result = await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1)
 
     assert result.total_pages == 3  # ceil(21 / 10)
 
@@ -508,7 +577,7 @@ async def test_paginate_all_appointments_by_tab_clamps_page_before_querying_repo
     repo = FakeAppointmentRepository(total_count=15, page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("confirmed", 999)
+    result = await service.paginate_all_appointments_by_tab("confirmed", 999, clinic_id=1)
 
     assert result.total_pages == 2  # ceil(15 / 10)
     assert result.current_page == 2
@@ -516,6 +585,8 @@ async def test_paginate_all_appointments_by_tab_clamps_page_before_querying_repo
         "get_appointments_by_status_page",
         AppointmentStatus.CONFIRMED,
         2,
+        1,
+        None,
         APPOINTMENTS_PER_PAGE,
     ) in repo.calls
 
@@ -525,7 +596,7 @@ async def test_paginate_all_appointments_by_tab_empty_result_returns_single_page
     repo = FakeAppointmentRepository(page_items=[])
     service = AppointmentPaginationService(repo)
 
-    result = await service.paginate_all_appointments_by_tab("confirmed", 1)
+    result = await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1)
 
     assert result.total_count == 0
     assert result.total_pages == 1

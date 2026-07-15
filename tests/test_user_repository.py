@@ -434,3 +434,79 @@ async def test_create_user_without_created_at_stores_null_not_sql_default():
         assert user.created_at is None
     finally:
         await connection.close()
+
+
+# --- visibility_scope (admin_visibility_scope feature) ---
+
+@pytest.mark.asyncio
+async def test_visibility_scope_migration_adds_column_for_existing_rows():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        # Simulate a pre-migration users table that predates visibility_scope.
+        await connection.execute("""
+            CREATE TABLE users(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                telegram_user_id INTEGER UNIQUE,
+                full_name TEXT NOT NULL,
+                phone TEXT UNIQUE NOT NULL,
+                clinic_id INTEGER DEFAULT NULL,
+                role TEXT DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reminder_24h INTEGER DEFAULT 1,
+                reminder_2h INTEGER DEFAULT 1,
+                pending_full_name TEXT DEFAULT NULL
+            )
+        """)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, role) VALUES (?, ?, ?, ?)",
+            (2002, "Петров Петр", "+998901234599", Role.ADMIN.value),
+        )
+        await connection.commit()
+
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        user = await user_repo.get_user_by_telegram_id(2002)
+        assert user.visibility_scope is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_staff_users_by_clinic_id_still_includes_clinic_scope_admins():
+    """DoD: list_bookable_staff (self-booking) filters out 'clinic'-scope admins,
+    but get_staff_users_by_clinic_id itself (used by client_notifications for
+    broadcast) must remain untouched and keep returning them."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(full_name="Елена Врач", phone="+998901111111", role=Role.ADMIN, telegram_user_id=226655040, clinic_id=1)
+        )
+        await user_repo.create_user(
+            User(full_name="Артём Управляющий", phone="+998902222222", role=Role.ADMIN, telegram_user_id=685889801, clinic_id=1)
+        )
+
+        # create_user does not persist visibility_scope (provisioned manually
+        # after registration per docs/admin_visibility_scope_prompt.md), so it
+        # is set directly here to simulate the post-provisioning state.
+        await connection.execute(
+            "UPDATE users SET visibility_scope = 'clinic' WHERE telegram_user_id = 685889801"
+        )
+        await connection.commit()
+
+        staff = await user_repo.get_staff_users_by_clinic_id(1)
+
+        assert {member.telegram_user_id for member in staff} == {226655040, 685889801}
+        clinic_scope_member = next(m for m in staff if m.telegram_user_id == 685889801)
+        assert clinic_scope_member.visibility_scope == "clinic"
+    finally:
+        await connection.close()

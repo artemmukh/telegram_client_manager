@@ -38,6 +38,13 @@ def create_admin_reschedule_requests_router(
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "accept"))
     async def accept_reschedule(callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB):
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.accept_client_reschedule(
                 callback_data.appointment_id, callback_query.from_user.id
@@ -66,6 +73,13 @@ def create_admin_reschedule_requests_router(
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "reject"))
     async def reject_reschedule(callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB):
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+
         try:
             appointment = await appt_mng.reject_client_reschedule(
                 callback_data.appointment_id, callback_query.from_user.id
@@ -134,7 +148,7 @@ def create_admin_reschedule_requests_router(
         callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB, state: FSMContext,
     ):
         await state.clear()
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
         if appointment is None:
             await callback_query.answer("Заявка не найдена.", show_alert=True)
             return
@@ -159,6 +173,13 @@ def create_admin_reschedule_requests_router(
             return
 
         db_datetime = format_datetime_for_db(parsed_dt)
+
+        owned_appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if owned_appointment is None:
+            await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
 
         try:
             appointment = await appt_mng.propose_new_datetime(

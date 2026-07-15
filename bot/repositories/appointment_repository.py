@@ -152,11 +152,18 @@ class AppointmentRepository:
         )
         return self._row_to_appointment(await cursor.fetchone())
 
-    async def get_appointments_by_client_id(self, client_id: int) -> list[Appointment]:
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "\nWHERE a.client_id = ?\nORDER BY a.created_at DESC",
-            (client_id,),
-        )
+    async def get_appointments_by_client_id(
+        self, client_id: int, clinic_id: int, doctor_id: int | None = None
+    ) -> list[Appointment]:
+        conditions = ["a.client_id = ?", "a.clinic_id = ?"]
+        params = [client_id, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"\nWHERE {' AND '.join(conditions)}\nORDER BY a.created_at DESC"
+        cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
@@ -308,70 +315,51 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def count_appointments(self) -> int:
-        cursor = await self.connection.execute(
-            "SELECT COUNT(*) FROM appointments"
-        )
+    async def count_appointments(self, clinic_id: int, doctor_id: int | None = None) -> int:
+        conditions = ["clinic_id = ?"]
+        params = [clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("admin_id = ?")
+            params.append(doctor_id)
+
+        sql = f"SELECT COUNT(*) FROM appointments WHERE {' AND '.join(conditions)}"
+        cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return row[0] if row else 0
 
-    async def get_appointments_by_client_ids(self, client_ids: list[int]) -> list[Appointment]:
+    async def get_appointments_by_client_ids(
+        self, client_ids: list[int], clinic_id: int, doctor_id: int | None = None
+    ) -> list[Appointment]:
         if not client_ids:
             return []
         placeholders = ",".join("?" * len(client_ids))
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + f"\nWHERE a.client_id IN ({placeholders})\nORDER BY a.created_at DESC",
-            client_ids,
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_appointment(row) for row in rows]
+        conditions = [f"a.client_id IN ({placeholders})", "a.clinic_id = ?"]
+        params = [*client_ids, clinic_id]
 
-    async def get_appointments_page(self, page: int, per_page: int = 10) -> list[Appointment]:
-        """Получить страницу всех записей"""
-        offset = (page - 1) * per_page
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + """
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (per_page, offset),
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_appointment(row) for row in rows]
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
 
-    async def get_appointments_by_name(self, full_name: str) -> list[Appointment]:
-        """Получить все записи, соответствующие поиску по имени клиента"""
-        parts = full_name.strip().title().split()
-        if not parts:
-            return []
-
-        conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
-        params = [f"%{part}%" for part in parts]
-
-        sql = APPOINTMENT_SELECT + f"""
-        WHERE ({conditions})
-        ORDER BY a.created_at DESC
-        """
-
+        sql = APPOINTMENT_SELECT + f"\nWHERE {' AND '.join(conditions)}\nORDER BY a.created_at DESC"
         cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def get_appointments_by_name_page(
-        self, full_name: str, page: int, per_page: int = 10
+    async def get_appointments_page(
+        self, page: int, clinic_id: int, doctor_id: int | None = None, per_page: int = 10
     ) -> list[Appointment]:
-        """Получить страницу результатов поиска записей по имени клиента"""
-        parts = full_name.strip().title().split()
-        if not parts:
-            return []
-
-        conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
-        params = [f"%{part}%" for part in parts]
-
+        """Получить страницу всех записей"""
         offset = (page - 1) * per_page
+        conditions = ["a.clinic_id = ?"]
+        params = [clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
 
         sql = APPOINTMENT_SELECT + f"""
-        WHERE ({conditions})
+        WHERE {' AND '.join(conditions)}
         ORDER BY a.created_at DESC, a.id DESC
         LIMIT ? OFFSET ?
         """
@@ -381,48 +369,135 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def count_appointments_by_name(self, full_name: str) -> int:
+    async def get_appointments_by_name(
+        self, full_name: str, clinic_id: int, doctor_id: int | None = None
+    ) -> list[Appointment]:
+        """Получить все записи, соответствующие поиску по имени клиента"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
+        name_conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        conditions = [f"({name_conditions})", "a.clinic_id = ?"]
+        params.append(clinic_id)
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE {' AND '.join(conditions)}
+        ORDER BY a.created_at DESC
+        """
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def get_appointments_by_name_page(
+        self, full_name: str, page: int, clinic_id: int, doctor_id: int | None = None, per_page: int = 10
+    ) -> list[Appointment]:
+        """Получить страницу результатов поиска записей по имени клиента"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
+        name_conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        conditions = [f"({name_conditions})", "a.clinic_id = ?"]
+        params.append(clinic_id)
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        offset = (page - 1) * per_page
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE {' AND '.join(conditions)}
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT ? OFFSET ?
+        """
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
+    async def count_appointments_by_name(
+        self, full_name: str, clinic_id: int, doctor_id: int | None = None
+    ) -> int:
         """Получить количество результатов поиска записей по имени клиента"""
         parts = full_name.strip().title().split()
         if not parts:
             return 0
 
-        conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
+        name_conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
         params = [f"%{part}%" for part in parts]
+
+        conditions = [f"({name_conditions})", "a.clinic_id = ?"]
+        params.append(clinic_id)
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
 
         sql = f"""
         SELECT COUNT(*)
         FROM appointments a
         LEFT JOIN users u ON u.id = a.client_id
-        WHERE ({conditions})
+        WHERE {' AND '.join(conditions)}
         """
         cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return row[0] if row else 0
 
     async def get_appointments_by_status_page(
-        self, status: AppointmentStatus, page: int, per_page: int = 10
+        self,
+        status: AppointmentStatus,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        per_page: int = 10,
     ) -> list[Appointment]:
         """Получить страницу записей с определённым статусом (для вкладок админского списка)"""
         offset = (page - 1) * per_page
         order_by = self._status_order_by(status)
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + f"""
-            WHERE a.status = ?
-            ORDER BY {order_by}
-            LIMIT ? OFFSET ?
-            """,
-            (status.value, per_page, offset),
-        )
+
+        conditions = ["a.status = ?", "a.clinic_id = ?"]
+        params = [status.value, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE {' AND '.join(conditions)}
+        ORDER BY {order_by}
+        LIMIT ? OFFSET ?
+        """
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def count_appointments_by_status(self, status: AppointmentStatus) -> int:
+    async def count_appointments_by_status(
+        self, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+    ) -> int:
         """Получить количество записей с определённым статусом"""
-        cursor = await self.connection.execute(
-            "SELECT COUNT(*) FROM appointments WHERE status = ?",
-            (status.value,),
-        )
+        conditions = ["status = ?", "clinic_id = ?"]
+        params = [status.value, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("admin_id = ?")
+            params.append(doctor_id)
+
+        sql = f"SELECT COUNT(*) FROM appointments WHERE {' AND '.join(conditions)}"
+        cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return row[0] if row else 0
 
@@ -435,27 +510,42 @@ class AppointmentRepository:
         return "COALESCE(a.status_updated_at, a.created_at) DESC, a.id DESC"
 
     async def get_appointments_by_client_id_page(
-        self, client_id: int, page: int, per_page: int = 10
+        self, client_id: int, page: int, clinic_id: int, doctor_id: int | None = None, per_page: int = 10
     ) -> list[Appointment]:
         """Получить страницу записей конкретного клиента"""
         offset = (page - 1) * per_page
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + """
-            WHERE a.client_id = ?
-            ORDER BY a.created_at DESC, a.id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (client_id, per_page, offset),
-        )
+
+        conditions = ["a.client_id = ?", "a.clinic_id = ?"]
+        params = [client_id, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE {' AND '.join(conditions)}
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT ? OFFSET ?
+        """
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def count_appointments_by_client_id(self, client_id: int) -> int:
+    async def count_appointments_by_client_id(
+        self, client_id: int, clinic_id: int, doctor_id: int | None = None
+    ) -> int:
         """Получить количество записей конкретного клиента"""
-        cursor = await self.connection.execute(
-            "SELECT COUNT(*) FROM appointments WHERE client_id = ?",
-            (client_id,),
-        )
+        conditions = ["client_id = ?", "clinic_id = ?"]
+        params = [client_id, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("admin_id = ?")
+            params.append(doctor_id)
+
+        sql = f"SELECT COUNT(*) FROM appointments WHERE {' AND '.join(conditions)}"
+        cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return row[0] if row else 0
 
