@@ -4,7 +4,11 @@ from aiogram.types import Message
 
 from bot.exceptions.user_exceptions import ValidationError
 from bot.models.appointment import Appointment
-from bot.services.utils.date_parser import parse_ru_datetime, format_datetime_for_display
+from bot.services.utils.date_parser import (
+    format_appointment_card_datetime,
+    format_datetime_for_display,
+    parse_ru_datetime,
+)
 from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus
 from bot.validators.validators import (
     validate_price,
@@ -39,7 +43,7 @@ def build_appointment_card(appointment: Appointment) -> str:
         lines.append(f"Телефон: {appointment.client_phone}")
 
     lines += [
-        f"Дата и время: {appointment.datetime}",
+        f"Время: {format_appointment_card_datetime(appointment.datetime)}",
         f"Услуга: {appointment.purpose}",
         f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}",
     ]
