@@ -1,4 +1,4 @@
-﻿from aiogram import Router, F
+from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
@@ -71,7 +71,7 @@ def create_reg_router(
 
     @router.callback_query(F.data == "reg_guide")
     async def show_registration_guide(callback: CallbackQuery) -> None:
-        await display_registration_guide_msg(callback.message)
+        await callback.message.edit_text(display_registration_guide_msg(), reply_markup=None)
         await callback.answer()
 
     # ---------- registration ----------

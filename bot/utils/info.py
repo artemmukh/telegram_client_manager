@@ -1,8 +1,7 @@
-﻿from aiogram.types import Message
+from aiogram.types import Message
 
 from bot.keyboards.admin.admin_main_menu_kb import start_admin_keyboard
 from bot.keyboards.client.client_main_keyboard import start_client_keyboard
-from bot.keyboards.client.help_kb import client_help_guide_kb
 
 
 async def show_main_admin_menu(message: Message, full_name: str):
@@ -21,7 +20,7 @@ async def show_main_client_menu(message: Message, full_name: str):
 
     await message.answer(text='Выберите вариант: ', reply_markup=start_client_keyboard())
 
-async def display_admin_help_msg(message: Message):
+def display_admin_help_msg():
     text = ("Справочное меню.\n\n\n"
             "/client_managing:\n\n"
             "  1. Добавить клиента.\n"
@@ -35,9 +34,9 @@ async def display_admin_help_msg(message: Message):
             "/start - запуск бота.\n"
             "/help - справка.\n"
             "/profile - личные данные.")
-    await message.answer(text=text)
+    return text
 
-async def display_client_help_msg(message: Message):
+def display_client_help_msg():
     text = ("Меню помощи.\n\n\n"
             "📋 Управление записями:\n\n"
             "  1. Записаться на прием - выбор даты, времени и услуги для новой записи.\n"
@@ -49,9 +48,9 @@ async def display_client_help_msg(message: Message):
             "/help - помощь.\n"
             "/profile - личные данные.\n"
             "/price - прайс-лист")
-    await message.answer(text=text, reply_markup=client_help_guide_kb())
+    return text
 
-async def display_client_help_guide_msg(message: Message) -> None:
+def display_client_help_guide_msg() -> str:
     text = (
         "Как это работает:\n\n"
         "1️⃣ «📋 Управление записями» → «Записаться на приём».\n"
@@ -65,9 +64,9 @@ async def display_client_help_guide_msg(message: Message) -> None:
         "момент, кроме последнего часа перед приёмом."
         "\n\n Если у вас возникли трудности или вы хотите что-то предложить, напишите пожалуйста @Art56g"
     )
-    await message.answer(text)
+    return text
 
-async def display_registration_guide_msg(message: Message) -> None:
+def display_registration_guide_msg() -> str:
     text = (
         "Как пройти регистрацию:\n\n"
         "[Открыли ссылку/QR клиники]\n"
@@ -86,4 +85,4 @@ async def display_registration_guide_msg(message: Message) -> None:
         "⚠️ Номер телефона отправляется ТОЛЬКО кнопкой \"📱 Отправить контакт\". "
         "Вручную вводить номер нельзя — это единственный поддерживаемый способ."
     )
-    await message.answer(text)
+    return text

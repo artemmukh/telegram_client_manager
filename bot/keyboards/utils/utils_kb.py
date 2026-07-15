@@ -22,7 +22,7 @@ def reg_confirm_kb():
 
 def reg_guide_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❓ Как пройти рег", callback_data="reg_guide")]
+        [InlineKeyboardButton(text="❓ Как пройти регистрацию", callback_data="reg_guide")]
     ])
 
 
@@ -33,7 +33,10 @@ def reg_name_conflict_kb():
     ])
 
 
-
+def back_to_help_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_help")]
+    ])
 
 
 def cancel_kb() -> InlineKeyboardMarkup:
