@@ -21,7 +21,44 @@ This updates all existing `expire_pending_request_job` entries in the SQLite job
 - New code expects jobs at `appointment.datetime - 2h`
 - Without migration, admin approval window would be broken for existing pending requests
 
-### 2. Deploy New Code
+### 2. Run Users Created-At Timezone Migration (CRITICAL, one-time)
+
+Before starting the bot with the new code, run this script once to correct
+historical client registration timestamps:
+
+```bash
+python scripts/migrate_users_created_at_timezone.py
+```
+
+This shifts every existing `users.created_at` value in the main bot
+database (`data/data_base.db`) **+5 hours**, converting them from UTC
+(SQLite's `CURRENT_TIMESTAMP` default, which the old code silently relied
+on) to Asia/Tashkent time (UTC+5), matching how `appointments.created_at`
+has always been written.
+
+**Why this matters:**
+- `appointments.created_at` has always been written explicitly in
+  Tashkent time by the application code.
+- `users.created_at` was never passed explicitly on insert, so it silently
+  fell back to SQLite's `CURRENT_TIMESTAMP` default, which is UTC.
+- This created a systematic 5-hour gap between a client's registration
+  date and their appointment dates. New code now writes
+  `users.created_at` explicitly in Tashkent time, same as appointments;
+  this script one-time-corrects the existing historical rows to match.
+
+**WARNING: Do not run this script more than once against the same
+database.** It unconditionally shifts every non-NULL `users.created_at`
+by +5 hours with no idempotency guard — running it twice will double-shift
+the data.
+
+This script touches **only** the `users.created_at` column in the main
+bot database. It does **not** touch `appointments.created_at` /
+`status_updated_at` (already correct), and it does **not** touch
+`data/reminders.db` (the separate APScheduler job store used by
+reminders, auto-confirm, and pending/reschedule expiry jobs) — that file
+is untouched by this migration.
+
+### 3. Deploy New Code
 
 Pull and start the bot:
 
@@ -30,7 +67,7 @@ git pull
 python -m bot.main  # or your startup command
 ```
 
-### 3. What Changed
+### 4. What Changed
 
 #### New Features
 - ✅ Auto-confirm notification to client when admin-created PENDING appointment is auto-confirmed 2h before appointment
@@ -50,7 +87,7 @@ For CLIENT self-booking requests:
 - Admin has **2 hours** before appointment to approve/reject
 - After 2 hours, request auto-expires
 
-### 4. Verification
+### 5. Verification
 
 After deployment, verify:
 
@@ -63,7 +100,7 @@ tail -f logs/bot.log | grep -E "Auto-confirm|pending.*expiry"
 # - New auto-confirms loading: "Scheduled auto-confirm for appointment..."
 ```
 
-### 5. Rollback (If Needed)
+### 6. Rollback (If Needed)
 
 If issues occur:
 

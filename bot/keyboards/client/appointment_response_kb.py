@@ -1,6 +1,8 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.keyboards.client.appointment_invite_cb import AppointmentInviteActionCB
 from bot.keyboards.client.appointment_manage_cb import ClientManageActionCB
+from bot.keyboards.client.reschedule_cb import ClientRescheduleStartCB
 
 
 def appointment_response_kb(appointment_id: int):
@@ -11,6 +13,28 @@ def appointment_response_kb(appointment_id: int):
     builder.button(text="❌ Не приду", callback_data=f"appt_cancel:{appointment_id}")
 
     builder.adjust(1, 1)
+
+    return builder.as_markup()
+
+
+def appointment_invite_kb(appointment_id: int):
+    """3-кнопочный ответ клиента на первоначальное приглашение (или просмотр деталей
+    PENDING-записи, admin-created): Подтвердить / Предложить своё время / Отменить."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="✅ Подтвердить",
+        callback_data=AppointmentInviteActionCB(action="confirm", appointment_id=appointment_id).pack(),
+    )
+    builder.button(
+        text="🔁 Предложить своё время",
+        callback_data=ClientRescheduleStartCB(appointment_id=appointment_id).pack(),
+    )
+    builder.button(
+        text="❌ Отменить",
+        callback_data=AppointmentInviteActionCB(action="cancel", appointment_id=appointment_id).pack(),
+    )
+    builder.adjust(1, 1, 1)
 
     return builder.as_markup()
 

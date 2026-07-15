@@ -1,23 +1,34 @@
 """Tests for AppointmentScheduler service."""
 
+import os
+import sqlite3
+import tempfile
+from pathlib import Path
+
+import aiosqlite
 import pytest
+from dataclasses import replace
 from datetime import datetime, timedelta
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
 from bot.models.user import User
+from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_jobs import (
     auto_confirm_pending_job,
     expire_pending_request_job,
     expire_reschedule_request_job,
+    send_proposal_reminder_job,
 )
 from bot.services.appointment.appointment_scheduler import (
     AppointmentScheduler,
     _current_tashkent_time,
 )
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
+from scripts.migrate_users_created_at_timezone import migrate_users_created_at
 
 
 @pytest.fixture
@@ -1513,6 +1524,44 @@ async def test_past_due_pending_expiry_scheduling_does_not_call_add_job(
 
 
 @pytest.mark.asyncio
+async def test_pending_expiry_rescheduled_without_duplicate_job_on_direct_client_edit(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """When a client edits the datetime of their own PENDING self-booking request
+    directly (same row), the handler re-arms pending expiry via
+    cancel_pending_expiry + schedule_pending_expiry against the updated appointment.
+    This must replace the old job, not leave a duplicate behind, and the new job's
+    run time must reflect the new datetime."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_pending_expiry(sample_appointment)
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    job_id = f"appt_{sample_appointment.id}_expire"
+    assert jobs[0].id == job_id
+    old_run_time = jobs[0].next_run_time
+
+    new_datetime = datetime.fromisoformat(sample_appointment.datetime) + timedelta(days=1)
+    sample_appointment.datetime = new_datetime.isoformat()
+
+    await appointment_scheduler.cancel_pending_expiry(sample_appointment.id)
+    await appointment_scheduler.schedule_pending_expiry(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == job_id
+
+    expected_run_time = new_datetime - timedelta(hours=2)
+    actual_run_time = jobs[0].next_run_time
+    if actual_run_time.tzinfo:
+        expected_run_time = expected_run_time.replace(tzinfo=actual_run_time.tzinfo)
+    assert abs((actual_run_time - expected_run_time).total_seconds()) < 1
+    assert actual_run_time != old_run_time
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
 async def test_expire_pending_request_job_expires_if_pending_and_client_created(
     mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
@@ -1606,11 +1655,14 @@ async def test_expire_pending_request_job_skips_if_not_pending(
 
 
 @pytest.mark.asyncio
-async def test_expire_pending_request_job_skips_if_not_client_created(
+async def test_expire_pending_request_job_skips_if_admin_created_without_proposal(
     mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test that the expiry job skips a PENDING request that was created by an admin
-    (only client self-booking requests can expire)."""
+    """Test that the expiry job skips a PENDING, admin-created request that has no
+    outstanding client counter-proposal (proposed_datetime=None) -- this is the
+    ordinary unreviewed admin invite, which lives in the auto_confirm zone, not
+    pending_expiry."""
+    sample_appointment.proposed_datetime = None
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
@@ -1637,6 +1689,72 @@ async def test_expire_pending_request_job_skips_if_not_client_created(
 
             mock_appointment_repo.update_appointment_status.assert_not_called()
             mock_notification_service.notify_client_pending_request_expired.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_job_expires_admin_created_with_client_proposal(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
+):
+    """New case: a PENDING+ADMIN appointment where the client proposed their own
+    time (request_reschedule_by_client) and the admin never answered that
+    counter-proposal must expire too, exactly like a self-booking request --
+    status becomes EXPIRED and the outstanding proposal fields are cleared."""
+    admin_invite_with_counter = Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Test Clinic",
+        proposed_datetime=(_current_tashkent_time() + timedelta(days=1)).isoformat(),
+        proposed_by=CreatedBy.CLIENT,
+        proposal_message_id=555,
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = admin_invite_with_counter
+    mock_user_repo.get_client_by_id.return_value = MagicMock(telegram_user_id=12345)
+    mock_notification_service.notify_client_pending_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_pending_request_job(admin_invite_with_counter.id)
+
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                admin_invite_with_counter.id,
+                AppointmentStatus.EXPIRED,
+                ANY,
+            )
+            mock_notification_service.notify_client_pending_request_expired.assert_called_once_with(
+                admin_invite_with_counter
+            )
+            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
+                admin_invite_with_counter.id, None
+            )
+            mock_appointment_repo.update_proposal_message_id.assert_called_once_with(
+                admin_invite_with_counter.id, None
+            )
+            mock_appointment_repo.update_proposed_by.assert_called_once_with(
+                admin_invite_with_counter.id, None
+            )
 
 
 @pytest.mark.asyncio
@@ -1722,6 +1840,402 @@ async def test_expire_pending_request_job_handles_notification_failure(
                 AppointmentStatus.EXPIRED,
                 ANY,
             )
+
+
+# Phase 2a-bis: Proposal Reminder Tests (fires 3h before the proposed datetime)
+
+
+@pytest.mark.asyncio
+async def test_schedule_proposal_reminder_creates_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that scheduling a proposal reminder creates exactly 1 job with the
+    correct job ID."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_appointment.id}_propose_reminder"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_proposal_reminder_time_calculated_correctly(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that the proposal reminder runs 3 hours before appointment.datetime
+    (i.e. the proposed datetime, since callers pass a proposal_target with
+    datetime=proposed_datetime)."""
+    scheduler.start()
+
+    expected_reminder_time = datetime.fromisoformat(sample_appointment.datetime) - timedelta(hours=3)
+
+    await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    actual_reminder_time = jobs[0].next_run_time
+
+    if actual_reminder_time.tzinfo:
+        expected_reminder_time = expected_reminder_time.replace(tzinfo=actual_reminder_time.tzinfo)
+
+    assert abs(
+        (actual_reminder_time - expected_reminder_time).total_seconds()
+    ) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_proposal_reminder_not_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """When the reminder time (datetime - 3h) is already in the past, no
+    proposal reminder job should be scheduled."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(hours=1)).isoformat()
+
+    await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_proposal_reminder_scheduling_does_not_call_add_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Regression test for the past-due guard: add_job must not be invoked
+    when the reminder time is already in the past."""
+    scheduler.start()
+
+    sample_appointment.datetime = (_current_tashkent_time() + timedelta(minutes=30)).isoformat()
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+
+        mock_add_job.assert_not_called()
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_proposal_reminder_skipped_while_pending_expiry_still_scheduled(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Edge case asymmetry: with the appointment 2h15m out, pending expiry
+    (T-2h) is not yet past-due and gets scheduled, but the proposal reminder
+    (T-3h) is already past-due and gets skipped."""
+    scheduler.start()
+
+    sample_appointment.datetime = (
+        _current_tashkent_time() + timedelta(hours=2, minutes=15)
+    ).isoformat()
+
+    await appointment_scheduler.schedule_pending_expiry(sample_appointment)
+    assert len(scheduler.get_jobs()) == 1
+
+    await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+    assert len(scheduler.get_jobs()) == 1
+    assert scheduler.get_jobs()[0].id == f"appt_{sample_appointment.id}_expire"
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_proposal_reminder_removes_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling a proposal reminder removes the scheduled job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+    assert len(scheduler.get_jobs()) == 1
+
+    await appointment_scheduler.cancel_proposal_reminder(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_proposal_reminder_idempotent_no_error(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Test that cancelling a non-existent proposal reminder doesn't raise error."""
+    scheduler.start()
+
+    # Cancel a proposal reminder that was never scheduled
+    await appointment_scheduler.cancel_proposal_reminder(999)
+
+    # Should not raise error
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_proposal_reminder_full_scenario_cancelled_before_firing(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Full scenario: admin proposes a new time -> proposal reminder is scheduled
+    for proposed_dt - 3h -> client resolves the proposal (accept/reject) before
+    the reminder fires -> cancel_proposal_reminder removes the job so it never runs."""
+    scheduler.start()
+
+    proposed_dt = _current_tashkent_time() + timedelta(days=3)
+    sample_appointment.proposed_datetime = proposed_dt.isoformat()
+    sample_appointment.proposed_by = CreatedBy.ADMIN
+    proposal_target = replace(sample_appointment, datetime=sample_appointment.proposed_datetime)
+
+    # Admin proposes a new time -> handler schedules the reminder against proposal_target
+    await appointment_scheduler.schedule_proposal_reminder(proposal_target)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    job_id = f"appt_{sample_appointment.id}_propose_reminder"
+    assert jobs[0].id == job_id
+
+    expected_reminder_time = proposed_dt - timedelta(hours=3)
+    actual_reminder_time = jobs[0].next_run_time
+    if actual_reminder_time.tzinfo:
+        expected_reminder_time = expected_reminder_time.replace(tzinfo=actual_reminder_time.tzinfo)
+    assert abs((actual_reminder_time - expected_reminder_time).total_seconds()) < 1
+
+    # Client accepts/rejects the proposal before the reminder fires -> handler
+    # cancels the pending reminder job (same as cancel_pending_expiry).
+    await appointment_scheduler.cancel_proposal_reminder(sample_appointment.id)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.fixture
+def proposal_reminder_request(sample_appointment):
+    """A PENDING self-booking request with an outstanding admin-proposed time,
+    eligible for send_proposal_reminder_job."""
+    return Appointment(
+        id=1,
+        clinic_id=1,
+        client_id=1,
+        datetime=sample_appointment.datetime,
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Test Clinic",
+        proposed_datetime=(datetime.now() + timedelta(days=3)).isoformat(),
+        proposed_by=CreatedBy.ADMIN,
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_notifies_if_pending_and_proposed_by_admin(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
+):
+    """Test that the reminder job notifies the client for a still-PENDING request
+    with an outstanding admin proposal."""
+    mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+    mock_notification_service.notify_client_proposal_reminder = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await send_proposal_reminder_job(proposal_reminder_request.id)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_called_once_with(
+                proposal_reminder_request
+            )
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_handles_missing_appointment(
+    mock_appointment_repo, mock_user_repo, mock_notification_service
+):
+    """Test that the reminder job silently returns when the appointment is not found."""
+    mock_appointment_repo.get_appointment_by_id.return_value = None
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            # Should not raise error
+            await send_proposal_reminder_job(999)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_skips_if_not_pending(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
+):
+    """Test that the reminder job skips a request that is no longer PENDING
+    (already confirmed/rejected before the reminder fired)."""
+    proposal_reminder_request.status = AppointmentStatus.CONFIRMED
+    mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await send_proposal_reminder_job(proposal_reminder_request.id)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_skips_if_not_client_created(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
+):
+    """Test that the reminder job skips a request that was originally created by
+    an admin (this reminder is only for client self-booking requests)."""
+    proposal_reminder_request.created_by = CreatedBy.ADMIN
+    mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await send_proposal_reminder_job(proposal_reminder_request.id)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_skips_if_no_proposed_datetime(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
+):
+    """Test that the reminder job skips a request with no outstanding proposal."""
+    proposal_reminder_request.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await send_proposal_reminder_job(proposal_reminder_request.id)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_skips_if_proposed_by_not_admin(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
+):
+    """Test that the reminder job skips a request whose outstanding proposal was
+    made by the client (that's the separate reschedule-by-client scenario, not
+    the clinic-proposes-a-new-time scenario this reminder targets)."""
+    proposal_reminder_request.proposed_by = CreatedBy.CLIENT
+    mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await send_proposal_reminder_job(proposal_reminder_request.id)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
 
 
 @pytest.fixture
@@ -1950,13 +2464,18 @@ async def test_expire_reschedule_request_job_clears_proposal_if_confirmed_and_cl
 
 
 @pytest.mark.asyncio
-async def test_expire_reschedule_request_job_skips_if_not_confirmed(
+async def test_expire_reschedule_request_job_proceeds_regardless_of_status(
     mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
 ):
-    """Test that the expiry job skips an appointment that is no longer CONFIRMED
-    (e.g. it was already cancelled)."""
+    """PR3: the guard was generalized from `status != CONFIRMED or proposed_datetime
+    is None or proposed_by != CLIENT` down to just `proposed_datetime is None` -- an
+    outstanding proposal now expires the same way no matter what status the
+    appointment is sitting in. This is a direct regression test for the removed
+    status check (formerly named test_..._skips_if_not_confirmed, which asserted
+    the opposite of current behavior)."""
     sample_reschedule_appointment.status = AppointmentStatus.CANCELLED
     mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+    mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(return_value=True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -1980,9 +2499,71 @@ async def test_expire_reschedule_request_job_skips_if_not_confirmed(
 
             await expire_reschedule_request_job(sample_reschedule_appointment.id)
 
-            mock_appointment_repo.update_proposed_datetime.assert_not_called()
-            mock_appointment_repo.update_proposed_by.assert_not_called()
-            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            mock_appointment_repo.update_proposed_by.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            mock_notification_service.notify_client_reschedule_request_expired.assert_called_once_with(
+                sample_reschedule_appointment
+            )
+
+
+@pytest.mark.asyncio
+async def test_expire_reschedule_request_job_clears_proposal_for_pending_admin_created_counter_offer(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
+):
+    """PR3: the guard's generalization specifically covers the new PENDING+ADMIN
+    negotiation branch -- a client who countered an admin invite with their own
+    time (proposed_by=CLIENT) and never got an answer has that proposal expired
+    the same way a CONFIRMED-appointment negotiation would. The appointment stays
+    PENDING at its original datetime; only the outstanding proposal is cleared.
+    Restoring auto_confirm afterwards is a known, intentionally unimplemented gap
+    (see the TODO in expire_reschedule_request_job) and is not asserted here."""
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.ADMIN
+    original_datetime = sample_appointment.datetime
+    sample_appointment.proposed_datetime = (datetime.now() + timedelta(days=3)).isoformat()
+    sample_appointment.proposed_by = CreatedBy.CLIENT
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_reschedule_request_job(sample_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
+                sample_appointment.id, None
+            )
+            mock_appointment_repo.update_proposed_by.assert_called_once_with(
+                sample_appointment.id, None
+            )
+            mock_notification_service.notify_client_reschedule_request_expired.assert_called_once_with(
+                sample_appointment
+            )
+            assert sample_appointment.status is AppointmentStatus.PENDING
+            assert sample_appointment.datetime == original_datetime
 
 
 @pytest.mark.asyncio
@@ -2022,13 +2603,16 @@ async def test_expire_reschedule_request_job_skips_if_no_proposed_datetime(
 
 
 @pytest.mark.asyncio
-async def test_expire_reschedule_request_job_skips_if_proposed_by_not_client(
+async def test_expire_reschedule_request_job_also_expires_admin_proposed_counter_offer(
     mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
 ):
-    """Test that the expiry job skips an admin-proposed counter-offer (2b behavior) -
-    only client-initiated reschedule requests expire via this job."""
+    """PR2 Part 4: the job's guard no longer excludes admin-initiated counter-offers
+    -- an unanswered admin proposal on a CONFIRMED appointment expires exactly like
+    a client-initiated one (regression test for the removed `proposed_by != CLIENT`
+    guard)."""
     sample_reschedule_appointment.proposed_by = CreatedBy.ADMIN
     mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+    mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(return_value=True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -2052,9 +2636,16 @@ async def test_expire_reschedule_request_job_skips_if_proposed_by_not_client(
 
             await expire_reschedule_request_job(sample_reschedule_appointment.id)
 
-            mock_appointment_repo.update_proposed_datetime.assert_not_called()
-            mock_appointment_repo.update_proposed_by.assert_not_called()
-            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            mock_appointment_repo.update_proposed_by.assert_called_once_with(
+                sample_reschedule_appointment.id, None
+            )
+            mock_notification_service.notify_client_reschedule_request_expired.assert_called_once_with(
+                sample_reschedule_appointment
+            )
 
 
 @pytest.mark.asyncio
@@ -2428,3 +3019,379 @@ async def test_auto_confirm_pending_job_handles_missing_appointment(
             await auto_confirm_pending_job(999)
 
             mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+# --- Regression: users.created_at timezone migration must not disturb the
+# APScheduler job store. schedule_* only ever touches the in-memory
+# AsyncIOScheduler job store (appointment jobs), while the migration script
+# only ever touches the on-disk `users` table via plain sqlite3 -- these are
+# fully independent, but the customer explicitly asked for this to be
+# proven, not merely assumed from "they're in different files".
+@pytest.mark.asyncio
+async def test_users_created_at_migration_does_not_disturb_scheduled_jobs(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Running scripts/migrate_users_created_at_timezone.py against a users
+    table must leave every already-scheduled APScheduler job (id and
+    next_run_time) completely untouched."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+    await appointment_scheduler.schedule_pending_expiry(sample_appointment)
+
+    jobs_before = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert len(jobs_before) == 3
+
+    # Actually exercise the real migration against a real users table, in
+    # a temp cwd, to formally prove there is no interaction with the
+    # scheduler's job store (which lives entirely in-process/in-memory
+    # here, not on disk).
+    original_cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        os.chdir(tmp_dir)
+        try:
+            connection = await aiosqlite.connect(str(Path(tmp_dir) / "migration_users.db"))
+            try:
+                await connection.execute(
+                    "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+                )
+                user_repo = UserRepository(connection)
+                await user_repo.init()
+
+                await user_repo.create_user(
+                    User(
+                        full_name="Иванов Иван",
+                        phone="+998901234567",
+                        role=Role.CLIENT,
+                        telegram_user_id=1001,
+                        created_at=get_current_tashkent_time(),
+                    )
+                )
+            finally:
+                await connection.close()
+
+            db_path = Path(tmp_dir) / "data" / "data_base.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            sync_conn = sqlite3.connect(db_path)
+            try:
+                sync_conn.execute(
+                    "CREATE TABLE users(id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT)"
+                )
+                sync_conn.execute(
+                    "INSERT INTO users(created_at) VALUES ('2026-01-01 10:00:00')"
+                )
+                sync_conn.commit()
+            finally:
+                sync_conn.close()
+
+            migrate_users_created_at()
+
+            verify_conn = sqlite3.connect(db_path)
+            try:
+                migrated_value = verify_conn.execute(
+                    "SELECT created_at FROM users"
+                ).fetchone()[0]
+            finally:
+                verify_conn.close()
+
+            # Migration must have actually done real work, not been a no-op.
+            assert migrated_value == "2026-01-01 15:00:00"
+        finally:
+            os.chdir(original_cwd)
+
+    jobs_after = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+
+    assert jobs_after == jobs_before
+
+    scheduler.shutdown(wait=False)
+
+
+# --- resync_appointment_jobs: single source of truth for the full job set ---
+# Recomputes ALL job kinds (pending_expiry, proposal_reminder, auto_confirm,
+# reschedule_expiry, appointment_reminders, appointment_completions) from
+# status/created_by/proposed_datetime/proposed_by in one call, replacing the
+# ad-hoc per-handler cancel/schedule sequences used elsewhere.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal_status",
+    [
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.COMPLETED,
+        AppointmentStatus.NO_SHOW,
+        AppointmentStatus.EXPIRED,
+    ],
+)
+async def test_resync_appointment_jobs_terminal_status_cancels_everything(
+    appointment_scheduler, scheduler, sample_appointment, terminal_status
+):
+    """Any terminal status must cancel every kind of job that might already be
+    scheduled and must not schedule anything new."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.CLIENT
+    await appointment_scheduler.schedule_pending_expiry(sample_appointment)
+    await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
+    assert len(scheduler.get_jobs()) == 3
+
+    sample_appointment.status = terminal_status
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+        mock_add_job.assert_not_called()
+
+    assert scheduler.get_jobs() == []
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_confirmed_without_proposal_schedules_reminders_and_completion(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """CONFIRMED with no outstanding proposal: only reminders + completion are
+    scheduled; the PENDING-only and reschedule-negotiation jobs are absent."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+        f"appt_{sample_appointment.id}_complete",
+    }
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_confirmed_with_proposal_also_schedules_reschedule_expiry(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """CONFIRMED with a client-initiated proposal outstanding: reschedule_expiry
+    is added on top of reminders/completion -- and reminders/completion still
+    run against the ORIGINAL datetime, since nothing has been agreed yet."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    original_datetime = sample_appointment.datetime
+    proposed_dt = _current_tashkent_time() + timedelta(days=5)
+    sample_appointment.proposed_datetime = proposed_dt.isoformat()
+    sample_appointment.proposed_by = CreatedBy.CLIENT
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert set(jobs) == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+        f"appt_{sample_appointment.id}_complete",
+        f"appt_{sample_appointment.id}_resch_expire",
+    }
+
+    expected_24h = datetime.fromisoformat(original_datetime) - timedelta(hours=24)
+    actual_24h = jobs[f"appt_{sample_appointment.id}_24h"]
+    if actual_24h.tzinfo:
+        expected_24h = expected_24h.replace(tzinfo=actual_24h.tzinfo)
+    assert abs((actual_24h - expected_24h).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_confirmed_with_admin_proposal_also_schedules_reschedule_expiry(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Symmetric case for PR2 Part 2 (admin proposes a new time for a CONFIRMED
+    appointment): the CONFIRMED branch of resync_appointment_jobs does not branch
+    on proposed_by, so an admin-initiated proposal must schedule the exact same
+    job set as a client-initiated one (reminders/completion against the ORIGINAL
+    datetime, plus reschedule_expiry)."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    original_datetime = sample_appointment.datetime
+    proposed_dt = _current_tashkent_time() + timedelta(days=5)
+    sample_appointment.proposed_datetime = proposed_dt.isoformat()
+    sample_appointment.proposed_by = CreatedBy.ADMIN
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert set(jobs) == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+        f"appt_{sample_appointment.id}_complete",
+        f"appt_{sample_appointment.id}_resch_expire",
+    }
+
+    expected_24h = datetime.fromisoformat(original_datetime) - timedelta(hours=24)
+    actual_24h = jobs[f"appt_{sample_appointment.id}_24h"]
+    if actual_24h.tzinfo:
+        expected_24h = expected_24h.replace(tzinfo=actual_24h.tzinfo)
+    assert abs((actual_24h - expected_24h).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_pending_client_no_proposal_schedules_pending_expiry_only(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """PENDING self-booking (created_by=CLIENT) with no counter-proposal from
+    the clinic: only pending_expiry is scheduled, relative to the appointment's
+    own requested datetime."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.CLIENT
+    sample_appointment.proposed_datetime = None
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert set(jobs) == {f"appt_{sample_appointment.id}_expire"}
+
+    expected_expiry = datetime.fromisoformat(sample_appointment.datetime) - timedelta(hours=2)
+    actual_expiry = jobs[f"appt_{sample_appointment.id}_expire"]
+    if actual_expiry.tzinfo:
+        expected_expiry = expected_expiry.replace(tzinfo=actual_expiry.tzinfo)
+    assert abs((actual_expiry - expected_expiry).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_pending_client_admin_proposal_anchors_to_proposed_datetime(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """PENDING self-booking with a clinic counter-proposal outstanding
+    (proposed_datetime + proposed_by=ADMIN): pending_expiry AND proposal_reminder
+    must both be computed against the PROPOSED datetime, not the original
+    appointment.datetime -- this is the discriminating case for the
+    replace(appointment, datetime=proposed_datetime) redirection."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.CLIENT
+    proposed_dt = _current_tashkent_time() + timedelta(days=5)
+    sample_appointment.proposed_datetime = proposed_dt.isoformat()
+    sample_appointment.proposed_by = CreatedBy.ADMIN
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert set(jobs) == {
+        f"appt_{sample_appointment.id}_expire",
+        f"appt_{sample_appointment.id}_propose_reminder",
+    }
+
+    expected_expiry = proposed_dt - timedelta(hours=2)
+    expected_reminder = proposed_dt - timedelta(hours=3)
+
+    actual_expiry = jobs[f"appt_{sample_appointment.id}_expire"]
+    actual_reminder = jobs[f"appt_{sample_appointment.id}_propose_reminder"]
+
+    if actual_expiry.tzinfo:
+        expected_expiry = expected_expiry.replace(tzinfo=actual_expiry.tzinfo)
+    if actual_reminder.tzinfo:
+        expected_reminder = expected_reminder.replace(tzinfo=actual_reminder.tzinfo)
+
+    assert abs((actual_expiry - expected_expiry).total_seconds()) < 1
+    assert abs((actual_reminder - expected_reminder).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_pending_admin_created_schedules_auto_confirm_only(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """PENDING appointment created by the ADMIN (client hasn't reacted yet):
+    only auto_confirm is scheduled -- pending_expiry/proposal_reminder never
+    apply to an admin-created row."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.ADMIN
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {f"appt_{sample_appointment.id}_autoconf"}
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_pending_admin_created_with_proposal_schedules_pending_expiry(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """PENDING+ADMIN with a client counter-proposal outstanding must NOT keep ticking
+    towards auto_confirm -- the clinic needs to decide on the client's proposed time
+    first. Instead of auto_confirm (or a reschedule_expiry that would leave the
+    original invite silently un-actionable), the request now expires like a
+    self-booking request: pending_expiry is scheduled, anchored on the appointment's
+    ORIGINAL datetime (NOT the proposed_datetime -- unlike the PENDING+CLIENT case
+    with an admin counter-proposal, which redirects to the proposed time). No
+    auto_confirm and no reschedule_expiry job may remain.
+
+    Pre-seeds a real auto_confirm job first (via a first resync with no proposal)
+    so this proves the job is actively CANCELLED by the second resync, not merely
+    absent because it was never created."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.ADMIN
+    sample_appointment.proposed_datetime = None
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+    assert {job.id for job in scheduler.get_jobs()} == {f"appt_{sample_appointment.id}_autoconf"}
+
+    original_datetime = sample_appointment.datetime
+    proposed_dt = _current_tashkent_time() + timedelta(days=5)
+    sample_appointment.proposed_datetime = proposed_dt.isoformat()
+    sample_appointment.proposed_by = CreatedBy.CLIENT
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert set(jobs) == {f"appt_{sample_appointment.id}_expire"}
+    assert f"appt_{sample_appointment.id}_autoconf" not in jobs
+    assert f"appt_{sample_appointment.id}_resch_expire" not in jobs
+
+    expected_expiry = datetime.fromisoformat(original_datetime) - timedelta(hours=2)
+    actual_expiry = jobs[f"appt_{sample_appointment.id}_expire"]
+    if actual_expiry.tzinfo:
+        expected_expiry = expected_expiry.replace(tzinfo=actual_expiry.tzinfo)
+    assert abs((actual_expiry - expected_expiry).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_noop_without_appointment_id(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """An appointment without a usable id (None or 0) must be a silent no-op:
+    nothing is added or removed from the job store."""
+    scheduler.start()
+
+    for missing_id in (None, 0):
+        sample_appointment.id = missing_id
+
+        with patch.object(scheduler, "add_job") as mock_add_job, \
+             patch.object(scheduler, "remove_job") as mock_remove_job:
+            await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+            mock_add_job.assert_not_called()
+            mock_remove_job.assert_not_called()
+
+    scheduler.shutdown(wait=False)

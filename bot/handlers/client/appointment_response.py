@@ -29,7 +29,6 @@ from bot.keyboards.client.appointment_manage_kb import (
 )
 from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
 from bot.keyboards.client.appointment_response_kb import (
-    appointment_reminder_details_kb,
     appointment_response_kb,
     cancel_confirmation_kb,
 )
@@ -180,6 +179,7 @@ def create_client_appointment_router(
                         await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                         await appointment_scheduler.cancel_appointment_completions(appointment_id)
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.cancel_proposal_reminder(appointment_id)
                         await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
                         await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
@@ -217,10 +217,7 @@ def create_client_appointment_router(
                     )
 
                     if appointment_scheduler:
-                        await appointment_scheduler.cancel_pending_expiry(appointment_id)
-                        await appointment_scheduler.cancel_auto_confirm(appointment_id)
-                        await appointment_scheduler.schedule_appointment_reminders(appointment)
-                        await appointment_scheduler.schedule_appointment_completion(appointment)
+                        await appointment_scheduler.resync_appointment_jobs(appointment)
 
                     await callback_query.message.edit_text(
                         "✅ Вы согласились на новое время. Запись подтверждена."
@@ -261,8 +258,7 @@ def create_client_appointment_router(
                     )
 
                     if appointment_scheduler:
-                        await appointment_scheduler.cancel_pending_expiry(appointment_id)
-                        await appointment_scheduler.cancel_auto_confirm(appointment_id)
+                        await appointment_scheduler.resync_appointment_jobs(appointment)
 
                     await callback_query.message.edit_text(
                         "❌ Вы отклонили предложенное время. Если запись всё ещё нужна, "
@@ -329,6 +325,7 @@ def create_client_appointment_router(
                         await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                         await appointment_scheduler.cancel_appointment_completions(appointment_id)
                         await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                        await appointment_scheduler.cancel_proposal_reminder(appointment_id)
                         await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
                         await appointment_scheduler.cancel_auto_confirm(appointment_id)
 
@@ -364,31 +361,17 @@ def create_client_appointment_router(
                     appointment_id, callback_query.from_user.id
                 )
 
-                # Get appointment and client info for notification
-                appointment, client = await appointment_management_service.get_appointment_with_client_info(
+                # Get appointment info for job resync
+                appointment, _ = await appointment_management_service.get_appointment_with_client_info(
                     appointment_id
                 )
 
                 if appointment_scheduler:
-                    await appointment_scheduler.cancel_auto_confirm(appointment_id)
+                    await appointment_scheduler.resync_appointment_jobs(appointment)
 
                 # Send success message to client
-                await callback_query.message.edit_text(
-                    "✅ Спасибо! Ваша запись подтверждена",
-                    reply_markup=appointment_reminder_details_kb(appointment.id),
-                )
+                await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
                 await callback_query.answer()
-
-                # Notify admin about confirmation
-                if notification_service and appointment.created_by_telegram_id:
-                    try:
-                        await notification_service.notify_admin_confirmation(
-                            appointment.created_by_telegram_id,
-                            appointment,
-                            client.full_name if client else "Неизвестный клиент",
-                        )
-                    except Exception:
-                        pass  # Graceful fail если не получилось отправить
 
             except AppointmentNotFoundError:
                 await callback_query.answer("Запись не найдена", show_alert=True)
@@ -454,6 +437,7 @@ def create_client_appointment_router(
                     await appointment_scheduler.cancel_appointment_reminders(appointment_id)
                     await appointment_scheduler.cancel_appointment_completions(appointment_id)
                     await appointment_scheduler.cancel_pending_expiry(appointment_id)
+                    await appointment_scheduler.cancel_proposal_reminder(appointment_id)
                     await appointment_scheduler.cancel_reschedule_expiry(appointment_id)
                     await appointment_scheduler.cancel_auto_confirm(appointment_id)
 

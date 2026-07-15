@@ -3,10 +3,27 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from unittest.mock import AsyncMock, MagicMock
 
+from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
+
+
+def _get_handler_by_name(router, name):
+    for handler in router.callback_query.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback
+    raise AssertionError(f"{name} handler not found on router")
+
+
+def _make_callback_query(data):
+    callback_query = MagicMock()
+    callback_query.data = data
+    callback_query.from_user.id = 12345
+    callback_query.message.edit_text = AsyncMock()
+    callback_query.answer = AsyncMock()
+    return callback_query
 
 
 # Helper functions for creating test data
@@ -120,6 +137,48 @@ async def test_handle_appointment_confirm_updates_status():
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
 
 
+@pytest.mark.asyncio
+async def test_handle_appointment_confirm_handler_resyncs_jobs_and_edits_without_reply_markup():
+    """PR3: handle_appointment_confirm now serves ONLY the 2h-reminder confirm
+    button (the initial-invite confirm moved to the new appointment_invite router).
+    It resyncs the full job set via resync_appointment_jobs (replacing the old
+    cancel_pending_expiry + cancel_auto_confirm pair) and edits the message with a
+    plain success text -- no reply_markup is passed at all anymore."""
+    confirmed_appointment = _appointment()
+    confirmed_appointment.status = AppointmentStatus.CONFIRMED
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.confirm_appointment_by_client = AsyncMock(return_value=confirmed_appointment)
+    appointment_management_service.get_appointment_with_client_info = AsyncMock(
+        return_value=(confirmed_appointment, _client())
+    )
+
+    notification_service = MagicMock()
+    notification_service.notify_admin_confirmation = AsyncMock()
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+    appointment_scheduler.cancel_pending_expiry = AsyncMock()
+    appointment_scheduler.cancel_auto_confirm = AsyncMock()
+
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+    )
+    handle_appointment_confirm = _get_handler_by_name(router, "handle_appointment_confirm")
+
+    callback_query = _make_callback_query("appt_confirm:1")
+    await handle_appointment_confirm(callback_query)
+
+    appointment_management_service.confirm_appointment_by_client.assert_awaited_once_with(1, 12345)
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(confirmed_appointment)
+    appointment_scheduler.cancel_pending_expiry.assert_not_awaited()
+    appointment_scheduler.cancel_auto_confirm.assert_not_awaited()
+
+    callback_query.message.edit_text.assert_awaited_once_with("✅ Спасибо! Ваша запись подтверждена")
+    assert "reply_markup" not in callback_query.message.edit_text.call_args.kwargs
+    callback_query.answer.assert_awaited_once()
+
+
 # Tests for cancellation flow
 @pytest.mark.asyncio
 async def test_handle_appointment_cancel_updates_status():
@@ -161,6 +220,38 @@ async def test_handler_sends_confirmation_message_to_admin():
     assert admin_id == 54321
     assert notified_appt.id == 1
     assert client_name == "Иванов Иван"
+
+
+@pytest.mark.asyncio
+async def test_handle_appointment_confirm_handler_does_not_notify_admin():
+    """PR3: handle_appointment_confirm (2h-reminder confirm) no longer notifies the
+    admin at all -- that responsibility moved to the initial-invite confirm handler
+    in bot/handlers/client/appointment_invite.py, which fires notify_admin_confirmation
+    itself. The 2h-reminder handler must leave notification_service alone."""
+    confirmed_appointment = _appointment()
+    confirmed_appointment.status = AppointmentStatus.CONFIRMED
+    confirmed_appointment.created_by_telegram_id = 54321
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.confirm_appointment_by_client = AsyncMock(return_value=confirmed_appointment)
+    appointment_management_service.get_appointment_with_client_info = AsyncMock(
+        return_value=(confirmed_appointment, _client())
+    )
+
+    notification_service = MagicMock()
+    notification_service.notify_admin_confirmation = AsyncMock()
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+    )
+    handle_appointment_confirm = _get_handler_by_name(router, "handle_appointment_confirm")
+
+    await handle_appointment_confirm(_make_callback_query("appt_confirm:1"))
+
+    notification_service.notify_admin_confirmation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -825,9 +825,11 @@ async def test_propose_new_datetime_sets_proposed_without_touching_status_or_dat
 
 
 @pytest.mark.asyncio
-async def test_propose_new_datetime_raises_when_proposal_already_outstanding():
+async def test_propose_new_datetime_raises_when_own_proposal_already_outstanding():
+    """Admin cannot propose a second time while still waiting on the client's
+    answer to its own earlier proposal (proposed_by=ADMIN)."""
     appt_repo = FakeAppointmentRepository(
-        [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN)]
     )
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
@@ -836,6 +838,49 @@ async def test_propose_new_datetime_raises_when_proposal_already_outstanding():
 
     assert appt_repo.proposed_datetime_updates == []
     assert appt_repo.proposed_by_updates == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_overwrites_when_proposed_by_client():
+    """New allowed behavior: an admin counter-proposing over a CLIENT proposal
+    (client asked for a reschedule, admin now offers a different time) is not
+    blocked by the guard -- it overwrites proposed_datetime/proposed_by."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(
+            1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED,
+            proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.CLIENT,
+        )]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00")
+
+    assert appointment.proposed_datetime == "2026-07-12 10:00"
+    assert appointment.proposed_by is CreatedBy.ADMIN
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.proposed_datetime_updates == [(1, "2026-07-12 10:00")]
+    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_outstanding_proposal():
+    """propose_new_datetime is no longer restricted to PENDING self-booking
+    requests -- it now also works on a CONFIRMED appointment with a clean
+    negotiation state (this is the admin-initiated reschedule proposal flow)."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
+
+    assert appointment.proposed_datetime == "2026-07-11 10:00"
+    assert appointment.proposed_by is CreatedBy.ADMIN
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.proposed_datetime_updates == [(1, "2026-07-11 10:00")]
+    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
 
 
 @pytest.mark.asyncio
@@ -1069,7 +1114,9 @@ async def test_request_reschedule_by_client_raises_when_finalized(status):
 
 
 @pytest.mark.asyncio
-async def test_request_reschedule_by_client_raises_when_pending():
+async def test_request_reschedule_by_client_succeeds_when_pending_edits_datetime_directly():
+    """Own PENDING self-booking request: client edits datetime directly on the same
+    row, no proposal negotiation (the clinic hasn't confirmed anything yet)."""
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING)]
@@ -1078,8 +1125,86 @@ async def test_request_reschedule_by_client_raises_when_pending():
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
     new_dt = (now + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
-    with pytest.raises(AwaitingClinicDecisionError):
+    appointment = await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appointment.datetime == new_dt
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appointment.proposed_datetime is None
+    assert appt_repo.updated == [(1, appointment)]
+    assert appt_repo.proposed_datetime_updates == []
+    assert appt_repo.proposed_by_updates == []
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_succeeds_when_pending_and_admin_created():
+    """PR3: an admin-created PENDING request (an invite the client hasn't answered
+    yet) is NOT the client's own self-booking row, so it does not go through the
+    direct-edit branch -- but it is no longer categorically blocked either. It now
+    goes through the same negotiation branch as a CONFIRMED appointment: the client's
+    counter-time is recorded as a proposal (proposed_by=CLIENT) awaiting the clinic's
+    decision, the appointment's own status/datetime stay untouched."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.ADMIN)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    original_dt = appt_repo.appointments[0].datetime
+    new_dt = (now + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    appointment = await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appointment.datetime == original_dt
+    assert appointment.proposed_datetime == new_dt
+    assert appointment.proposed_by is CreatedBy.CLIENT
+    assert appt_repo.updated == []
+    assert appt_repo.proposed_datetime_updates == [(1, new_dt)]
+    assert appt_repo.proposed_by_updates == [(1, CreatedBy.CLIENT)]
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_raises_when_pending_admin_created_proposal_already_outstanding():
+    """PENDING+ADMIN with a proposal already outstanding (either side) is still
+    blocked by NegotiationInProgressError -- the new PR3 branch only opens the door
+    to a first proposal, it does not allow stacking a second one."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(
+            1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.ADMIN,
+            proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN,
+        )]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    new_dt = (now + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    with pytest.raises(NegotiationInProgressError):
         await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appt_repo.updated == []
+    assert appt_repo.proposed_datetime_updates == []
+    assert appt_repo.proposed_by_updates == []
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_raises_when_pending_new_time_within_cutoff():
+    """The cutoff guard must still apply to the PENDING direct-edit branch: it fires
+    before the datetime is ever written to the row."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=3), status=AppointmentStatus.PENDING)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    new_dt = (now + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M")
+    with pytest.raises(CancellationWindowExpiredError):
+        await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appt_repo.updated == []
+    assert appt_repo.proposed_datetime_updates == []
+    assert appt_repo.proposed_by_updates == []
 
 
 @pytest.mark.asyncio
@@ -1121,11 +1246,12 @@ async def test_request_reschedule_by_client_raises_when_new_time_within_cutoff()
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("existing_proposed_by", [CreatedBy.ADMIN, CreatedBy.CLIENT])
-async def test_request_reschedule_by_client_raises_when_proposal_already_outstanding(existing_proposed_by):
+@pytest.mark.parametrize("status", [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING])
+async def test_request_reschedule_by_client_raises_when_proposal_already_outstanding(status, existing_proposed_by):
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(
-            1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED,
+            1, now + timedelta(days=1), status=status,
             proposed_datetime="2026-07-11 10:00", proposed_by=existing_proposed_by,
         )]
     )
@@ -1136,7 +1262,9 @@ async def test_request_reschedule_by_client_raises_when_proposal_already_outstan
     with pytest.raises(NegotiationInProgressError):
         await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
 
+    assert appt_repo.updated == []
     assert appt_repo.proposed_datetime_updates == []
+    assert appt_repo.proposed_by_updates == []
 
 
 @pytest.mark.asyncio
@@ -1157,6 +1285,33 @@ async def test_accept_client_reschedule_promotes_datetime_and_clears_proposal():
     assert appointment.proposed_datetime is None
     assert appointment.proposed_by is None
     assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.updated[0][0] == 1
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
+
+
+@pytest.mark.asyncio
+async def test_accept_client_reschedule_confirms_pending_admin_created_appointment():
+    """PR3: accepting a client's counter-proposal on a PENDING+ADMIN invite (the
+    negotiation branch opened by request_reschedule_by_client) promotes the
+    appointment straight to CONFIRMED at the proposed time -- this is the fix for
+    the bug where accept_client_reschedule never touched status at all."""
+    now = get_current_tashkent_datetime()
+    new_dt = (now + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(
+            1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.ADMIN,
+            proposed_datetime=new_dt, proposed_by=CreatedBy.CLIENT,
+        )]
+    )
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.accept_client_reschedule(1, staff_telegram_id=999)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appointment.datetime == new_dt
+    assert appointment.proposed_datetime is None
+    assert appointment.proposed_by is None
     assert appt_repo.updated[0][0] == 1
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
@@ -1190,7 +1345,11 @@ async def test_accept_client_reschedule_raises_when_no_proposal():
 
 
 @pytest.mark.asyncio
-async def test_reject_client_reschedule_clears_proposal_without_changing_status_or_datetime():
+async def test_reject_client_reschedule_cancels_appointment_and_clears_proposal():
+    """Reject is now terminal: unlike the old behavior (appointment stays
+    CONFIRMED at its original datetime), the whole appointment is cancelled,
+    same as rejecting a pending request. The outstanding proposal fields are
+    still cleared on the way there."""
     now = get_current_tashkent_datetime()
     original_dt = (now + timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
     appt_repo = FakeAppointmentRepository(
@@ -1203,11 +1362,9 @@ async def test_reject_client_reschedule_clears_proposal_without_changing_status_
 
     appointment = await service.reject_client_reschedule(1, staff_telegram_id=999)
 
-    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appointment.status is AppointmentStatus.CANCELLED
     assert appointment.datetime == original_dt
-    assert appointment.proposed_datetime is None
-    assert appointment.proposed_by is None
-    assert appt_repo.status_updates == []
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]
     assert appt_repo.updated == []
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]

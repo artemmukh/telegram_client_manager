@@ -1,0 +1,122 @@
+"""Handler-level test for reschedule_requests.py's new propose-datetime wizard
+(PR2 Part 5): admin can counter-propose a new time on a client's reschedule
+request, ending in approve_propose_datetime which calls
+AppointmentManagement.propose_new_datetime, resyncs jobs via
+AppointmentScheduler.resync_appointment_jobs, notifies the client via
+notify_client_appointment_reschedule_proposed, and persists the resulting
+message_id via update_proposal_message_id.
+
+Thin, direct-call test in the same style as test_appointment_reschedule_handler.py
+and test_appointment_browser_propose_handler.py.
+"""
+import pytest
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
+
+from bot.handlers.admin.appointment_management.reschedule_requests import (
+    create_admin_reschedule_requests_router,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
+from bot.models.appointment import Appointment
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+
+
+class FakeAppointmentRepository:
+    def __init__(self, appointment):
+        self.appointment = appointment
+        self.proposed_datetime_updates = []
+        self.proposed_by_updates = []
+        self.proposal_message_id_updates = []
+
+    async def get_appointment_by_id(self, appointment_id):
+        return self.appointment
+
+    async def update_proposed_datetime(self, appointment_id, proposed_datetime):
+        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
+        self.appointment.proposed_datetime = proposed_datetime
+
+    async def update_proposed_by(self, appointment_id, proposed_by):
+        self.proposed_by_updates.append((appointment_id, proposed_by))
+        self.appointment.proposed_by = proposed_by
+
+    async def update_proposal_message_id(self, appointment_id, message_id):
+        self.proposal_message_id_updates.append((appointment_id, message_id))
+
+
+def _confirmed_appointment_with_client_proposal():
+    return Appointment(
+        clinic_id=1,
+        client_id=7,
+        datetime="2026-08-01 10:00",
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.CONFIRMED,
+        id=1,
+        proposed_datetime="2026-08-03 09:00",
+        proposed_by=CreatedBy.CLIENT,
+    )
+
+
+def _get_approve_propose_datetime_handler(router):
+    for handler in router.callback_query.handlers:
+        if handler.callback.__name__ == "approve_propose_datetime":
+            return handler.callback
+    raise AssertionError("approve_propose_datetime handler not found on router")
+
+
+def _make_callback_query():
+    callback_query = MagicMock()
+    callback_query.from_user.id = 999
+    callback_query.message.edit_text = AsyncMock()
+    callback_query.answer = AsyncMock()
+    return callback_query
+
+
+def _make_state():
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={
+        "appointment_datetime_parsed": datetime(2026, 8, 5, 12, 0),
+        "appointment_datetime_display": "05.08.2026 12:00",
+    })
+    state.clear = AsyncMock()
+    return state
+
+
+@pytest.mark.asyncio
+async def test_approve_propose_datetime_proposes_resyncs_and_notifies():
+    """Admin counter-proposes over an outstanding client proposal: the guard
+    allows this (proposed_by=CLIENT), propose_new_datetime overwrites it with
+    the admin's offer, jobs are resynced, and the client is notified."""
+    appointment = _confirmed_appointment_with_client_proposal()
+    appt_repo = FakeAppointmentRepository(appointment)
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+    appointment_scheduler.cancel_reschedule_expiry = AsyncMock()
+    appointment_scheduler.schedule_reschedule_expiry = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_client_appointment_reschedule_proposed = AsyncMock(return_value=654)
+
+    router = create_admin_reschedule_requests_router(
+        appt_repo, MagicMock(), MagicMock(), MagicMock(),
+        notification_service=notification_service, appointment_scheduler=appointment_scheduler,
+    )
+    approve_propose_datetime = _get_approve_propose_datetime_handler(router)
+
+    await approve_propose_datetime(
+        _make_callback_query(),
+        RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=1),
+        _make_state(),
+    )
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.proposed_datetime_updates == [(1, "2026-08-05 12:00")]
+    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
+
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(appointment)
+    appointment_scheduler.cancel_reschedule_expiry.assert_not_awaited()
+    appointment_scheduler.schedule_reschedule_expiry.assert_not_awaited()
+
+    notification_service.notify_client_appointment_reschedule_proposed.assert_awaited_once_with(appointment)
+    assert appt_repo.proposal_message_id_updates == [(1, 654)]

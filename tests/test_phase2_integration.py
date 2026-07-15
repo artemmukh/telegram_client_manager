@@ -134,7 +134,10 @@ async def test_phase2_complete_workflow():
     assert len(bot.sent_messages) == 1
     assert bot.sent_messages[0]['chat_id'] == 12345
     assert "Вам назначена запись на прием" in bot.sent_messages[0]['text']
-    assert "✅ Приду" in str(bot.sent_messages[0]['reply_markup'])
+    # PR3: the initial invite now uses the 3-button appointment_invite_kb
+    # (Confirm / Propose different time / Cancel), not the old 2-button
+    # appointment_response_kb ("✅ Приду").
+    assert "✅ Подтвердить" in str(bot.sent_messages[0]['reply_markup'])
 
     # Step 3: Client confirms appointment
     appointment = await appointment_mgmt.update_status(

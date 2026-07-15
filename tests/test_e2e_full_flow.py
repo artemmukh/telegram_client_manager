@@ -380,6 +380,39 @@ async def test_appointment_lifecycle_self_booking_confirm_and_reject(e2e):
 
 
 @pytest.mark.asyncio
+async def test_appointment_lifecycle_self_booking_pending_direct_edit_then_confirm(e2e):
+    """A client edits the datetime of their own still-PENDING self-booking request
+    directly (same row, no proposal negotiation), then the clinic confirms it at
+    the new time -- the row's id never changes across the edit."""
+    client = await _create_registered_client(e2e, "Носирова Дилноза Акмаловна", "+998977005566", 700000555)
+
+    booking = await e2e.appointment_management.create_self_booking(
+        client.telegram_user_id,
+        {"staff_user_id": e2e.admin.ID, "appointment_datetime": _future_datetime(days=2), "complaint": "Боль в зубе"},
+    )
+    assert booking.status is AppointmentStatus.PENDING
+
+    new_datetime = _future_datetime(days=5)
+    edited = await e2e.appointment_management.request_reschedule_by_client(
+        booking.id, client.telegram_user_id, new_datetime,
+    )
+
+    assert edited.id == booking.id
+    assert edited.datetime == new_datetime
+    assert edited.status is AppointmentStatus.PENDING
+    assert edited.proposed_datetime is None
+
+    stored = await e2e.appointment_repo.get_appointment_by_id(booking.id)
+    assert stored.datetime == new_datetime
+    assert stored.status is AppointmentStatus.PENDING
+
+    confirmed = await e2e.appointment_management.confirm_pending_request(booking.id, ADMIN_TELEGRAM_ID)
+    assert confirmed.id == booking.id
+    assert confirmed.status is AppointmentStatus.CONFIRMED
+    assert confirmed.datetime == new_datetime
+
+
+@pytest.mark.asyncio
 async def test_appointment_completion_follow_up_and_pagination_by_tab(e2e):
     """Completion only asks the admin (does not auto-finalize); the admin's
     explicit answer is what finalizes COMPLETED. Also verifies that admin

@@ -9,9 +9,9 @@ from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_
 from bot.keyboards.admin.record_management_kb.completion_followup_kb import completion_followup_kb
 from bot.keyboards.admin.record_management_kb.reschedule_request_kb import reschedule_request_kb
 from bot.keyboards.client.appointment_response_kb import (
+    appointment_invite_kb,
     appointment_reminder_details_kb,
     appointment_reminder_with_buttons_kb,
-    appointment_response_kb,
     reschedule_proposal_kb,
 )
 from bot.models.appointment import Appointment
@@ -42,8 +42,17 @@ class AppointmentNotificationService:
         self.user_repo = user_repo
         self.appointment_repo = appointment_repo
 
-    async def notify_client_appointment_with_buttons(self, appointment: Appointment) -> int | None:
+    async def notify_client_appointment_with_buttons(
+        self, appointment: Appointment, use_invite_kb: bool = True
+    ) -> int | None:
         """Send full appointment notification to client WITH confirmation buttons (on creation).
+
+        use_invite_kb controls which keyboard is attached:
+        - True (default): the record is still an unresolved admin-created invite
+          (PENDING+ADMIN) — the client sees Confirm / Propose different time / Cancel.
+        - False: the record is already CONFIRMED (e.g. the clinic just approved the
+          client's own self-booking request) — no decision is pending, so no
+          negotiation buttons are shown.
 
         Returns the sent message's message_id (to be persisted so later reminders can reply
         to it), or None if the client was not found or has no telegram_id.
@@ -56,10 +65,15 @@ class AppointmentNotificationService:
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
         message_text = self._build_appointment_message(appointment, admin)
 
+        reply_markup = (
+            appointment_invite_kb(appointment.id) if use_invite_kb
+            else appointment_reminder_details_kb(appointment.id)
+        )
+
         sent_message = await self.bot.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
-            reply_markup=appointment_response_kb(appointment.id),
+            reply_markup=reply_markup,
         )
 
         return sent_message.message_id
@@ -120,7 +134,7 @@ class AppointmentNotificationService:
         message_text = self._build_appointment_message(appointment, admin)
 
         if appointment.status == AppointmentStatus.PENDING:
-            reply_markup = appointment_reminder_with_buttons_kb(appointment.id)
+            reply_markup = appointment_invite_kb(appointment.id)
         else:
             reply_markup = appointment_reminder_details_kb(appointment.id)
 
@@ -265,6 +279,22 @@ class AppointmentNotificationService:
             reply_parameters=self._admin_reply_parameters(appointment),
         )
 
+    async def notify_admin_client_changed_time(
+        self,
+        admin_telegram_id: int,
+        appointment: Appointment,
+        client_name: str,
+    ) -> None:
+        """Notify admin that the client changed the time of their own pending self-booking request."""
+        await self.bot.send_message(
+            chat_id=admin_telegram_id,
+            text=(
+                f"🕐 Клиент {client_name} изменил время заявки.\n"
+                f"📅 Новое время: {_format_datetime_value(appointment.datetime)}"
+            ),
+            reply_parameters=self._admin_reply_parameters(appointment),
+        )
+
     async def notify_admin_confirmation(
         self,
         admin_telegram_id: int,
@@ -341,11 +371,12 @@ class AppointmentNotificationService:
         return True
 
     async def notify_client_pending_request_expired(self, appointment: Appointment) -> bool:
-        """Notify client that their unanswered self-booking request has expired.
+        """Notify client that their unanswered PENDING request has expired.
 
-        The wording depends on whether the clinic had proposed a new time: if it
-        did, the request expired because the client never answered that proposal;
-        otherwise the clinic itself never responded to the original request.
+        Covers both a client self-booking request the clinic never answered, and an
+        admin-created appointment where the client proposed their own time and the
+        clinic never answered that counter-proposal. When a proposal was outstanding,
+        the wording stays neutral about which side missed the deadline.
 
         Returns True if message sent, False if user not found or no telegram_id.
         """
@@ -355,7 +386,7 @@ class AppointmentNotificationService:
             return False
 
         if appointment.proposed_datetime is not None:
-            text = "⌛ Вы не ответили на предложенное клиникой новое время, заявка на запись истекла."
+            text = "⌛ Предложение по времени записи осталось без ответа, заявка на запись истекла."
         else:
             text = "⌛ Ваша заявка на запись истекла без ответа клиники."
 
@@ -391,6 +422,67 @@ class AppointmentNotificationService:
         )
 
         return sent_message.message_id
+
+    async def notify_client_appointment_reschedule_proposed(self, appointment: Appointment) -> int | None:
+        """Notify client that the clinic proposed a different time for their confirmed appointment.
+
+        Returns the sent message's message_id (to be persisted so the proposal message
+        can later be closed), or None if the client was not found or has no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return None
+
+        message_text = (
+            "🔁 Клиника предлагает перенести вашу запись на другое время\n\n"
+            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
+            "Согласны на новое время?"
+        )
+
+        sent_message = await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_markup=reschedule_proposal_kb(appointment.id),
+            reply_parameters=self._reply_parameters(appointment),
+        )
+
+        return sent_message.message_id
+
+    async def notify_client_proposal_reminder(self, appointment: Appointment) -> bool:
+        """Remind client that the clinic's proposed time is still awaiting a response.
+
+        Sent partway through the proposal window, as a plain reply to the original
+        proposal message (no buttons of its own — the client answers there).
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        message_text = (
+            "⏰ Напоминаем: клиника предложила другое время для вашей заявки\n\n"
+            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
+            "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
+            "иначе заявка скоро автоматически аннулируется."
+        )
+
+        reply_parameters = None
+        if appointment.proposal_message_id is not None:
+            reply_parameters = ReplyParameters(
+                message_id=appointment.proposal_message_id,
+                allow_sending_without_reply=True,
+            )
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_parameters=reply_parameters,
+        )
+
+        return True
 
     async def close_reschedule_proposal_message(
         self, chat_id: int, message_id: int, text: str = "Это предложение больше не актуально."
@@ -481,8 +573,8 @@ class AppointmentNotificationService:
     async def notify_client_reschedule_rejected(self, appointment: Appointment) -> bool:
         """Notify client that the clinic could not accommodate their reschedule request.
 
-        The original appointment remains CONFIRMED and unchanged — this is
-        explicitly not a cancellation.
+        The appointment is cancelled as a result — this is a terminal outcome,
+        not a return to the original confirmed time.
 
         Returns True if message sent, False if user not found or no telegram_id.
         """
@@ -492,8 +584,8 @@ class AppointmentNotificationService:
             return False
 
         message_text = (
-            "❌ Клиника не смогла подтвердить перенос записи\n\n"
-            f"Ваша запись остаётся в силе на прежнее время: {_format_datetime_value(appointment.datetime)}"
+            "❌ Клиника не смогла подтвердить перенос записи, запись отменена\n\n"
+            "Если запись всё ещё нужна, свяжитесь с клиникой или отправьте новую заявку."
         )
 
         await self.bot.send_message(
@@ -505,9 +597,12 @@ class AppointmentNotificationService:
         return True
 
     async def notify_client_reschedule_request_expired(self, appointment: Appointment) -> bool:
-        """Notify client that the clinic did not respond to their reschedule request in time.
+        """Notify client that a reschedule proposal on their appointment went unanswered in time.
 
-        The original appointment remains CONFIRMED and unchanged.
+        Used both when the client proposed a time and the clinic never answered, and
+        when the clinic proposed a time and the client never answered — the wording
+        stays neutral about which side missed the deadline. The original appointment
+        remains CONFIRMED and unchanged.
 
         Returns True if message sent, False if user not found or no telegram_id.
         """
@@ -517,8 +612,9 @@ class AppointmentNotificationService:
             return False
 
         message_text = (
-            "⌛ Клиника не ответила на вашу заявку на перенос вовремя\n\n"
-            f"Ваша запись остаётся в силе на прежнее время: {_format_datetime_value(appointment.datetime)}"
+            "⌛ Предложение по времени записи истекло без ответа\n\n"
+            f"Ваша запись остаётся в силе на прежнее время: {_format_datetime_value(appointment.datetime)}\n"
+            "Актуальную информацию по записи смотрите в разделе «Мои записи»."
         )
 
         await self.bot.send_message(

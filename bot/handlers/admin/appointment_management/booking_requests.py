@@ -63,6 +63,7 @@ def create_admin_booking_requests_router(
 
         if appointment_scheduler:
             await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
+            await appointment_scheduler.cancel_proposal_reminder(callback_data.appointment_id)
             await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
             await appointment_scheduler.schedule_appointment_reminders(appointment)
             await appointment_scheduler.schedule_appointment_completion(appointment)
@@ -87,6 +88,7 @@ def create_admin_booking_requests_router(
 
         if appointment_scheduler:
             await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
+            await appointment_scheduler.cancel_proposal_reminder(callback_data.appointment_id)
             await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
 
         if notification_service:
@@ -176,8 +178,10 @@ def create_admin_booking_requests_router(
 
         if appointment_scheduler:
             await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
+            await appointment_scheduler.cancel_proposal_reminder(callback_data.appointment_id)
             proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
             await appointment_scheduler.schedule_pending_expiry(proposal_target)
+            await appointment_scheduler.schedule_proposal_reminder(proposal_target)
 
         if notification_service:
             try:
@@ -201,7 +205,9 @@ def create_admin_booking_requests_router(
             return
 
         try:
-            message_id = await notification_service.notify_client_appointment_with_buttons(appointment)
+            message_id = await notification_service.notify_client_appointment_with_buttons(
+                appointment, use_invite_kb=False
+            )
             if message_id:
                 await appt_mng.update_notification_message_id(appointment.id, message_id)
         except Exception as e:

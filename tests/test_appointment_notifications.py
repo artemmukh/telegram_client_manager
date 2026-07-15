@@ -6,8 +6,10 @@ from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.keyboards.client.appointment_response_kb import (
+    appointment_invite_kb,
     appointment_reminder_details_kb,
     appointment_reminder_with_buttons_kb,
+    reschedule_proposal_kb,
 )
 from bot.services.appointment.appointment_notifications import (
     REMINDER_TEXT,
@@ -113,6 +115,47 @@ async def test_notify_client_appointment_sends_message_with_buttons():
     assert "2026-07-10 14:30" in msg['text']
     assert "Консультация" in msg['text']
     assert msg['reply_markup'] is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_with_buttons_defaults_to_invite_keyboard():
+    """PR3: use_invite_kb defaults to True -- a freshly created admin invite
+    (PENDING+ADMIN, not yet answered) gets the 3-button appointment_invite_kb
+    (Confirm / Propose different time / Cancel)."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_appointment_with_buttons(appointment)
+
+    assert result == 777
+    msg = bot.sent_messages[0]
+    assert msg['reply_markup'] == appointment_invite_kb(appointment.id)
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_with_buttons_use_invite_kb_false_uses_details_keyboard():
+    """PR3: use_invite_kb=False is for the case where the appointment is already
+    CONFIRMED (e.g. the clinic just approved a client self-booking request) -- no
+    decision is pending, so the client sees no negotiation buttons, just
+    appointment_reminder_details_kb."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+
+    result = await service.notify_client_appointment_with_buttons(appointment, use_invite_kb=False)
+
+    assert result == 777
+    msg = bot.sent_messages[0]
+    assert msg['reply_markup'] == appointment_reminder_details_kb(appointment.id)
+    assert msg['reply_markup'] != appointment_invite_kb(appointment.id)
 
 
 @pytest.mark.asyncio
@@ -382,7 +425,7 @@ async def test_notify_client_reminder_with_buttons_replies_when_message_id_set()
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 12345
     assert msg['text'] == REMINDER_TEXT
-    assert msg['reply_markup'] is not None
+    assert msg['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
     assert msg['reply_parameters'] == ReplyParameters(
         message_id=555,
         allow_sending_without_reply=True,
@@ -607,6 +650,28 @@ async def test_notify_client_pending_request_expired_sends_message():
 
 
 @pytest.mark.asyncio
+async def test_notify_client_pending_request_expired_uses_neutral_wording_when_proposal_outstanding():
+    """When proposed_datetime is set, the wording must stay neutral about which
+    side missed the deadline -- it now covers both the clinic-proposed case and
+    the new case where the client proposed a time on an admin-created invite and
+    the admin never answered."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_pending_request_expired(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['text'] == "⌛ Предложение по времени записи осталось без ответа, заявка на запись истекла."
+
+
+@pytest.mark.asyncio
 async def test_notify_client_pending_request_expired_returns_false_when_user_not_found():
     bot = FakeBot()
     user_repo = FakeUserRepo(None)
@@ -670,6 +735,69 @@ async def test_notify_client_reschedule_proposed_returns_none_when_telegram_id_m
     appointment.proposed_datetime = "2026-08-15 15:00"
 
     result = await service.notify_client_reschedule_proposed(appointment)
+
+    assert result is None
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_proposed_formats_proposed_datetime_for_display():
+    """PR2 Part 2: distinct from notify_client_reschedule_proposed (used for the
+    self-booking PENDING flow), this notifies the client that the clinic wants
+    to move an already-CONFIRMED appointment. Uses the same reschedule_proposal_kb
+    (accept/reject) since the response flow is identical."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_appointment_reschedule_proposed(appointment)
+
+    assert result == 777
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert msg['reply_markup'] == reschedule_proposal_kb(appointment.id)
+    assert "перенести вашу запись" in msg['text']
+    assert "15 августа 2026, 15:00" in msg['text']
+    assert "2026-08-15 15:00" not in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_proposed_returns_none_when_client_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(None)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_appointment_reschedule_proposed(appointment)
+
+    assert result is None
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_proposed_returns_none_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_appointment_reschedule_proposed(appointment)
 
     assert result is None
     assert len(bot.sent_messages) == 0
@@ -909,7 +1037,9 @@ async def test_notify_client_reschedule_accepted_returns_false_when_telegram_id_
 
 
 @pytest.mark.asyncio
-async def test_notify_client_reschedule_rejected_formats_datetime_for_display():
+async def test_notify_client_reschedule_rejected_states_appointment_cancelled():
+    """Rejecting a client's reschedule request is terminal (PR2): the message
+    must say the appointment was cancelled, not that it remains in force."""
     bot = FakeBot()
     user_repo = FakeUserRepo(_client())
     appointment_repo = FakeAppointmentRepo()
@@ -925,9 +1055,8 @@ async def test_notify_client_reschedule_rejected_formats_datetime_for_display():
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 12345
     assert "не смогла подтвердить перенос" in msg['text']
-    assert "остаётся в силе" in msg['text']
-    assert "10 июля 2026, 14:30" in msg['text']
-    assert "2026-07-10 14:30" not in msg['text']
+    assert "запись отменена" in msg['text']
+    assert "остаётся в силе" not in msg['text']
     assert msg['reply_parameters'] == ReplyParameters(
         message_id=555,
         allow_sending_without_reply=True,
@@ -968,6 +1097,9 @@ async def test_notify_client_reschedule_rejected_returns_false_when_telegram_id_
 
 @pytest.mark.asyncio
 async def test_notify_client_reschedule_request_expired_formats_datetime_for_display():
+    """PR2 makes the wording neutral about which side missed the deadline
+    (the job now applies to both client- and admin-initiated proposals),
+    so the text no longer blames the clinic specifically."""
     bot = FakeBot()
     user_repo = FakeUserRepo(_client())
     appointment_repo = FakeAppointmentRepo()
@@ -982,7 +1114,8 @@ async def test_notify_client_reschedule_request_expired_formats_datetime_for_dis
     assert len(bot.sent_messages) == 1
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 12345
-    assert "не ответила на вашу заявку на перенос вовремя" in msg['text']
+    assert "истекло без ответа" in msg['text']
+    assert "не ответила на вашу заявку на перенос вовремя" not in msg['text']
     assert "остаётся в силе" in msg['text']
     assert "10 июля 2026, 14:30" in msg['text']
     assert "2026-07-10 14:30" not in msg['text']
@@ -1061,7 +1194,7 @@ async def test_notify_client_appointment_details_edits_existing_message():
     assert "Вам назначена запись на прием" in edited['text']
     assert "2026-07-10 14:30" in edited['text']
     assert "Консультация" in edited['text']
-    assert edited['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
+    assert edited['reply_markup'] == appointment_invite_kb(appointment.id)
     assert len(bot.sent_messages) == 0
 
 
@@ -1102,7 +1235,7 @@ async def test_notify_client_appointment_details_falls_back_to_send_message_on_o
     assert "Вам назначена запись на прием" in msg['text']
     assert "2026-07-10 14:30" in msg['text']
     assert "Консультация" in msg['text']
-    assert msg['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
+    assert msg['reply_markup'] == appointment_invite_kb(appointment.id)
 
 
 @pytest.mark.asyncio
@@ -1125,7 +1258,7 @@ async def test_notify_client_appointment_details_sends_new_message_when_no_notif
     assert "Вам назначена запись на прием" in msg['text']
     assert "2026-07-10 14:30" in msg['text']
     assert "Консультация" in msg['text']
-    assert msg['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
+    assert msg['reply_markup'] == appointment_invite_kb(appointment.id)
 
 
 @pytest.mark.asyncio
@@ -1264,7 +1397,7 @@ async def test_notify_client_appointment_details_uses_confirm_buttons_keyboard_f
 
     assert result is True
     edited = bot.edited_messages[0]
-    assert edited['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
+    assert edited['reply_markup'] == appointment_invite_kb(appointment.id)
 
 
 @pytest.mark.asyncio
@@ -1286,5 +1419,84 @@ async def test_notify_client_appointment_details_uses_details_only_keyboard_for_
     assert edited['chat_id'] == 12345
     assert edited['message_id'] == 555
     assert edited['reply_markup'] == appointment_reminder_details_kb(appointment.id)
-    assert edited['reply_markup'] != appointment_reminder_with_buttons_kb(appointment.id)
+    assert edited['reply_markup'] != appointment_invite_kb(appointment.id)
     assert f"Статус: {APPOINTMENT_STATUS_LABELS[AppointmentStatus.CONFIRMED]}" in edited['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_proposal_reminder_replies_to_proposal_message_not_notification_message():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposal_message_id = 555
+    appointment.notification_message_id = 999
+
+    result = await service.notify_client_proposal_reminder(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 12345
+    assert msg['reply_markup'] is None
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+    assert "15 августа 2026, 15:00" in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_proposal_reminder_no_reply_parameters_when_proposal_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposal_message_id = None
+
+    result = await service.notify_client_proposal_reminder(appointment)
+
+    assert result is True
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_proposal_reminder_returns_false_when_user_not_found():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(None)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_proposal_reminder(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_client_proposal_reminder_returns_false_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_proposal_reminder(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0

@@ -206,29 +206,40 @@ def create_client_reschedule_router(
 
         await state.clear()
 
+        is_direct_edit = appointment.proposed_datetime is None
+
         if origin == "history" and tab:
             success_kb = appointment_history_card_kb(appointment, tab, page, can_cancel=False, can_reschedule=False)
         else:
             success_kb = appointment_manage_empty_kb()
 
-        await callback_query.message.edit_text(
-            "✅ Заявка на перенос отправлена. Ожидайте решения клиники.",
-            reply_markup=success_kb,
+        message_text = (
+            "✅ Время заявки изменено."
+            if is_direct_edit
+            else "✅ Заявка на перенос отправлена. Ожидайте решения клиники."
         )
+        await callback_query.message.edit_text(message_text, reply_markup=success_kb)
         await callback_query.answer()
 
         if notification_service and appointment.created_by_telegram_id:
             try:
-                await notification_service.notify_staff_reschedule_requested(
-                    appointment.created_by_telegram_id,
-                    appointment,
-                    current_user.full_name if current_user else "Неизвестный клиент",
-                )
+                if is_direct_edit:
+                    await notification_service.notify_admin_client_changed_time(
+                        appointment.created_by_telegram_id,
+                        appointment,
+                        current_user.full_name if current_user else "Неизвестный клиент",
+                    )
+                else:
+                    await notification_service.notify_staff_reschedule_requested(
+                        appointment.created_by_telegram_id,
+                        appointment,
+                        current_user.full_name if current_user else "Неизвестный клиент",
+                    )
             except Exception:
                 pass  # Graceful fail если не получилось отправить
 
         if appointment_scheduler:
-            await appointment_scheduler.schedule_reschedule_expiry(appointment)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
     @router.callback_query(ClientRescheduleCancelCB.filter())
     async def cancel_reschedule(

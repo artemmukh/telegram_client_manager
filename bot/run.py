@@ -18,6 +18,7 @@ from bot.handlers.admin.appointment_management.appointment_browser import create
 from bot.handlers.admin.appointment_management.booking_requests import create_admin_booking_requests_router
 from bot.handlers.admin.appointment_management.reschedule_requests import create_admin_reschedule_requests_router
 from bot.handlers.client.appointment_booking import create_client_booking_router
+from bot.handlers.client.appointment_invite import create_client_appointment_invite_router
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.client.name_change_request import create_name_change_request_router
@@ -139,6 +140,9 @@ async def main():
         appointment_repo, appointment_management_service, notification_service, appointment_scheduler
     ))
     dp.include_router(create_client_reschedule_router(
+        appointment_repo, appointment_management_service, notification_service, appointment_scheduler
+    ))
+    dp.include_router(create_client_appointment_invite_router(
         appointment_repo, appointment_management_service, notification_service, appointment_scheduler
     ))
     dp.include_router(create_price_list_router())

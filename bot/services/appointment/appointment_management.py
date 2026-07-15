@@ -157,6 +157,7 @@ class AppointmentManagement:
                 role=Role.CLIENT,
                 clinic_id=clinic.clinic_id,
                 clinic_name=clinic.name,
+                created_at=get_current_tashkent_time(),
             )
 
             await self.user_repository.create_user(new_client)
@@ -286,7 +287,7 @@ class AppointmentManagement:
         appointment = await self._get_or_raise(appointment_id)
         self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
 
-        if appointment.proposed_datetime is not None:
+        if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
             raise NegotiationInProgressError(
                 "По этой записи уже есть предложение, ожидающее ответа."
             )
@@ -350,8 +351,20 @@ class AppointmentManagement:
 
         self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
 
-        if appointment.status != AppointmentStatus.CONFIRMED:
-            raise AwaitingClinicDecisionError("Перенос доступен только для подтверждённых записей.")
+        is_own_pending_self_booking = (
+            appointment.status == AppointmentStatus.PENDING
+            and appointment.created_by == CreatedBy.CLIENT
+        )
+        can_negotiate = (
+            appointment.status == AppointmentStatus.CONFIRMED
+            or (appointment.status == AppointmentStatus.PENDING and appointment.created_by == CreatedBy.ADMIN)
+        )
+
+        if not is_own_pending_self_booking and not can_negotiate:
+            raise AwaitingClinicDecisionError(
+                "Перенос доступен только для подтверждённых записей, ещё не решённых "
+                "клиникой записей или собственных заявок на самозапись, ожидающих решения клиники."
+            )
 
         if appointment.proposed_datetime is not None:
             raise NegotiationInProgressError(
@@ -365,6 +378,13 @@ class AppointmentManagement:
                 "Новое время должно быть не менее чем через 1 час от текущего момента, "
                 "свяжитесь с клиникой."
             )
+
+        if is_own_pending_self_booking:
+            # Собственная ещё не решённая клиникой заявка клиента — правим datetime
+            # напрямую, без согласования (клиника и так ещё ничего не подтверждала).
+            appointment.datetime = validated
+            await self.appointment_repository.update_appointment(appointment_id, appointment)
+            return appointment
 
         await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
         await self.appointment_repository.update_proposed_by(appointment_id, CreatedBy.CLIENT)
@@ -381,6 +401,7 @@ class AppointmentManagement:
             raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
 
         appointment.datetime = appointment.proposed_datetime
+        appointment.status = AppointmentStatus.CONFIRMED
         await self.appointment_repository.update_appointment(appointment_id, appointment)
 
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)
@@ -397,15 +418,10 @@ class AppointmentManagement:
         if appointment.proposed_by != CreatedBy.CLIENT:
             raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
 
-        # Unlike reject_pending_request (2b), rejecting a client's reschedule request
-        # is not terminal: the appointment stays CONFIRMED at its original datetime,
-        # only the outstanding proposal is cleared.
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)
         await self.appointment_repository.update_proposed_by(appointment_id, None)
-        appointment.proposed_datetime = None
-        appointment.proposed_by = None
 
-        return appointment
+        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
 
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)

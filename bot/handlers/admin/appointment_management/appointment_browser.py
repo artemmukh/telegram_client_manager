@@ -380,7 +380,9 @@ def create_admin_appointment_browser_router(
         db_datetime = format_datetime_for_db(parsed_dt)
 
         try:
-            appointment = await appt_mng.update_datetime(callback_data.appointment_id, db_datetime)
+            appointment = await appt_mng.propose_new_datetime(
+                callback_data.appointment_id, callback_query.from_user.id, db_datetime,
+            )
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -389,19 +391,24 @@ def create_admin_appointment_browser_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
-            await appointment_scheduler.schedule_appointment_reminders(appointment)
-            await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
-            await appointment_scheduler.schedule_appointment_completion(appointment)
-            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
-            await appointment_scheduler.schedule_auto_confirm(appointment)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
-        await notify_appointment_changed(appointment, callback_data.appointment_id)
+        if notification_service:
+            try:
+                message_id = await notification_service.notify_client_appointment_reschedule_proposed(appointment)
+                if message_id:
+                    await appt_mng.update_proposal_message_id(appointment.id, message_id)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to notify client about proposed time for appointment {callback_data.appointment_id}: {e}"
+                )
 
-        await render_card(
-            callback_query, state,
-            appointment_id=callback_data.appointment_id, mode=callback_data.mode, page=callback_data.page,
+        await callback_query.answer("Предложение отправлено клиенту")
+        await callback_query.message.edit_text(
+            f"🔁 Клиенту предложено новое время: {data.get('appointment_datetime_display')}\n"
+            "Ожидаем ответа клиента."
         )
+        await state.clear()
 
     # --- Collect and confirm new purpose ---
 

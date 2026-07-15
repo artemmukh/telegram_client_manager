@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -20,6 +21,7 @@ from bot.services.appointment.appointment_jobs import (
     expire_pending_request_job,
     expire_reschedule_request_job,
     auto_confirm_pending_job,
+    send_proposal_reminder_job,
 )
 from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
@@ -368,6 +370,79 @@ class AppointmentScheduler:
                 f"Failed to cancel pending expiry for appointment {appointment_id}: {e}"
             )
 
+    async def schedule_proposal_reminder(self, appointment: Appointment) -> None:
+        """Schedule a reminder for the client to accept/reject the clinic's proposed time.
+
+        Runs 3 hours before the proposed datetime (1 hour before the request would
+        auto-expire via schedule_pending_expiry).
+
+        Job ID: appt_{appointment_id}_propose_reminder
+        """
+        if not appointment.id:
+            logger.warning("Cannot schedule proposal reminder for appointment without ID")
+            return
+
+        try:
+            appointment_dt = datetime.fromisoformat(appointment.datetime)
+            reminder_time = appointment_dt - timedelta(hours=3)
+            now = _current_tashkent_time()
+
+            if reminder_time <= now:
+                logger.info(
+                    f"Skipping past-due proposal reminder for appointment {appointment.id} "
+                    f"(would have run at {reminder_time.isoformat()})"
+                )
+                return
+
+            job_id = f"appt_{appointment.id}_propose_reminder"
+
+            try:
+                self.scheduler.add_job(
+                    send_proposal_reminder_job,
+                    "date",
+                    run_date=reminder_time,
+                    args=(appointment.id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule proposal reminder job {job_id}: {exc}"
+                ) from exc
+
+            logger.info(
+                f"Scheduled proposal reminder for appointment {appointment.id} "
+                f"at {reminder_time.isoformat()} (3 hours before proposed time)"
+            )
+        except JobSchedulingError as e:
+            logger.error(
+                f"Failed to schedule proposal reminder for appointment {appointment.id}: {e}"
+            )
+
+    async def cancel_proposal_reminder(self, appointment_id: int) -> None:
+        """Cancel the proposal reminder job for an appointment.
+
+        Removes job with ID: appt_{appointment_id}_propose_reminder
+        """
+        from apscheduler.jobstores.base import JobLookupError
+
+        try:
+            job_id = f"appt_{appointment_id}_propose_reminder"
+
+            try:
+                self.scheduler.remove_job(job_id)
+                logger.info(f"Cancelled proposal reminder job: {job_id}")
+            except JobLookupError:
+                logger.debug(f"Proposal reminder job {job_id} does not exist (already ran or cancelled)")
+            except Exception as exc:
+                raise JobCancellationError(
+                    f"Failed to remove proposal reminder job {job_id}: {exc}"
+                ) from exc
+        except JobCancellationError as e:
+            logger.error(
+                f"Failed to cancel proposal reminder for appointment {appointment_id}: {e}"
+            )
+
     async def schedule_reschedule_expiry(self, appointment: Appointment) -> None:
         """Schedule an expiry job for a client-initiated reschedule request.
 
@@ -467,4 +542,87 @@ class AppointmentScheduler:
             self.notification_service,
             appointment_id,
         )
+
+    async def resync_appointment_jobs(self, appointment: Appointment) -> None:
+        """Recompute the full set of scheduler jobs for an appointment from its current state.
+
+        Cancels whatever no longer applies and (re)schedules whatever does, based on
+        status/created_by/proposed_datetime. Single source of truth for which jobs
+        an appointment should have at any given moment, replacing ad-hoc per-handler
+        cancel/schedule sequences.
+        """
+        appointment_id = appointment.id
+        if not appointment_id:
+            return
+
+        if appointment.status in (
+            AppointmentStatus.CANCELLED,
+            AppointmentStatus.COMPLETED,
+            AppointmentStatus.NO_SHOW,
+            AppointmentStatus.EXPIRED,
+        ):
+            await self.cancel_pending_expiry(appointment_id)
+            await self.cancel_proposal_reminder(appointment_id)
+            await self.cancel_auto_confirm(appointment_id)
+            await self.cancel_reschedule_expiry(appointment_id)
+            await self.cancel_appointment_reminders(appointment_id)
+            await self.cancel_appointment_completions(appointment_id)
+            return
+
+        if appointment.status == AppointmentStatus.CONFIRMED:
+            await self.cancel_pending_expiry(appointment_id)
+            await self.cancel_proposal_reminder(appointment_id)
+            await self.cancel_auto_confirm(appointment_id)
+
+            if appointment.proposed_datetime is not None:
+                await self.schedule_reschedule_expiry(appointment)
+            else:
+                await self.cancel_reschedule_expiry(appointment_id)
+
+            await self.cancel_appointment_reminders(appointment_id)
+            await self.schedule_appointment_reminders(appointment)
+            await self.cancel_appointment_completions(appointment_id)
+            await self.schedule_appointment_completion(appointment)
+            return
+
+        if appointment.status == AppointmentStatus.PENDING:
+            await self.cancel_reschedule_expiry(appointment_id)
+            await self.cancel_appointment_reminders(appointment_id)
+            await self.cancel_appointment_completions(appointment_id)
+
+            if appointment.created_by == CreatedBy.CLIENT:
+                await self.cancel_auto_confirm(appointment_id)
+
+                if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+                    proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
+                    await self.cancel_pending_expiry(appointment_id)
+                    await self.schedule_pending_expiry(proposal_target)
+                    await self.cancel_proposal_reminder(appointment_id)
+                    await self.schedule_proposal_reminder(proposal_target)
+                else:
+                    await self.cancel_pending_expiry(appointment_id)
+                    await self.schedule_pending_expiry(appointment)
+                    await self.cancel_proposal_reminder(appointment_id)
+            else:
+                # created_by == ADMIN
+                await self.cancel_proposal_reminder(appointment_id)
+
+                if appointment.proposed_datetime is not None:
+                    # Клиент предложил своё время на ещё нерассмотренную запись — теперь это
+                    # ход админа. Если он не ответит, заявка молча истекает за 2ч до ИСХОДНОГО
+                    # времени приёма (как и self-booking через pending_expiry), а не зависает
+                    # без движения и не auto-confirm'ится на непринятое клиентом время.
+                    # Известное ограничение (то же, что уже есть у auto_confirm): если исходное
+                    # время приёма уже ближе 2ч, schedule_pending_expiry тихо не поставит job
+                    # (past-due skip) — запись может остаться в PENDING без движения. Это
+                    # структурное свойство T-2h-планирования по всей модели, не специфично для
+                    # этой ветки; отдельно не решается здесь.
+                    await self.cancel_auto_confirm(appointment_id)
+                    await self.cancel_reschedule_expiry(appointment_id)
+                    await self.schedule_pending_expiry(appointment)
+                else:
+                    await self.cancel_pending_expiry(appointment_id)
+                    await self.cancel_reschedule_expiry(appointment_id)
+                    await self.schedule_auto_confirm(appointment)
+            return
 

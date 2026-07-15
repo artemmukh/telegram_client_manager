@@ -202,12 +202,16 @@ async def complete_appointment(
 
 
 async def expire_pending_request_job(appointment_id: int) -> None:
-    """Expire an unanswered client self-booking request 2 hours before its requested time.
+    """Expire an unanswered PENDING request 2 hours before its requested datetime.
 
     This job is called by APScheduler 2 hours before the appointment's requested datetime.
-    Prevents stale client requests from remaining open during the 2h reminder window.
+    Prevents stale requests from remaining open during the 2h reminder window. Covers two
+    cases: a client self-booking request the clinic never answered, and an admin-created
+    appointment where the client proposed their own time and the admin never answered
+    that counter-proposal.
 
-    Note: For proposed/rescheduled times, see expire_reschedule_request_job().
+    Note: For proposed/rescheduled times on a CONFIRMED appointment, see
+    expire_reschedule_request_job().
 
     Args:
         appointment_id: The ID of the appointment/request to expire
@@ -230,10 +234,19 @@ async def expire_pending_request_job(appointment_id: int) -> None:
             logger.warning(f"Expire pending job: appointment {appointment_id} not found")
             return
 
-        if appointment.status != AppointmentStatus.PENDING or appointment.created_by != CreatedBy.CLIENT:
+        if appointment.status != AppointmentStatus.PENDING:
+            logger.info(f"Expire pending job: skipping appointment {appointment_id} (status={appointment.status.value})")
+            return
+
+        is_unanswered_self_booking = appointment.created_by == CreatedBy.CLIENT
+        is_unanswered_admin_invite_counter = (
+            appointment.created_by == CreatedBy.ADMIN and appointment.proposed_datetime is not None
+        )
+
+        if not is_unanswered_self_booking and not is_unanswered_admin_invite_counter:
             logger.info(
                 f"Expire pending job: skipping appointment {appointment_id} "
-                f"(status={appointment.status.value}, created_by={appointment.created_by.value})"
+                f"(created_by={appointment.created_by.value}, no outstanding client proposal)"
             )
             return
 
@@ -241,7 +254,7 @@ async def expire_pending_request_job(appointment_id: int) -> None:
             appointment_id, AppointmentStatus.EXPIRED, get_current_tashkent_time()
         )
 
-        logger.info(f"Appointment {appointment_id} self-booking request expired (unanswered)")
+        logger.info(f"Appointment {appointment_id} pending request expired (unanswered)")
 
         try:
             await notification_service.notify_client_pending_request_expired(appointment)
@@ -277,16 +290,20 @@ async def expire_pending_request_job(appointment_id: int) -> None:
 
 
 async def expire_reschedule_request_job(appointment_id: int) -> None:
-    """Expire an unanswered client-initiated reschedule request once the proposed time passes.
+    """Expire an unanswered reschedule proposal on a CONFIRMED appointment, from either side.
 
-    This job is called by APScheduler at the client's proposed datetime. Unlike
-    expire_pending_request_job, it does NOT change the appointment status: the
-    appointment stays CONFIRMED at its ORIGINAL datetime, only the outstanding
-    proposal is cleared. Reminder/completion jobs for the original time were never
-    touched during the negotiation, so they continue to fire normally.
+    This job is called by APScheduler at the proposed datetime, regardless of whether
+    the proposal was made by the client (awaiting the clinic's answer) or by the admin
+    (awaiting the client's answer). It does NOT change the appointment status: the
+    appointment stays CONFIRMED at its ORIGINAL datetime, only the outstanding proposal
+    is cleared.
+
+    Note: for a PENDING+ADMIN appointment the client countered with their own time,
+    see expire_pending_request_job() instead — that request expires via pending_expiry,
+    not this job.
 
     Args:
-        appointment_id: The ID of the appointment whose reschedule request should expire
+        appointment_id: The ID of the appointment whose reschedule proposal should expire
     """
     connection = None
     try:
@@ -306,11 +323,7 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
             logger.warning(f"Reschedule expiry job: appointment {appointment_id} not found")
             return
 
-        if (
-            appointment.status != AppointmentStatus.CONFIRMED
-            or appointment.proposed_datetime is None
-            or appointment.proposed_by != CreatedBy.CLIENT
-        ):
+        if appointment.proposed_datetime is None:
             logger.info(f"Reschedule expiry job: skipping appointment {appointment_id} (already resolved)")
             return
 
@@ -330,6 +343,66 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
         logger.warning(f"Reschedule expiry job: appointment {appointment_id} not found")
     except Exception as e:
         logger.exception(f"Error in expire_reschedule_request_job({appointment_id}): {e}")
+    finally:
+        if connection is not None:
+            await connection.close()
+
+
+async def send_proposal_reminder_job(appointment_id: int) -> None:
+    """Remind the client to accept/reject the clinic's proposed time.
+
+    Fires 3 hours before the proposed datetime (1 hour before the request
+    would auto-expire via expire_pending_request_job). Does not change the
+    appointment's state, only notifies the client.
+
+    Args:
+        appointment_id: The ID of the appointment/request to remind about
+    """
+    connection = None
+    try:
+        bot = get_bot()
+        config = load_config()
+
+        db = Database(config.database_path)
+        connection = await db.connect()
+
+        appointment_repo = AppointmentRepository(connection)
+        user_repo = UserRepository(connection)
+        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+
+        if appointment is None:
+            logger.warning(f"Proposal reminder job: appointment {appointment_id} not found")
+            return
+
+        if (
+            appointment.status != AppointmentStatus.PENDING
+            or appointment.created_by != CreatedBy.CLIENT
+            or appointment.proposed_datetime is None
+            or appointment.proposed_by != CreatedBy.ADMIN
+        ):
+            logger.info(f"Proposal reminder job: skipping appointment {appointment_id} (already resolved)")
+            return
+
+        try:
+            notification_sent = await notification_service.notify_client_proposal_reminder(appointment)
+            if notification_sent:
+                logger.info(f"Proposal reminder sent to client for appointment {appointment_id}")
+            else:
+                logger.warning(
+                    f"Failed to send proposal reminder for appointment {appointment_id} "
+                    f"(client not found or no telegram_id)"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to send proposal reminder to client for appointment {appointment_id}: {e}"
+            )
+
+    except AppointmentNotFoundError:
+        logger.warning(f"Proposal reminder job: appointment {appointment_id} not found")
+    except Exception as e:
+        logger.exception(f"Error in send_proposal_reminder_job({appointment_id}): {e}")
     finally:
         if connection is not None:
             await connection.close()

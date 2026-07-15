@@ -91,8 +91,34 @@ def test_appointment_manage_card_kb_normal_confirmed_shows_reschedule_button():
     )
 
 
-def test_appointment_manage_card_kb_normal_pending_hides_reschedule_button():
-    appointment = _appointment(status=AppointmentStatus.PENDING)
+def test_appointment_manage_card_kb_normal_pending_shows_reschedule_button():
+    """A still-PENDING self-booking request with no outstanding proposal can be
+    rescheduled directly (same row, no negotiation) -- so the reschedule button
+    must be shown, same as for CONFIRMED."""
+    appointment = _appointment(status=AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT)
+
+    markup = appointment_manage_card_kb(appointment, page=1)
+
+    buttons = _all_buttons(markup)
+    callback_datas = [button.callback_data for button in buttons]
+
+    assert callback_datas == [
+        ClientManageActionCB(action="cancel_ask", appointment_id=1, page=1).pack(),
+        ClientRescheduleStartCB(appointment_id=1).pack(),
+        ClientManagePageCB(page=1).pack(),
+    ]
+    assert not any(
+        cb.startswith(ClientManageActionCB.__prefix__) and ":confirm:" in cb
+        for cb in callback_datas
+    )
+
+
+def test_appointment_manage_card_kb_admin_created_pending_hides_reschedule_button():
+    """A PENDING request created by the ADMIN (not a client self-booking) is
+    awaiting the clinic's own decision -- the service now rejects a direct-edit
+    reschedule for it (AwaitingClinicDecisionError), so the button must not be
+    offered here either, keeping the keyboard in sync with the service."""
+    appointment = _appointment(status=AppointmentStatus.PENDING, created_by=CreatedBy.ADMIN)
 
     markup = appointment_manage_card_kb(appointment, page=1)
 
@@ -104,9 +130,29 @@ def test_appointment_manage_card_kb_normal_pending_hides_reschedule_button():
         ClientManagePageCB(page=1).pack(),
     ]
     assert not any(
-        cb.startswith(ClientManageActionCB.__prefix__) and ":confirm:" in cb
-        for cb in callback_datas
+        cb.startswith(ClientRescheduleStartCB.__prefix__) for cb in callback_datas
     )
+
+
+def test_appointment_manage_card_kb_client_proposed_pending_hides_reschedule_button():
+    """A PENDING request with an outstanding client-authored proposal (proposed_by
+    CLIENT) must only allow cancelling -- rescheduling again while a proposal is
+    already in flight is not offered."""
+    appointment = _appointment(
+        status=AppointmentStatus.PENDING,
+        proposed_datetime="2026-08-15 15:00",
+        proposed_by=CreatedBy.CLIENT,
+    )
+
+    markup = appointment_manage_card_kb(appointment, page=1)
+
+    buttons = _all_buttons(markup)
+    callback_datas = [button.callback_data for button in buttons]
+
+    assert callback_datas == [
+        ClientManageActionCB(action="cancel_ask", appointment_id=1, page=1).pack(),
+        ClientManagePageCB(page=1).pack(),
+    ]
     assert not any(
         cb.startswith(ClientRescheduleStartCB.__prefix__) for cb in callback_datas
     )

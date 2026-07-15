@@ -97,7 +97,13 @@ def appointment_manage_card_kb(appointment: Appointment, page: int) -> InlineKey
         # Client's own reschedule request pending admin decision (proposed_by CLIENT)
         # only allows cancelling outright; a plain confirmed/pending appointment also
         # allows rescheduling.
-        can_reschedule = appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None
+        can_reschedule = (
+            appointment.proposed_datetime is None
+            and (
+                appointment.status == AppointmentStatus.CONFIRMED
+                or (appointment.status == AppointmentStatus.PENDING and appointment.created_by == CreatedBy.CLIENT)
+            )
+        )
 
         button_rows += _add_status_action_buttons(
             builder,
