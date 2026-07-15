@@ -27,10 +27,12 @@ def create_help_router():
     @router.callback_query(F.data == "back_to_help", RoleFilter("client"))
     async def back_to_help_client(callback: CallbackQuery) -> None:
         await callback.message.edit_text(display_client_help_msg(), reply_markup=client_help_guide_kb())
+        await callback.answer()
 
     @router.callback_query(F.data == "client_help_guide", RoleFilter("client"))
     async def help_client_guide(callback: CallbackQuery) -> None:
         await callback.message.edit_text(display_client_help_guide_msg(), reply_markup=back_to_help_kb())
+        await callback.answer()
 
 
     return router

@@ -46,6 +46,7 @@ def _callback(data=None):
     callback.answer = AsyncMock()
     callback.message = MagicMock()
     callback.message.answer = AsyncMock()
+    callback.message.edit_text = AsyncMock()
     return callback
 
 
@@ -98,8 +99,8 @@ async def test_client_help_guide_callback_sends_all_six_steps_in_order():
 
     await help_client_guide(callback)
 
-    callback.message.answer.assert_awaited_once()
-    sent_text = callback.message.answer.call_args.args[0]
+    callback.message.edit_text.assert_awaited_once()
+    sent_text = callback.message.edit_text.call_args.args[0]
 
     steps = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
     for step in steps:
