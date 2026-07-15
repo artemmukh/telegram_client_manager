@@ -35,6 +35,9 @@ data/*.sqlite3
 # Binaries / tools
 *.exe
 
+# Local scratch/test artifacts
+tmp/
+
 # AI
 CLAUDE.md
 .agents/!/data/data_base.db
