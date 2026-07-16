@@ -235,6 +235,12 @@ class AppointmentManagement:
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
         return await self.appointment_repository.get_appointment_by_id(appointment_id)
 
+    async def get_client_by_id(self, user_id: int) -> User | None:
+        return await self.user_repository.get_client_by_id(user_id)
+
+    async def get_user_by_telegram_id(self, telegram_id: int) -> User | None:
+        return await self.user_repository.get_user_by_telegram_id(telegram_id)
+
     async def get_appointment_for_client(
         self, appointment_id: int, telegram_user_id: int
     ) -> Appointment | None:
@@ -509,6 +515,55 @@ class AppointmentManagement:
         appointment.status_updated_at = status_updated_at
 
         return appointment
+
+    async def auto_confirm_pending(self, appointment_id: int) -> Appointment | None:
+        appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            return None
+        if appointment.status != AppointmentStatus.PENDING or appointment.created_by != CreatedBy.ADMIN:
+            return None
+
+        status_updated_at = get_current_tashkent_time()
+        await self.appointment_repository.update_appointment_status(
+            appointment_id, AppointmentStatus.CONFIRMED, status_updated_at
+        )
+        appointment.status = AppointmentStatus.CONFIRMED
+        appointment.status_updated_at = status_updated_at
+
+        return appointment
+
+    async def expire_reschedule_request(self, appointment_id: int) -> Appointment | None:
+        appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            return None
+        if appointment.proposed_datetime is None:
+            return None
+
+        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        await self.appointment_repository.update_proposed_by(appointment_id, None)
+
+        return appointment
+
+    async def expire_pending_request(self, appointment_id: int) -> Appointment | None:
+        appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            return None
+        if appointment.status != AppointmentStatus.PENDING:
+            return None
+
+        status_updated_at = get_current_tashkent_time()
+        await self.appointment_repository.update_appointment_status(
+            appointment_id, AppointmentStatus.EXPIRED, status_updated_at
+        )
+        appointment.status = AppointmentStatus.EXPIRED
+        appointment.status_updated_at = status_updated_at
+
+        return appointment
+
+    async def clear_proposal_state(self, appointment_id: int) -> None:
+        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
+        await self.appointment_repository.update_proposal_message_id(appointment_id, None)
+        await self.appointment_repository.update_proposed_by(appointment_id, None)
 
     async def update_datetime(self, appointment_id: int, new_datetime: str) -> Appointment:
         appointment = await self._get_or_raise(appointment_id)

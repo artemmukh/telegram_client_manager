@@ -13,11 +13,13 @@ from bot.loader import get_bot
 from bot.config.config import load_config
 from bot.models.database import Database
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
-from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
@@ -33,14 +35,21 @@ async def send_reminder_job(
     """Send appointment reminder to client and/or admin based on time until appointment.
 
     This job is called by APScheduler at scheduled reminder times (24h and 2h before).
-    notify_client/notify_admin are captured at schedule time from each party's
-    reminder preferences and must not be re-fetched here.
+    Client and admin reminder preferences are read fresh from the database at send
+    time, not at schedule time, so a preference change between scheduling and firing
+    takes effect immediately instead of being frozen at whatever it was when the job
+    was created.
+
+    The notify_client/notify_admin parameters remain in the signature only for
+    backward compatibility with jobs already persisted to the job store (which call
+    this function with 4 positional args); they are accepted but no longer used to
+    decide anything.
 
     Args:
         appointment_id: The ID of the appointment to send reminder for
         hours_before: Hours before appointment (24 or 2)
-        notify_client: Whether the client wants this reminder slot
-        notify_admin: Whether the admin wants this reminder slot
+        notify_client: Unused, kept for backward compatibility with persisted jobs
+        notify_admin: Unused, kept for backward compatibility with persisted jobs
     """
     connection = None
     try:
@@ -52,9 +61,12 @@ async def send_reminder_job(
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+        appointment = await appointment_management.get_appointment_by_id(appointment_id)
 
         if appointment is None:
             logger.warning(
@@ -73,8 +85,9 @@ async def send_reminder_job(
             return
 
         # Get client info for potential admin notification
-        client = await user_repo.get_client_by_id(appointment.client_id)
+        client = await appointment_management.get_client_by_id(appointment.client_id)
         client_name = client.full_name if client else "Неизвестный клиент"
+        admin = await appointment_management.get_user_by_telegram_id(appointment.created_by_telegram_id)
 
         if hours_before not in (24, 2):
             logger.warning(f"Unknown reminder time: {hours_before}h")
@@ -83,7 +96,14 @@ async def send_reminder_job(
         # Determine reminder type and send to CLIENT
         reminder_type = f"{hours_before}h"
 
-        if notify_client:
+        if hours_before == 24:
+            client_wants = client.reminder_24h if client else True
+            admin_wants = admin.reminder_24h if admin else True
+        else:
+            client_wants = client.reminder_2h if client else True
+            admin_wants = admin.reminder_2h if admin else True
+
+        if client_wants:
             notification_sent = False
 
             try:
@@ -117,7 +137,7 @@ async def send_reminder_job(
                 reminder_type = f"{hours_before}h (failed)"
 
         # Send reminder to ADMIN (INDEPENDENT, must always attempt)
-        if notify_admin and appointment.created_by_telegram_id and client:
+        if admin_wants and appointment.created_by_telegram_id and client:
             try:
                 await notification_service.notify_admin_upcoming_appointment(
                     appointment.created_by_telegram_id,
@@ -148,7 +168,7 @@ async def send_reminder_job(
 
 
 async def complete_appointment(
-    appointment_repo: AppointmentRepository,
+    appointment_management: AppointmentManagement,
     notification_service: AppointmentNotificationService,
     appointment_id: int,
 ) -> None:
@@ -163,11 +183,11 @@ async def complete_appointment(
     (see appointment_completion.py handlers).
 
     Args:
-        appointment_repo: Repository used to fetch the appointment
+        appointment_management: Service used to fetch the appointment
         notification_service: Service used to notify the admin
         appointment_id: The ID of the appointment that just finished
     """
-    appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+    appointment = await appointment_management.get_appointment_by_id(appointment_id)
 
     if appointment is None:
         logger.warning(
@@ -228,21 +248,16 @@ async def expire_pending_request_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+        appointment = await appointment_management.expire_pending_request(appointment_id)
 
         if appointment is None:
-            logger.warning(f"Expire pending job: appointment {appointment_id} not found")
+            logger.warning(f"Expire pending job: appointment {appointment_id} not found or not eligible")
             return
-
-        if appointment.status != AppointmentStatus.PENDING:
-            logger.info(f"Expire pending job: skipping appointment {appointment_id} (status={appointment.status.value})")
-            return
-
-        await appointment_repo.update_appointment_status(
-            appointment_id, AppointmentStatus.EXPIRED, get_current_tashkent_time()
-        )
 
         logger.info(f"Appointment {appointment_id} pending request expired (unanswered)")
 
@@ -256,7 +271,7 @@ async def expire_pending_request_job(appointment_id: int) -> None:
         if appointment.proposed_datetime is not None:
             if appointment.proposal_message_id:
                 try:
-                    client = await user_repo.get_client_by_id(appointment.client_id)
+                    client = await appointment_management.get_client_by_id(appointment.client_id)
                     if client and client.telegram_user_id:
                         await notification_service.close_reschedule_proposal_message(
                             client.telegram_user_id, appointment.proposal_message_id
@@ -266,9 +281,7 @@ async def expire_pending_request_job(appointment_id: int) -> None:
                         f"Failed to close stale proposal message for appointment {appointment_id}: {e}"
                     )
 
-            await appointment_repo.update_proposed_datetime(appointment_id, None)
-            await appointment_repo.update_proposal_message_id(appointment_id, None)
-            await appointment_repo.update_proposed_by(appointment_id, None)
+            await appointment_management.clear_proposal_state(appointment_id)
 
     except AppointmentNotFoundError:
         logger.warning(f"Expire pending job: appointment {appointment_id} not found")
@@ -305,20 +318,16 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+        appointment = await appointment_management.expire_reschedule_request(appointment_id)
 
         if appointment is None:
-            logger.warning(f"Reschedule expiry job: appointment {appointment_id} not found")
+            logger.info(f"Reschedule expiry job: skipping appointment {appointment_id} (not found or already resolved)")
             return
-
-        if appointment.proposed_datetime is None:
-            logger.info(f"Reschedule expiry job: skipping appointment {appointment_id} (already resolved)")
-            return
-
-        await appointment_repo.update_proposed_datetime(appointment_id, None)
-        await appointment_repo.update_proposed_by(appointment_id, None)
 
         logger.info(f"Reschedule request for appointment {appointment_id} expired (unanswered)")
 
@@ -362,9 +371,12 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+        appointment = await appointment_management.get_appointment_by_id(appointment_id)
 
         if appointment is None:
             logger.warning(f"Proposal reminder job: appointment {appointment_id} not found")
@@ -428,9 +440,12 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
 
-        await complete_appointment(appointment_repo, notification_service, appointment_id)
+        await complete_appointment(appointment_management, notification_service, appointment_id)
 
     except AppointmentNotFoundError:
         logger.warning(f"Mark completion job: appointment {appointment_id} not found")
@@ -469,30 +484,15 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
 
         appointment_repo = AppointmentRepository(connection)
         user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
-        appointment = await appointment_repo.get_appointment_by_id(appointment_id)
+        appointment = await appointment_management.auto_confirm_pending(appointment_id)
 
         if appointment is None:
-            logger.warning(f"Auto-confirm job: appointment {appointment_id} not found")
+            logger.warning(f"Auto-confirm job: appointment {appointment_id} not found or not eligible")
             return
-
-        if appointment.status != AppointmentStatus.PENDING:
-            logger.info(
-                f"Auto-confirm job: skipping appointment {appointment_id} "
-                f"with status {appointment.status.value}"
-            )
-            return
-
-        if appointment.created_by != CreatedBy.ADMIN:
-            logger.info(
-                f"Auto-confirm job: skipping appointment {appointment_id} "
-                f"created by {appointment.created_by.value}"
-            )
-            return
-
-        await appointment_repo.update_appointment_status(
-            appointment_id, AppointmentStatus.CONFIRMED, get_current_tashkent_time()
-        )
 
         logger.info(f"Appointment {appointment_id} auto-confirmed (2h before)")
 

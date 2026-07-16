@@ -9,8 +9,7 @@ from bot.exceptions.appointment_exceptions import (
     JobCancellationError,
 )
 from bot.models.appointment import Appointment
-from bot.repositories.appointment_repository import AppointmentRepository
-from bot.repositories.user_repository import UserRepository
+from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
@@ -42,14 +41,12 @@ class AppointmentScheduler:
     def __init__(
         self,
         scheduler: AsyncIOScheduler,
-        appointment_repo: AppointmentRepository,
-        user_repo: UserRepository,
         notification_service: AppointmentNotificationService,
+        appointment_management: AppointmentManagement,
     ):
         self.scheduler = scheduler
-        self.appointment_repo = appointment_repo
-        self.user_repo = user_repo
         self.notification_service = notification_service
+        self.appointment_management = appointment_management
 
     async def schedule_appointment_reminders(self, appointment: Appointment) -> None:
         """Schedule reminder jobs for an appointment.
@@ -68,21 +65,12 @@ class AppointmentScheduler:
             appointment_dt = datetime.fromisoformat(appointment.datetime)
             now = _current_tashkent_time()
 
-            client = await self.user_repo.get_client_by_id(appointment.client_id)
-            client_reminder_24h = client.reminder_24h if client else True
-            client_reminder_2h = client.reminder_2h if client else True
+            reminder_times = [
+                (appointment_dt - timedelta(hours=24), 24),
+                (appointment_dt - timedelta(hours=2), 2),
+            ]
 
-            admin = await self.user_repo.get_user_by_telegram_id(appointment.created_by_telegram_id)
-            admin_reminder_24h = admin.reminder_24h if admin else True
-            admin_reminder_2h = admin.reminder_2h if admin else True
-
-            reminder_times = []
-            if client_reminder_24h or admin_reminder_24h:
-                reminder_times.append((appointment_dt - timedelta(hours=24), 24, client_reminder_24h, admin_reminder_24h))
-            if client_reminder_2h or admin_reminder_2h:
-                reminder_times.append((appointment_dt - timedelta(hours=2), 2, client_reminder_2h, admin_reminder_2h))
-
-            for reminder_dt, hours_before, client_wants_slot, admin_wants_slot in reminder_times:
+            for reminder_dt, hours_before in reminder_times:
                 if reminder_dt <= now:
                     logger.info(
                         f"Skipping past-due {hours_before}h reminder for appointment "
@@ -97,7 +85,7 @@ class AppointmentScheduler:
                         send_reminder_job,
                         "date",
                         run_date=reminder_dt,
-                        args=(appointment.id, hours_before, client_wants_slot, admin_wants_slot),
+                        args=(appointment.id, hours_before, True, True),
                         id=job_id,
                         replace_existing=True,
                     )
@@ -548,7 +536,7 @@ class AppointmentScheduler:
         AppointmentScheduler instance.
         """
         await complete_appointment(
-            self.appointment_repo,
+            self.appointment_management,
             self.notification_service,
             appointment_id,
         )

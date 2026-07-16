@@ -21,6 +21,7 @@ from bot.services.appointment.appointment_jobs import (
     expire_reschedule_request_job,
     send_proposal_reminder_job,
 )
+from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_scheduler import (
     AppointmentScheduler,
     _current_tashkent_time,
@@ -56,6 +57,15 @@ def mock_notification_service():
 
 
 @pytest.fixture
+def mock_appointment_management(mock_appointment_repo, mock_user_repo):
+    """Real AppointmentManagement wrapping the mocked repositories, so that
+    delegated repo calls remain observable on mock_appointment_repo/mock_user_repo."""
+    return AppointmentManagement(
+        mock_appointment_repo, mock_user_repo, AsyncMock(), AsyncMock(),
+    )
+
+
+@pytest.fixture
 def scheduler():
     """Create APScheduler instance for testing."""
     sched = AsyncIOScheduler(timezone='Asia/Tashkent')
@@ -71,14 +81,13 @@ def scheduler():
 
 @pytest.fixture
 def appointment_scheduler(
-    scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service
+    scheduler, mock_notification_service, mock_appointment_management
 ):
     """Create AppointmentScheduler instance."""
     return AppointmentScheduler(
         scheduler=scheduler,
-        appointment_repo=mock_appointment_repo,
-        user_repo=mock_user_repo,
         notification_service=mock_notification_service,
+        appointment_management=mock_appointment_management,
     )
 
 
@@ -588,14 +597,16 @@ async def test_past_due_reminder_scheduling_does_not_call_add_job(
     scheduler.shutdown(wait=False)
 
 
-# Reminder preference filtering (Phase 3b + Fix 3 admin preferences)
+# Reminder scheduling is unconditional (Phase 3b + Fix 3 admin preferences)
 #
-# Since Fix 3, schedule_appointment_reminders() ORs the client's and the
-# admin's per-slot preference (a slot is scheduled if EITHER wants it), so
-# every test below pins BOTH get_client_by_id and get_user_by_telegram_id
-# explicitly. Tests that mean to isolate "client preference" pin the admin
-# to opted-out (False, False) so the admin can't accidentally supply the
-# result being asserted.
+# schedule_appointment_reminders() no longer reads reminder preferences at
+# all - it always schedules both the 24h and 2h job, subject only to the
+# past-due guard. Client/admin reminder_24h/reminder_2h are read live by
+# send_reminder_job() when a job actually fires (see the firing tests
+# further down), not by the scheduler. Each test below still arranges the
+# same preference combo that used to gate scheduling (via mock_user_repo);
+# the scheduler never reads it, and the assertion proves scheduling now
+# ignores it and always schedules both jobs anyway.
 
 
 def _client_with_preferences(reminder_24h: bool, reminder_2h: bool) -> User:
@@ -642,11 +653,13 @@ async def test_reminders_respect_both_enabled_preference(
 
 
 @pytest.mark.asyncio
-async def test_reminders_respect_24h_only_preference(
+async def test_both_jobs_scheduled_when_client_wants_only_24h(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """Client who opted out of the 2h reminder only gets the 24h job scheduled,
-    given an admin who independently wants nothing (isolates client preference)."""
+    """This combo used to suppress the 2h job. Scheduling no longer consults
+    preferences at all, so a client who opted out of the 2h reminder (and an
+    admin who wants nothing) still gets both the 24h and 2h job scheduled;
+    the preference is only enforced live when a job fires."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, False)
     mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(False, False)
@@ -654,17 +667,22 @@ async def test_reminders_respect_24h_only_preference(
     await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
 
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert job_ids == {f"appt_{sample_appointment.id}_24h"}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+    }
 
     scheduler.shutdown(wait=False)
 
 
 @pytest.mark.asyncio
-async def test_reminders_respect_2h_only_preference(
+async def test_both_jobs_scheduled_when_client_wants_only_2h(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """Client who opted out of the 24h reminder only gets the 2h job scheduled,
-    given an admin who independently wants nothing (isolates client preference)."""
+    """Mirror case: this combo used to suppress the 24h job. A client who
+    opted out of the 24h reminder (and an admin who wants nothing) still
+    gets both the 24h and 2h job scheduled; the preference is only enforced
+    live when a job fires."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, True)
     mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(False, False)
@@ -672,24 +690,33 @@ async def test_reminders_respect_2h_only_preference(
     await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
 
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert job_ids == {f"appt_{sample_appointment.id}_2h"}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+    }
 
     scheduler.shutdown(wait=False)
 
 
 @pytest.mark.asyncio
-async def test_reminders_respect_both_disabled_preference(
+async def test_both_jobs_scheduled_when_all_preferences_disabled(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """Client and admin who both opted out of everything get no reminder jobs
-    scheduled at all."""
+    """This combo used to schedule nothing at all. A client and admin who
+    both opted out of everything still get both reminder jobs scheduled;
+    disabled preferences only suppress the actual send at firing time, never
+    the scheduling itself."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, False)
     mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(False, False)
 
     await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
 
-    assert scheduler.get_jobs() == []
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+    }
 
     scheduler.shutdown(wait=False)
 
@@ -718,17 +745,21 @@ async def test_reminders_default_to_both_when_client_not_found(
 
 # Fix 3: admin reminder preferences - scheduling half
 #
-# schedule_appointment_reminders() now schedules a slot if the CLIENT OR the
-# ADMIN wants it, and threads both flags into the job's args so the firing
-# job knows who to notify.
+# schedule_appointment_reminders() always schedules both slots now,
+# regardless of client/admin preference; it no longer computes or threads
+# real per-party flags into the job's args, nor does it read mock_user_repo
+# at all. The (True, True) args below are inert placeholders kept only for
+# backward compatibility with the send_reminder_job signature - the firing
+# job re-reads live preferences instead (see the firing tests further down).
 
 
 @pytest.mark.asyncio
 async def test_admin_only_wanting_24h_slot_still_schedules_job(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """Client opted out of the 24h reminder, but the admin wants it -> the 24h
-    job IS scheduled (OR semantics) and carries the correct per-party flags."""
+    """Client opted out of the 24h reminder, admin wants it: the 24h job is
+    scheduled unconditionally regardless of who wants the slot, and carries
+    the inert (True, True) placeholder args."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, True)
     mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, True)
@@ -741,7 +772,7 @@ async def test_admin_only_wanting_24h_slot_still_schedules_job(
         f"appt_{sample_appointment.id}_2h",
     }
     assert jobs[f"appt_{sample_appointment.id}_24h"].args == (
-        sample_appointment.id, 24, False, True,
+        sample_appointment.id, 24, True, True,
     )
 
     scheduler.shutdown(wait=False)
@@ -751,8 +782,9 @@ async def test_admin_only_wanting_24h_slot_still_schedules_job(
 async def test_admin_only_wanting_2h_slot_still_schedules_job(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """Admin opted out of the 2h reminder, but the client wants it -> the 2h
-    job IS scheduled and carries the correct per-party flags."""
+    """Admin opted out of the 2h reminder, client wants it: the 2h job is
+    scheduled unconditionally regardless of who wants the slot, and carries
+    the inert (True, True) placeholder args."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
     mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, False)
@@ -765,18 +797,19 @@ async def test_admin_only_wanting_2h_slot_still_schedules_job(
         f"appt_{sample_appointment.id}_2h",
     }
     assert jobs[f"appt_{sample_appointment.id}_2h"].args == (
-        sample_appointment.id, 2, True, False,
+        sample_appointment.id, 2, True, True,
     )
 
     scheduler.shutdown(wait=False)
 
 
 @pytest.mark.asyncio
-async def test_neither_client_nor_admin_wanting_2h_slot_skips_add_job(
+async def test_add_job_called_for_both_slots_even_when_neither_wants_2h(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """When neither party wants a given slot, add_job must never be invoked for
-    it (stronger guarantee than just "absent from the final job list")."""
+    """Neither client nor admin wants the 2h slot, yet add_job is still
+    invoked for both it and the 24h slot (stronger guarantee than just
+    "present in the final job list") - scheduling is unconditional."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, False)
     mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, False)
@@ -785,7 +818,10 @@ async def test_neither_client_nor_admin_wanting_2h_slot_skips_add_job(
         await appointment_scheduler.schedule_appointment_reminders(sample_appointment)
 
     scheduled_ids = {call.kwargs.get("id") for call in mock_add_job.call_args_list}
-    assert scheduled_ids == {f"appt_{sample_appointment.id}_24h"}
+    assert scheduled_ids == {
+        f"appt_{sample_appointment.id}_24h",
+        f"appt_{sample_appointment.id}_2h",
+    }
 
     scheduler.shutdown(wait=False)
 
@@ -794,11 +830,9 @@ async def test_neither_client_nor_admin_wanting_2h_slot_skips_add_job(
 async def test_admin_unresolved_defaults_to_wanting_slot(
     appointment_scheduler, scheduler, mock_user_repo, sample_appointment
 ):
-    """When the admin can't be resolved (get_user_by_telegram_id -> None), the
-    admin defaults to wanting the reminder (True), matching pre-fix
-    unconditional-send behavior for the unresolvable case. Client is pinned
-    opted-out so the scheduled jobs here are fully explained by the admin
-    default."""
+    """Scheduling doesn't resolve the admin at all anymore, so both jobs are
+    scheduled with the inert (True, True) placeholder args regardless of
+    whether get_user_by_telegram_id would resolve to anything."""
     scheduler.start()
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, False)
     mock_user_repo.get_user_by_telegram_id.return_value = None
@@ -811,10 +845,10 @@ async def test_admin_unresolved_defaults_to_wanting_slot(
         f"appt_{sample_appointment.id}_2h",
     }
     assert jobs[f"appt_{sample_appointment.id}_24h"].args == (
-        sample_appointment.id, 24, False, True,
+        sample_appointment.id, 24, True, True,
     )
     assert jobs[f"appt_{sample_appointment.id}_2h"].args == (
-        sample_appointment.id, 2, False, True,
+        sample_appointment.id, 2, True, True,
     )
 
     scheduler.shutdown(wait=False)
@@ -841,26 +875,30 @@ async def test_past_due_slot_skipped_even_when_both_client_and_admin_want_it(
     scheduler.shutdown(wait=False)
 
 
-# Fix 3: admin reminder preferences - job firing half
+# Fix 3 + zombie-preference fix: job firing half
 #
-# send_reminder_job() receives notify_client/notify_admin captured at
-# schedule time and must gate each party's send independently. This is the
-# exact regression the fix guards against: once admin-only-wanted jobs can
-# exist, an unguarded client-send would mean a client who disabled reminders
-# starts receiving them again.
+# send_reminder_job() no longer trusts the notify_client/notify_admin
+# arguments it's called with (they're inert placeholders, see the scheduling
+# tests above) - it reads each party's reminder_24h/reminder_2h fresh from
+# the database via get_client_by_id/get_user_by_telegram_id at firing time
+# and gates each party's send independently on that live value. The
+# notify_client/notify_admin kwargs passed below are deliberately the
+# opposite of the mocked live preference, so a pass here proves the live DB
+# read - not the frozen argument - decides the outcome.
 
 
 @pytest.mark.asyncio
 async def test_fired_reminder_suppresses_client_when_only_admin_wants_24h_slot(
     appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Client reminder_24h=False, admin reminder_24h=True: the 24h job was
-    scheduled for the admin's sake only. When fired with
-    notify_client=False, notify_admin=True, the CLIENT message must NOT be
-    sent while the ADMIN message IS sent."""
+    """Client reminder_24h=False, admin reminder_24h=True (read live from the
+    DB at firing time): the CLIENT message must NOT be sent while the ADMIN
+    message IS sent. The job is fired with the opposite notify_client/
+    notify_admin kwargs to prove those frozen args no longer decide anything."""
     sample_appointment.created_by_telegram_id = 12345
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, True)
+    mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -883,7 +921,7 @@ async def test_fired_reminder_suppresses_client_when_only_admin_wants_24h_slot(
             mock_notif_class.return_value = mock_notification_service
 
             await appointment_scheduler._send_reminder_job(
-                sample_appointment.id, hours_before=24, notify_client=False, notify_admin=True,
+                sample_appointment.id, hours_before=24, notify_client=True, notify_admin=False,
             )
 
             mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
@@ -897,12 +935,15 @@ async def test_fired_reminder_suppresses_client_when_only_admin_wants_24h_slot(
 async def test_fired_reminder_suppresses_admin_when_only_client_wants_2h_slot(
     appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Mirror case: admin reminder_2h=False, client reminder_2h=True. When
-    fired with notify_client=True, notify_admin=False, the ADMIN message must
-    NOT be sent while the CLIENT message IS sent."""
+    """Mirror case: admin reminder_2h=False, client reminder_2h=True (read
+    live from the DB at firing time). The ADMIN message must NOT be sent
+    while the CLIENT message IS sent. The job is fired with the opposite
+    notify_client/notify_admin kwargs to prove those frozen args no longer
+    decide anything."""
     sample_appointment.created_by_telegram_id = 12345
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
+    mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, False)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -925,7 +966,7 @@ async def test_fired_reminder_suppresses_admin_when_only_client_wants_2h_slot(
             mock_notif_class.return_value = mock_notification_service
 
             await appointment_scheduler._send_reminder_job(
-                sample_appointment.id, hours_before=2, notify_client=True, notify_admin=False,
+                sample_appointment.id, hours_before=2, notify_client=False, notify_admin=True,
             )
 
             mock_notification_service.notify_client_reminder_with_buttons.assert_called_once_with(
@@ -938,11 +979,14 @@ async def test_fired_reminder_suppresses_admin_when_only_client_wants_2h_slot(
 async def test_fired_reminder_sends_to_both_when_both_want_slot(
     appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Both client and admin want a slot -> both messages sent (existing
-    behavior, must not regress)."""
+    """Both client and admin want a slot (read live from the DB at firing
+    time) -> both messages sent (existing behavior, must not regress). The
+    job is fired with notify_client=False, notify_admin=False to prove the
+    live DB read - not the frozen args - decides the outcome."""
     sample_appointment.created_by_telegram_id = 12345
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
-    mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
+    mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -965,7 +1009,7 @@ async def test_fired_reminder_sends_to_both_when_both_want_slot(
             mock_notif_class.return_value = mock_notification_service
 
             await appointment_scheduler._send_reminder_job(
-                sample_appointment.id, hours_before=2, notify_client=True, notify_admin=True,
+                sample_appointment.id, hours_before=2, notify_client=False, notify_admin=False,
             )
 
             mock_notification_service.notify_client_reminder_with_buttons.assert_called_once_with(

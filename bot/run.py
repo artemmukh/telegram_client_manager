@@ -85,9 +85,8 @@ async def main():
 
     appointment_scheduler = AppointmentScheduler(
         scheduler=scheduler,
-        appointment_repo=appointment_repo,
-        user_repo=user_repo,
         notification_service=notification_service,
+        appointment_management=appointment_management_service,
     )
 
     # Routers

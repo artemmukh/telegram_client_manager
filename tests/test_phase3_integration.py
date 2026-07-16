@@ -58,17 +58,6 @@ def mock_notification_service():
 
 
 @pytest.fixture
-def scheduler_service(async_scheduler, mock_repos, mock_notification_service):
-    """Create AppointmentScheduler service."""
-    return AppointmentScheduler(
-        scheduler=async_scheduler,
-        appointment_repo=mock_repos['appointment_repo'],
-        user_repo=mock_repos['user_repo'],
-        notification_service=mock_notification_service,
-    )
-
-
-@pytest.fixture
 def appointment_management(mock_repos):
     """Create AppointmentManagement service."""
     return AppointmentManagement(
@@ -76,6 +65,16 @@ def appointment_management(mock_repos):
         user_repository=mock_repos['user_repo'],
         staff_repository=mock_repos['staff_repo'],
         clinic_repository=mock_repos['clinic_repo'],
+    )
+
+
+@pytest.fixture
+def scheduler_service(async_scheduler, mock_notification_service, appointment_management):
+    """Create AppointmentScheduler service."""
+    return AppointmentScheduler(
+        scheduler=async_scheduler,
+        notification_service=mock_notification_service,
+        appointment_management=appointment_management,
     )
 
 

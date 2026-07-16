@@ -105,6 +105,9 @@ async def e2e(tmp_path):
 
     client_management = ClientManagement(user_repo, staff_repo, clinic_repo)
     notification_service = AppointmentNotificationService(fake_bot, user_repo, appointment_repo)
+    appointment_management = AppointmentManagement(
+        appointment_repo, user_repo, staff_repo, clinic_repo, client_management=client_management,
+    )
 
     env = SimpleNamespace(
         connection=connection,
@@ -118,12 +121,12 @@ async def e2e(tmp_path):
         registration_service=RegistrationService(user_repo, clinic_repo),
         client_management=client_management,
         client_pagination=ClientPaginationService(user_repo),
-        appointment_management=AppointmentManagement(
-            appointment_repo, user_repo, staff_repo, clinic_repo, client_management=client_management,
-        ),
+        appointment_management=appointment_management,
         appointment_pagination=AppointmentPaginationService(appointment_repo),
         notification_service=notification_service,
-        appointment_scheduler=AppointmentScheduler(scheduler, appointment_repo, user_repo, notification_service),
+        appointment_scheduler=AppointmentScheduler(
+            scheduler, notification_service, appointment_management,
+        ),
     )
 
     yield env
@@ -437,7 +440,7 @@ async def test_appointment_completion_follow_up_and_pagination_by_tab(e2e):
     assert confirmed_appt.id not in {a.id for a in pending_page.items}
 
     # The 1h follow-up fires: it must only prompt the admin, never touch status.
-    await complete_appointment(e2e.appointment_repo, e2e.notification_service, confirmed_appt.id)
+    await complete_appointment(e2e.appointment_management, e2e.notification_service, confirmed_appt.id)
 
     untouched = await e2e.appointment_repo.get_appointment_by_id(confirmed_appt.id)
     assert untouched.status is AppointmentStatus.CONFIRMED
@@ -493,7 +496,7 @@ async def test_reminder_and_completion_jobs_scheduled_delivered_and_cancelled(e2
     assert any(m.chat_id == ADMIN_TELEGRAM_ID for m in e2e.fake_bot.sent_messages)
 
     # Trigger the 1h completion follow-up delivery effect as well.
-    await complete_appointment(e2e.appointment_repo, e2e.notification_service, booking.id)
+    await complete_appointment(e2e.appointment_management, e2e.notification_service, booking.id)
     completion_messages = [m for m in e2e.fake_bot.sent_messages if m.chat_id == ADMIN_TELEGRAM_ID]
     assert len(completion_messages) == 2  # upcoming-appointment reminder + completion follow-up
 

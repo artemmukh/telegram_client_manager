@@ -61,6 +61,14 @@ def mock_notification_service():
 
 
 @pytest.fixture
+def appointment_management(mock_appointment_repo, mock_user_repo, mock_staff_repo, mock_clinic_repo):
+    """Create AppointmentManagement service wrapping the mocked repositories."""
+    return AppointmentManagement(
+        mock_appointment_repo, mock_user_repo, mock_staff_repo, mock_clinic_repo,
+    )
+
+
+@pytest.fixture
 def scheduler():
     """Create APScheduler instance for testing."""
     sched = AsyncIOScheduler(timezone='Asia/Tashkent')
@@ -75,14 +83,13 @@ def scheduler():
 
 @pytest.fixture
 def appointment_scheduler(
-    scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service
+    scheduler, mock_notification_service, appointment_management
 ):
     """Create AppointmentScheduler instance."""
     return AppointmentScheduler(
         scheduler=scheduler,
-        appointment_repo=mock_appointment_repo,
-        user_repo=mock_user_repo,
         notification_service=mock_notification_service,
+        appointment_management=appointment_management,
     )
 
 
