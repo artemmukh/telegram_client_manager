@@ -1,5 +1,4 @@
 import logging
-from dataclasses import replace
 from datetime import datetime
 
 from aiogram import F, Router
@@ -69,11 +68,7 @@ def create_admin_booking_requests_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
-            await appointment_scheduler.cancel_proposal_reminder(callback_data.appointment_id)
-            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
-            await appointment_scheduler.schedule_appointment_reminders(appointment)
-            await appointment_scheduler.schedule_appointment_completion(appointment)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
         await notify_client_confirmed(appointment)
 
@@ -101,9 +96,7 @@ def create_admin_booking_requests_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
-            await appointment_scheduler.cancel_proposal_reminder(callback_data.appointment_id)
-            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
         if notification_service:
             try:
@@ -198,11 +191,7 @@ def create_admin_booking_requests_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_pending_expiry(callback_data.appointment_id)
-            await appointment_scheduler.cancel_proposal_reminder(callback_data.appointment_id)
-            proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
-            await appointment_scheduler.schedule_pending_expiry(proposal_target)
-            await appointment_scheduler.schedule_proposal_reminder(proposal_target)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
         if notification_service:
             try:
