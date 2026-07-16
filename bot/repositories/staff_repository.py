@@ -54,6 +54,17 @@ class StaffRepository:
                     )
                 """)
 
+        # Drop the now-redundant source column from users, independent of the
+        # backfill guard above: on a database that already ran the backfill in
+        # a prior deploy (staff.visibility_scope already exists), the block
+        # above is skipped entirely, but users.visibility_scope may still be
+        # lingering and needs its own check to be cleaned up.
+        users_cursor = await self.connection.execute("PRAGMA table_info(users)")
+        users_columns = {row[1] for row in await users_cursor.fetchall()}
+
+        if "visibility_scope" in users_columns:
+            await self.connection.execute("ALTER TABLE users DROP COLUMN visibility_scope")
+
         await self.connection.commit()
 
     async def get_staff(self, telegram_user_id: int) -> Staff | None:
