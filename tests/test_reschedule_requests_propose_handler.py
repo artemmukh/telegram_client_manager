@@ -38,6 +38,9 @@ class FakeAppointmentRepository:
     async def get_appointment_by_id(self, appointment_id):
         return self.appointment
 
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        return []
+
     async def update_proposed_datetime(self, appointment_id, proposed_datetime):
         self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
         self.appointment.proposed_datetime = proposed_datetime

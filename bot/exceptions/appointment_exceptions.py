@@ -52,6 +52,16 @@ class NoPendingProposalError(ValidationError):
     pass
 
 
+class SlotUnavailableError(ValidationError):
+    """Выбранное время уже занято другой подтверждённой записью."""
+    pass
+
+
+class BookingTooSoonError(ValidationError):
+    """Время записи/предложения слишком близко к текущему моменту."""
+    pass
+
+
 class SchedulerError(BotException):
     """Ошибка планировщика (APScheduler)."""
     pass

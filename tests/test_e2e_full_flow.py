@@ -366,7 +366,7 @@ async def test_appointment_lifecycle_self_booking_confirm_and_reject(e2e):
 
     booking_b = await e2e.appointment_management.create_self_booking(
         client_b.telegram_user_id,
-        {"staff_user_id": e2e.admin.ID, "appointment_datetime": _future_datetime(days=2), "complaint": "Чистка"},
+        {"staff_user_id": e2e.admin.ID, "appointment_datetime": _future_datetime(days=2, hours=1), "complaint": "Чистка"},
     )
     assert booking_b.status is AppointmentStatus.PENDING
 

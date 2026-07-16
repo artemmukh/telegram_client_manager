@@ -1,16 +1,19 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from bot.config.booking_config import MAX_PENDING_REQUESTS_PER_CLIENT
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
+    BookingTooSoonError,
     CancellationWindowExpiredError,
     NegotiationInProgressError,
     NoPendingProposalError,
     PendingRequestLimitExceededError,
+    SlotUnavailableError,
 )
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
+from bot.services.utils.slot_helpers import generate_available_slots
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
 from bot.models.user import User
@@ -26,6 +29,7 @@ from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
 
 CANCELLATION_CUTOFF_HOURS = 1
+MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
 
 
 class AppointmentManagement:
@@ -52,15 +56,24 @@ class AppointmentManagement:
         purpose = validate_purpose(data["purpose"])
 
         admin = await self.user_repository.get_user_by_telegram_id(doctor_telegram_id)
+        if admin is None:
+            raise UserNotFoundError("Врач не найден.")
+
+        await self._ensure_slot_available(admin.ID, appointment_datetime, None)
+
+        appointment_dt = datetime.fromisoformat(appointment_datetime)
+        now = get_current_tashkent_datetime()
+        is_walk_in = appointment_dt - now < MIN_LEAD_TIME
+        status = AppointmentStatus.CONFIRMED if is_walk_in else AppointmentStatus.PENDING
 
         appointment = Appointment(
             clinic_id=clinic.clinic_id,
             client_id=client.ID,
-            doctor_id=admin.ID if admin else None,
+            doctor_id=admin.ID,
             datetime=appointment_datetime,
             purpose=purpose,
             created_by=CreatedBy.ADMIN,
-            status=AppointmentStatus.PENDING,
+            status=status,
             clinic_name=clinic.name,
             created_by_telegram_id=doctor_telegram_id,
             created_at=get_current_tashkent_time(),
@@ -98,7 +111,10 @@ class AppointmentManagement:
             raise UserNotFoundError("Специалист не найден.")
 
         appointment_datetime = validate_datetime(data["appointment_datetime"])
+        self._validate_min_lead_time(appointment_datetime)
         purpose = validate_purpose(data["complaint"])
+
+        await self._ensure_slot_available(staff.ID, appointment_datetime, None)
 
         appointment = Appointment(
             clinic_id=client.clinic_id,
@@ -272,6 +288,8 @@ class AppointmentManagement:
         if appointment.created_by == CreatedBy.CLIENT and appointment.status == AppointmentStatus.PENDING:
             raise AwaitingClinicDecisionError("Дождитесь решения клиники по вашей заявке.")
 
+        await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
+
         return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
 
     async def cancel_appointment_by_client(
@@ -307,6 +325,8 @@ class AppointmentManagement:
                 "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
             )
 
+        await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
+
         return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
 
     async def reject_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
@@ -332,6 +352,10 @@ class AppointmentManagement:
             )
 
         validated = validate_datetime(proposed_datetime)
+        self._validate_min_lead_time(validated)
+
+        await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id)
+
         await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
         await self.appointment_repository.update_proposed_by(appointment_id, CreatedBy.ADMIN)
         appointment.proposed_datetime = validated
@@ -351,6 +375,8 @@ class AppointmentManagement:
 
         if appointment.proposed_by != CreatedBy.ADMIN:
             raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+
+        await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id)
 
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
@@ -411,12 +437,7 @@ class AppointmentManagement:
             )
 
         validated = validate_datetime(new_datetime)
-
-        if self._is_new_datetime_within_cutoff(validated):
-            raise CancellationWindowExpiredError(
-                "Новое время должно быть не менее чем через 1 час от текущего момента, "
-                "свяжитесь с клиникой."
-            )
+        self._validate_min_lead_time(validated)
 
         if is_own_pending_self_booking:
             # Собственная ещё не решённая клиникой заявка клиента — правим datetime
@@ -438,6 +459,8 @@ class AppointmentManagement:
 
         if appointment.proposed_by != CreatedBy.CLIENT:
             raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
+
+        await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id)
 
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
@@ -556,11 +579,15 @@ class AppointmentManagement:
 
         return appointment_dt - now < timedelta(hours=CANCELLATION_CUTOFF_HOURS)
 
-    def _is_new_datetime_within_cutoff(self, new_datetime: str) -> bool:
-        new_dt = datetime.fromisoformat(new_datetime)
+    def _validate_min_lead_time(self, target_datetime: str) -> None:
+        target_dt = datetime.fromisoformat(target_datetime)
         now = get_current_tashkent_datetime()
 
-        return new_dt - now < timedelta(hours=CANCELLATION_CUTOFF_HOURS)
+        if target_dt - now < MIN_LEAD_TIME:
+            raise BookingTooSoonError(
+                "Время записи должно быть не менее чем через 2 часа от текущего момента, "
+                "свяжитесь с клиникой."
+            )
 
     async def _count_pending_self_bookings(self, client_telegram_id: int) -> int:
         appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)
@@ -568,3 +595,19 @@ class AppointmentManagement:
             1 for a in appointments
             if a.created_by == CreatedBy.CLIENT and a.status == AppointmentStatus.PENDING
         )
+
+    async def _ensure_slot_available(
+        self, doctor_id: int, datetime_str: str, exclude_appointment_id: int | None
+    ) -> None:
+        date_part = datetime_str.split(" ")[0]
+        confirmed = await self.appointment_repository.get_appointments_by_doctor_and_date(doctor_id, date_part)
+        for other in confirmed:
+            if other.datetime == datetime_str and other.id != exclude_appointment_id:
+                raise SlotUnavailableError("Это время уже занято другой подтверждённой записью, выберите другое.")
+
+    async def get_available_slots(self, doctor_id: int, day: date, now: datetime) -> list[str]:
+        slots = generate_available_slots(day, now)
+        confirmed = await self.appointment_repository.get_appointments_by_doctor_and_date(doctor_id, day.isoformat())
+        booked_times = {appointment.datetime.split(" ")[1] for appointment in confirmed}
+
+        return [slot for slot in slots if slot not in booked_times]

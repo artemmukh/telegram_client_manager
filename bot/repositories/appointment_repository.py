@@ -167,6 +167,14 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
+    async def get_appointments_by_doctor_and_date(self, doctor_id: int, date: str) -> list[Appointment]:
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + "\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status = ?",
+            (doctor_id, f"{date}%", AppointmentStatus.CONFIRMED.value),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
     async def get_appointments_by_telegram_id(self, telegram_user_id: int) -> list[Appointment]:
         cursor = await self.connection.execute(
             """

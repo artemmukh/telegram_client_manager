@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta
 
-from bot.config.booking_config import BOOKING_HORIZON_DAYS, BOOKING_SLOTS, WORKING_WEEKDAYS
+from bot.config.booking_config import BOOKING_HORIZON_DAYS, WORKING_WEEKDAYS
 from bot.services.utils.date_parser import format_datetime_for_display
 
 
@@ -36,19 +36,6 @@ def find_first_available_week_offset(reference_date: date, max_offset: int = 3) 
             return offset
 
     return 0
-
-
-def generate_available_slots(day: date, now: datetime) -> list[str]:
-    """Return the fixed slot grid for the given day.
-
-    For today, slots that already passed relative to `now` are filtered out.
-    Future days return the full slot grid. No availability/conflict checking.
-    """
-    if day != now.date():
-        return list(BOOKING_SLOTS)
-
-    current_time = now.time()
-    return [slot for slot in BOOKING_SLOTS if datetime.strptime(slot, "%H:%M").time() > current_time]
 
 
 def build_booking_confirmation_text(

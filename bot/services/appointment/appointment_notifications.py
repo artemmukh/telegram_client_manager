@@ -19,7 +19,7 @@ from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import format_datetime_for_display
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 
 REMINDER_TEXT = "Напоминаем вам о записи."
 
@@ -350,10 +350,12 @@ class AppointmentNotificationService:
         return sent_message.message_id
 
     async def notify_client_auto_confirmed(self, appointment: Appointment) -> bool:
-        """Notify client that their appointment was auto-confirmed by the system.
+        """[LEGACY] Notify client that their appointment was auto-confirmed.
 
-        Called 2 hours before the appointment when the admin did not manually
-        confirm a PENDING appointment.
+        Previously called 2 hours before the appointment when the admin did not
+        manually confirm a PENDING appointment. This notification is now only sent
+        for legacy jobs persisted in the job store before the auto-confirm mechanism
+        was retired. New appointments no longer use auto-confirm.
 
         Returns True if message sent, False if user not found or no telegram_id.
         """
@@ -373,10 +375,11 @@ class AppointmentNotificationService:
     async def notify_client_pending_request_expired(self, appointment: Appointment) -> bool:
         """Notify client that their unanswered PENDING request has expired.
 
-        Covers both a client self-booking request the clinic never answered, and an
-        admin-created appointment where the client proposed their own time and the
-        clinic never answered that counter-proposal. When a proposal was outstanding,
-        the wording stays neutral about which side missed the deadline.
+        Covers three cases: a client self-booking request the clinic never answered;
+        an admin-created invite the client never answered at all; and an admin-created
+        appointment where the client proposed their own time and the clinic never
+        answered that counter-proposal. When a proposal was outstanding, the wording
+        stays neutral about which side missed the deadline.
 
         Returns True if message sent, False if user not found or no telegram_id.
         """
@@ -387,6 +390,8 @@ class AppointmentNotificationService:
 
         if appointment.proposed_datetime is not None:
             text = "⌛ Предложение по времени записи осталось без ответа, заявка на запись истекла."
+        elif appointment.created_by == CreatedBy.ADMIN:
+            text = "⌛ Вы не ответили на приглашение клиники на запись, заявка истекла."
         else:
             text = "⌛ Ваша заявка на запись истекла без ответа клиники."
 
@@ -484,6 +489,42 @@ class AppointmentNotificationService:
 
         return True
 
+    async def notify_client_appointment_reschedule_reminder(self, appointment: Appointment) -> bool:
+        """Remind client that the clinic's proposed reschedule for their confirmed
+        appointment is still awaiting a response.
+
+        Sent partway through the reschedule window, as a plain reply to the original
+        proposal message (no buttons of its own — the client answers there).
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        message_text = (
+            "⏰ Напоминаем: клиника предлагает перенести вашу запись на другое время\n\n"
+            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
+            "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
+            "иначе предложение скоро автоматически аннулируется."
+        )
+
+        reply_parameters = None
+        if appointment.proposal_message_id is not None:
+            reply_parameters = ReplyParameters(
+                message_id=appointment.proposal_message_id,
+                allow_sending_without_reply=True,
+            )
+
+        await self.bot.send_message(
+            chat_id=client.telegram_user_id,
+            text=message_text,
+            reply_parameters=reply_parameters,
+        )
+
+        return True
+
     async def close_reschedule_proposal_message(
         self, chat_id: int, message_id: int, text: str = "Это предложение больше не актуально."
     ) -> None:
@@ -515,6 +556,26 @@ class AppointmentNotificationService:
             text=f"❌ Клиент {client_name} отклонил предложенное время.",
             reply_parameters=self._admin_reply_parameters(appointment),
         )
+
+    async def notify_admin_proposal_reminder(self, appointment: Appointment) -> bool:
+        """Remind the clinic that the client's proposed time is still awaiting a response.
+
+        Status-neutral: reused for both an outstanding client counter-proposal on a
+        PENDING admin-created invite, and a client-requested reschedule on a CONFIRMED
+        appointment. Sent as a reply to the original admin notification message.
+
+        Returns True if message sent, False if the admin has no telegram_id on record.
+        """
+        if not appointment.created_by_telegram_id:
+            return False
+
+        await self.bot.send_message(
+            chat_id=appointment.created_by_telegram_id,
+            text="⏰ Клиент предложил другое время, ответ ещё не получен.",
+            reply_parameters=self._admin_reply_parameters(appointment),
+        )
+
+        return True
 
     async def notify_staff_reschedule_requested(
         self,

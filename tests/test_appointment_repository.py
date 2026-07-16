@@ -599,6 +599,49 @@ async def test_update_proposed_by_round_trips_via_get_by_id_and_by_telegram_id()
         await connection.close()
 
 
+# --- Slot conflict detection: get_appointments_by_doctor_and_date ---
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_doctor_and_date_returns_only_confirmed_for_that_day():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor_id = 100
+
+        confirmed = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await connection.execute("UPDATE appointments SET admin_id = ? WHERE id = ?", (doctor_id, confirmed.id))
+
+        pending = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 11:00", AppointmentStatus.PENDING, "2026-07-01 10:00:00")
+        )
+        await connection.execute("UPDATE appointments SET admin_id = ? WHERE id = ?", (doctor_id, pending.id))
+
+        cancelled = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 12:00", AppointmentStatus.CANCELLED, "2026-07-01 10:00:00")
+        )
+        await connection.execute("UPDATE appointments SET admin_id = ? WHERE id = ?", (doctor_id, cancelled.id))
+
+        expired = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 13:00", AppointmentStatus.EXPIRED, "2026-07-01 10:00:00")
+        )
+        await connection.execute("UPDATE appointments SET admin_id = ? WHERE id = ?", (doctor_id, expired.id))
+
+        other_day_confirmed = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-11 10:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await connection.execute("UPDATE appointments SET admin_id = ? WHERE id = ?", (doctor_id, other_day_confirmed.id))
+
+        await connection.commit()
+
+        result = await appointment_repo.get_appointments_by_doctor_and_date(doctor_id, "2026-07-10")
+
+        assert [a.id for a in result] == [confirmed.id]
+    finally:
+        await connection.close()
+
+
 @pytest.mark.asyncio
 async def test_update_appointment_price_round_trips_via_get_by_id_and_by_telegram_id():
     connection, user_repo, appointment_repo = await _in_memory_repos()

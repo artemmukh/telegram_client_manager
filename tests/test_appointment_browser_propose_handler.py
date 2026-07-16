@@ -5,7 +5,7 @@ browser card no longer force-overwrites it (update_datetime); it now proposes
 a new time via AppointmentManagement.propose_new_datetime and resyncs the full
 job set through AppointmentScheduler.resync_appointment_jobs, instead of the
 old one-sided update_datetime + manual cancel/schedule reminder/completion/
-auto_confirm sequence.
+auto_confirm sequence (which is no longer used for new appointments).
 
 Thin, direct-call test in the same style as test_appointment_reschedule_handler.py:
 build the router with fake repos, pull the decorated `approve_new_datetime`
@@ -40,6 +40,9 @@ class FakeAppointmentRepository:
 
     async def get_appointment_by_id(self, appointment_id):
         return self.appointment
+
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        return []
 
     async def update_proposed_datetime(self, appointment_id, proposed_datetime):
         self.proposed_datetime_updates.append((appointment_id, proposed_datetime))

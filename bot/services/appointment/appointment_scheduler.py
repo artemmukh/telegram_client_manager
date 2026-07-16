@@ -192,10 +192,15 @@ class AppointmentScheduler:
             )
 
     async def schedule_auto_confirm(self, appointment: Appointment) -> None:
-        """Schedule auto-confirm job for a PENDING appointment.
+        """[LEGACY] Schedule auto-confirm job for a PENDING appointment.
 
-        Creates a scheduled job that runs 2 hours before appointment datetime
-        to automatically confirm PENDING appointments (after cancellation cutoff closes).
+        This method is kept for backward compatibility with existing code paths
+        and job store persistence, but auto-confirm is no longer used for new
+        appointments. Both CLIENT and ADMIN-created PENDING appointments now
+        expire via schedule_pending_expiry if unanswered.
+
+        Previously created a scheduled job that runs 2 hours before appointment
+        datetime to automatically confirm PENDING appointments.
 
         Job ID: appt_{appointment_id}_autoconf
         """
@@ -307,6 +312,11 @@ class AppointmentScheduler:
         """
         if not appointment.id:
             logger.warning("Cannot schedule pending expiry for appointment without ID")
+            return
+
+        if appointment.status != AppointmentStatus.PENDING:
+            logger.info(f"Skipping pending expiry for appointment {appointment.id} "
+                       f"with status {appointment.status.value}")
             return
 
         try:
@@ -575,7 +585,9 @@ class AppointmentScheduler:
             await self.cancel_auto_confirm(appointment_id)
 
             if appointment.proposed_datetime is not None:
+                proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
                 await self.schedule_reschedule_expiry(appointment)
+                await self.schedule_proposal_reminder(proposal_target)
             else:
                 await self.cancel_reschedule_expiry(appointment_id)
 
@@ -608,21 +620,16 @@ class AppointmentScheduler:
                 await self.cancel_proposal_reminder(appointment_id)
 
                 if appointment.proposed_datetime is not None:
-                    # Клиент предложил своё время на ещё нерассмотренную запись — теперь это
-                    # ход админа. Если он не ответит, заявка молча истекает за 2ч до ИСХОДНОГО
-                    # времени приёма (как и self-booking через pending_expiry), а не зависает
-                    # без движения и не auto-confirm'ится на непринятое клиентом время.
-                    # Известное ограничение (то же, что уже есть у auto_confirm): если исходное
-                    # время приёма уже ближе 2ч, schedule_pending_expiry тихо не поставит job
-                    # (past-due skip) — запись может остаться в PENDING без движения. Это
-                    # структурное свойство T-2h-планирования по всей модели, не специфично для
-                    # этой ветки; отдельно не решается здесь.
+                    proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
                     await self.cancel_auto_confirm(appointment_id)
                     await self.cancel_reschedule_expiry(appointment_id)
-                    await self.schedule_pending_expiry(appointment)
-                else:
                     await self.cancel_pending_expiry(appointment_id)
+                    await self.schedule_pending_expiry(proposal_target)
+                    await self.schedule_proposal_reminder(proposal_target)
+                else:
+                    await self.cancel_auto_confirm(appointment_id)
                     await self.cancel_reschedule_expiry(appointment_id)
-                    await self.schedule_auto_confirm(appointment)
+                    await self.cancel_pending_expiry(appointment_id)
+                    await self.schedule_pending_expiry(appointment)
             return
 

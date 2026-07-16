@@ -241,7 +241,7 @@ def create_admin_appointment_browser_router(
                 await appointment_scheduler.schedule_appointment_completion(appointment)
 
                 if new_status == AppointmentStatus.PENDING:
-                    await appointment_scheduler.schedule_auto_confirm(appointment)
+                    await appointment_scheduler.schedule_pending_expiry(appointment)
 
         if notification_service and new_status == AppointmentStatus.CANCELLED and not callback_data.post_appt:
             try:

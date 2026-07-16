@@ -8,7 +8,6 @@ from aiogram.types import CallbackQuery
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.client_utils.booking_helpers import (
     find_first_available_week_offset,
-    generate_available_slots,
     generate_working_days,
 )
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
@@ -130,6 +129,7 @@ def create_client_reschedule_router(
         await state.clear()
         await state.update_data(
             appointment_id=appointment_id, origin=origin, tab=origin_tab, page=origin_page,
+            doctor_id=appointment.doctor_id,
         )
 
         reference = get_current_tashkent_datetime().date()
@@ -151,7 +151,8 @@ def create_client_reschedule_router(
     ) -> None:
         day = date.fromisoformat(callback_data.day_iso)
         now = get_current_tashkent_datetime()
-        slots = generate_available_slots(day, now)
+        data = await state.get_data()
+        slots = await appointment_management_service.get_available_slots(data["doctor_id"], day, now)
 
         if not slots:
             await callback_query.answer("На этот день больше нет доступных слотов.", show_alert=True)

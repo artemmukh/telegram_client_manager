@@ -27,6 +27,7 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
+from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
@@ -245,23 +246,25 @@ def create_admin_appointment_creation_router(
 
         notification_text = "Запись успешно создана!\n\n" + build_appointment_card(appointment)
         if notification_service:
-            message_id = await notification_service.notify_client_appointment_with_buttons(appointment)
+            use_invite_kb = appointment.status == AppointmentStatus.PENDING
+            message_id = await notification_service.notify_client_appointment_with_buttons(
+                appointment, use_invite_kb=use_invite_kb
+            )
             if message_id:
                 await appt_mng.update_notification_message_id(appointment.id, message_id)
                 notification_text += "\n✅ Уведомление отправлено клиенту"
             else:
                 notification_text += "\n⚠️ Не удалось отправить уведомление клиенту (нет Telegram ID)"
 
-        if scheduler:
+        if scheduler and appointment.status == AppointmentStatus.CONFIRMED:
             await scheduler.schedule_appointment_reminders(appointment)
             notification_text += "\n⏰ Напоминания запланированы (24ч и 2ч перед приемом)"
 
-        if scheduler:
             await scheduler.schedule_appointment_completion(appointment)
             notification_text += "\n✅ Автозавершение: через 1ч после приема"
 
         if scheduler:
-            await scheduler.schedule_auto_confirm(appointment)
+            await scheduler.schedule_pending_expiry(appointment)
 
         await callback_query.message.edit_text(
             notification_text,

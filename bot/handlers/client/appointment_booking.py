@@ -9,7 +9,6 @@ from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.client_utils.booking_helpers import (
     build_booking_confirmation_text,
     find_first_available_week_offset,
-    generate_available_slots,
     generate_working_days,
 )
 from bot.keyboards.client.booking_cb import (
@@ -131,7 +130,8 @@ def create_client_booking_router(
     async def pick_day(callback_query: CallbackQuery, callback_data: ClientBookDayCB, state: FSMContext) -> None:
         day = date.fromisoformat(callback_data.day_iso)
         now = get_current_tashkent_datetime()
-        slots = generate_available_slots(day, now)
+        data = await state.get_data()
+        slots = await appointment_management_service.get_available_slots(data["staff_user_id"], day, now)
 
         if not slots:
             await callback_query.answer("На этот день больше нет доступных слотов.", show_alert=True)

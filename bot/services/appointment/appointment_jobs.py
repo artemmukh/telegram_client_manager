@@ -205,10 +205,12 @@ async def expire_pending_request_job(appointment_id: int) -> None:
     """Expire an unanswered PENDING request 2 hours before its requested datetime.
 
     This job is called by APScheduler 2 hours before the appointment's requested datetime.
-    Prevents stale requests from remaining open during the 2h reminder window. Covers two
-    cases: a client self-booking request the clinic never answered, and an admin-created
-    appointment where the client proposed their own time and the admin never answered
-    that counter-proposal.
+    Prevents stale requests from remaining open during the 2h reminder window. By the time
+    this job fires, any PENDING appointment is by definition unanswered, regardless of
+    created_by/proposed_datetime: a client self-booking request the clinic never answered,
+    an admin-created invite the client never answered, or an admin-created appointment
+    where the client proposed their own time and the admin never answered that
+    counter-proposal.
 
     Note: For proposed/rescheduled times on a CONFIRMED appointment, see
     expire_reschedule_request_job().
@@ -236,18 +238,6 @@ async def expire_pending_request_job(appointment_id: int) -> None:
 
         if appointment.status != AppointmentStatus.PENDING:
             logger.info(f"Expire pending job: skipping appointment {appointment_id} (status={appointment.status.value})")
-            return
-
-        is_unanswered_self_booking = appointment.created_by == CreatedBy.CLIENT
-        is_unanswered_admin_invite_counter = (
-            appointment.created_by == CreatedBy.ADMIN and appointment.proposed_datetime is not None
-        )
-
-        if not is_unanswered_self_booking and not is_unanswered_admin_invite_counter:
-            logger.info(
-                f"Expire pending job: skipping appointment {appointment_id} "
-                f"(created_by={appointment.created_by.value}, no outstanding client proposal)"
-            )
             return
 
         await appointment_repo.update_appointment_status(
@@ -349,11 +339,15 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
 
 
 async def send_proposal_reminder_job(appointment_id: int) -> None:
-    """Remind the client to accept/reject the clinic's proposed time.
+    """Remind whichever side has not yet answered an outstanding proposed time.
 
-    Fires 3 hours before the proposed datetime (1 hour before the request
-    would auto-expire via expire_pending_request_job). Does not change the
-    appointment's state, only notifies the client.
+    Fires 3 hours before the proposed datetime (1 hour before the request would
+    auto-expire via expire_pending_request_job/expire_reschedule_request_job).
+    Covers all 4 negotiation directions: PENDING self-booking countered by the
+    clinic, PENDING admin-invite countered by the client, CONFIRMED appointment
+    with a clinic-proposed reschedule, and CONFIRMED appointment with a
+    client-requested reschedule. The recipient is always the side that is NOT
+    proposed_by. Does not change the appointment's state, only notifies.
 
     Args:
         appointment_id: The ID of the appointment/request to remind about
@@ -377,26 +371,33 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
             return
 
         if (
-            appointment.status != AppointmentStatus.PENDING
-            or appointment.created_by != CreatedBy.CLIENT
+            appointment.status not in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED)
             or appointment.proposed_datetime is None
-            or appointment.proposed_by != CreatedBy.ADMIN
         ):
             logger.info(f"Proposal reminder job: skipping appointment {appointment_id} (already resolved)")
             return
 
         try:
-            notification_sent = await notification_service.notify_client_proposal_reminder(appointment)
+            if appointment.proposed_by == CreatedBy.ADMIN:
+                if appointment.status == AppointmentStatus.PENDING:
+                    notification_sent = await notification_service.notify_client_proposal_reminder(appointment)
+                else:
+                    notification_sent = await notification_service.notify_client_appointment_reschedule_reminder(
+                        appointment
+                    )
+            else:
+                notification_sent = await notification_service.notify_admin_proposal_reminder(appointment)
+
             if notification_sent:
-                logger.info(f"Proposal reminder sent to client for appointment {appointment_id}")
+                logger.info(f"Proposal reminder sent for appointment {appointment_id}")
             else:
                 logger.warning(
                     f"Failed to send proposal reminder for appointment {appointment_id} "
-                    f"(client not found or no telegram_id)"
+                    f"(recipient not found or no telegram_id)"
                 )
         except Exception as e:
             logger.warning(
-                f"Failed to send proposal reminder to client for appointment {appointment_id}: {e}"
+                f"Failed to send proposal reminder for appointment {appointment_id}: {e}"
             )
 
     except AppointmentNotFoundError:
@@ -443,11 +444,16 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
 
 
 async def auto_confirm_pending_job(appointment_id: int) -> None:
-    """Auto-confirm PENDING appointment 2 hours before it starts.
+    """[LEGACY] Auto-confirm PENDING appointment 2 hours before it starts.
 
     This job is called by APScheduler 2 hours before the appointment datetime.
-    Transitions PENDING → CONFIRMED to default an unanswered admin-created
-    appointment. Fires 2h before (after the 2h reminder is sent, but before the
+    Previously transitioned PENDING → CONFIRMED to default an unanswered
+    admin-created appointment. This function is kept for backward compatibility
+    with existing jobs persisted to the job store, but is no longer scheduled
+    for new appointments — both CLIENT and ADMIN-created appointments now
+    expire via expire_pending_request_job if unanswered.
+
+    Fires 2h before (after the 2h reminder is sent, but before the
     1h cancellation cutoff window closes).
 
     Args:

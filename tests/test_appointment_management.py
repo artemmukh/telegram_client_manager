@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -6,10 +7,12 @@ from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
+    BookingTooSoonError,
     CancellationWindowExpiredError,
     NegotiationInProgressError,
     NoPendingProposalError,
     PendingRequestLimitExceededError,
+    SlotUnavailableError,
 )
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
@@ -41,6 +44,12 @@ class FakeAppointmentRepository:
 
     async def get_appointment_by_id(self, appointment_id):
         return next((a for a in self.appointments if a.id == appointment_id), None)
+
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        return [
+            a for a in self.appointments
+            if a.doctor_id == doctor_id and a.datetime.startswith(date) and a.status == AppointmentStatus.CONFIRMED
+        ]
 
     async def appointment_exists(self, appointment_id):
         return any(a.id == appointment_id for a in self.appointments)
@@ -122,6 +131,13 @@ def _client():
     return User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7)
 
 
+def _future_datetime(days: int = 2, time_str: str = "14:30") -> str:
+    """A datetime string safely beyond the 2h30 minimum lead time, for tests that
+    just need a valid, parseable future date regardless of when the suite runs."""
+    day = (get_current_tashkent_datetime() + timedelta(days=days)).strftime("%Y-%m-%d")
+    return f"{day} {time_str}"
+
+
 def _appointment(appointment_id=1, client_id=7):
     return Appointment(
         clinic_id=1,
@@ -137,24 +153,42 @@ def _appointment(appointment_id=1, client_id=7):
 @pytest.mark.asyncio
 async def test_create_appointment_resolves_clinic_and_client():
     appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
     service = AppointmentManagement(
         appt_repo,
-        FakeUserRepo(_client()),
+        FakeUserRepo(_client(), admin=admin),
         FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
         _clinic_repo(),
     )
 
     appointment = await service.create_appointment(
         999,
-        {"phone": "+998901234567", "appointment_datetime": "2026-07-10 14:30", "purpose": "Консультация"},
+        {"phone": "+998901234567", "appointment_datetime": _future_datetime(), "purpose": "Консультация"},
     )
 
     assert appt_repo.created == [appointment]
     assert appointment.clinic_id == 1
     assert appointment.client_id == 7
+    assert appointment.doctor_id == 42
     assert appointment.clinic_name == "Зуб Мудрости"
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.created_by is CreatedBy.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_raises_when_admin_not_found():
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(_client()),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    with pytest.raises(UserNotFoundError):
+        await service.create_appointment(
+            999,
+            {"phone": "+998901234567", "appointment_datetime": "2026-07-10 14:30", "purpose": "Консультация"},
+        )
 
 
 @pytest.mark.asyncio
@@ -470,7 +504,7 @@ async def test_create_self_booking_creates_pending_client_appointment():
         client.telegram_user_id,
         {
             "staff_user_id": staff.ID,
-            "appointment_datetime": "2026-07-10 14:30",
+            "appointment_datetime": _future_datetime(),
             "complaint": "Болит зуб",
         },
     )
@@ -521,7 +555,7 @@ async def test_create_self_booking_succeeds_with_no_pending_requests():
 
     appointment = await service.create_self_booking(
         client.telegram_user_id,
-        {"staff_user_id": staff.ID, "appointment_datetime": "2026-07-10 14:30", "complaint": "Болит зуб"},
+        {"staff_user_id": staff.ID, "appointment_datetime": _future_datetime(), "complaint": "Болит зуб"},
     )
 
     assert appointment.status is AppointmentStatus.PENDING
@@ -1036,14 +1070,15 @@ async def test_reject_pending_request_blocked_when_proposal_pending():
 async def test_propose_new_datetime_sets_proposed_without_touching_status_or_datetime():
     appt_repo = FakeAppointmentRepository([_pending_client_request()])
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    proposed_datetime = _future_datetime(days=3, time_str="10:00")
 
-    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
+    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
 
-    assert appointment.proposed_datetime == "2026-07-11 10:00"
+    assert appointment.proposed_datetime == proposed_datetime
     assert appointment.proposed_by is CreatedBy.ADMIN
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.datetime == "2026-07-10 14:30"
-    assert appt_repo.proposed_datetime_updates == [(1, "2026-07-11 10:00")]
+    assert appt_repo.proposed_datetime_updates == [(1, proposed_datetime)]
     assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
     assert appt_repo.status_updates == []
 
@@ -1070,6 +1105,7 @@ async def test_propose_new_datetime_overwrites_when_proposed_by_client():
     (client asked for a reschedule, admin now offers a different time) is not
     blocked by the guard -- it overwrites proposed_datetime/proposed_by."""
     now = get_current_tashkent_datetime()
+    new_proposed_datetime = _future_datetime(days=4, time_str="10:00")
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(
             1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED,
@@ -1078,12 +1114,12 @@ async def test_propose_new_datetime_overwrites_when_proposed_by_client():
     )
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
-    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00")
+    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=new_proposed_datetime)
 
-    assert appointment.proposed_datetime == "2026-07-12 10:00"
+    assert appointment.proposed_datetime == new_proposed_datetime
     assert appointment.proposed_by is CreatedBy.ADMIN
     assert appointment.status is AppointmentStatus.CONFIRMED
-    assert appt_repo.proposed_datetime_updates == [(1, "2026-07-12 10:00")]
+    assert appt_repo.proposed_datetime_updates == [(1, new_proposed_datetime)]
     assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
 
 
@@ -1093,17 +1129,18 @@ async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_ou
     requests -- it now also works on a CONFIRMED appointment with a clean
     negotiation state (this is the admin-initiated reschedule proposal flow)."""
     now = get_current_tashkent_datetime()
+    proposed_datetime = _future_datetime(days=3, time_str="10:00")
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)]
     )
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
-    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
+    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
 
-    assert appointment.proposed_datetime == "2026-07-11 10:00"
+    assert appointment.proposed_datetime == proposed_datetime
     assert appointment.proposed_by is CreatedBy.ADMIN
     assert appointment.status is AppointmentStatus.CONFIRMED
-    assert appt_repo.proposed_datetime_updates == [(1, "2026-07-11 10:00")]
+    assert appt_repo.proposed_datetime_updates == [(1, proposed_datetime)]
     assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
 
 
@@ -1412,9 +1449,9 @@ async def test_request_reschedule_by_client_raises_when_pending_admin_created_pr
 
 
 @pytest.mark.asyncio
-async def test_request_reschedule_by_client_raises_when_pending_new_time_within_cutoff():
-    """The cutoff guard must still apply to the PENDING direct-edit branch: it fires
-    before the datetime is ever written to the row."""
+async def test_request_reschedule_by_client_raises_when_pending_new_time_within_lead_time():
+    """The 2h30 minimum lead-time guard must still apply to the PENDING direct-edit
+    branch: it fires before the datetime is ever written to the row."""
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=3), status=AppointmentStatus.PENDING)]
@@ -1423,7 +1460,7 @@ async def test_request_reschedule_by_client_raises_when_pending_new_time_within_
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
     new_dt = (now + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M")
-    with pytest.raises(CancellationWindowExpiredError):
+    with pytest.raises(BookingTooSoonError):
         await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
 
     assert appt_repo.updated == []
@@ -1451,9 +1488,9 @@ async def test_request_reschedule_by_client_succeeds_when_old_time_is_imminent_b
 
 
 @pytest.mark.asyncio
-async def test_request_reschedule_by_client_raises_when_new_time_within_cutoff():
-    """The cutoff must reject a reschedule when the NEW proposed datetime is too soon,
-    regardless of how far away the original appointment is."""
+async def test_request_reschedule_by_client_raises_when_new_time_within_lead_time():
+    """The 2h30 minimum lead-time guard must reject a reschedule when the NEW proposed
+    datetime is too soon, regardless of how far away the original appointment is."""
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=3), status=AppointmentStatus.CONFIRMED)]
@@ -1462,7 +1499,7 @@ async def test_request_reschedule_by_client_raises_when_new_time_within_cutoff()
     service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
 
     new_dt = (now + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M")
-    with pytest.raises(CancellationWindowExpiredError):
+    with pytest.raises(BookingTooSoonError):
         await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
 
     assert appt_repo.proposed_datetime_updates == []
@@ -1607,5 +1644,476 @@ async def test_reject_client_reschedule_raises_when_proposed_by_admin():
 
     with pytest.raises(NoPendingProposalError):
         await service.reject_client_reschedule(1, staff_telegram_id=999)
+
+
+# --- Slot conflict detection ---
+
+
+def _appt(appointment_id, doctor_id, dt, status, created_by=CreatedBy.ADMIN,
+          client_id=7, proposed_datetime=None, proposed_by=None):
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        doctor_id=doctor_id,
+        datetime=dt,
+        purpose="Консультация",
+        created_by=created_by,
+        status=status,
+        id=appointment_id,
+        proposed_datetime=proposed_datetime,
+        proposed_by=proposed_by,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_available_slots_excludes_confirmed_but_not_pending():
+    doctor_id = 50
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+
+    appt_repo = FakeAppointmentRepository([
+        _appt(1, doctor_id, "2026-07-20 10:30", AppointmentStatus.CONFIRMED),
+        _appt(2, doctor_id, "2026-07-20 11:00", AppointmentStatus.PENDING),
+    ])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    slots = await service.get_available_slots(doctor_id, day, now)
+
+    assert "10:30" not in slots
+    assert "11:00" in slots
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_raises_when_slot_already_confirmed():
+    admin = _staff_member()
+    client = _booking_client()
+    existing = _appt(1, admin.ID, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, client_id=99)
+    appt_repo = FakeAppointmentRepository([existing])
+    user_repo = FakeUserRepo(client=client, admin=admin)
+    service = AppointmentManagement(
+        appt_repo, user_repo, FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    with pytest.raises(SlotUnavailableError):
+        await service.create_appointment(
+            admin.telegram_user_id,
+            {"phone": client.phone, "appointment_datetime": "2026-07-10 14:30", "purpose": "Консультация"},
+        )
+
+    assert appt_repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_raises_when_slot_already_confirmed():
+    client = _booking_client()
+    staff = _staff_member()
+    appointment_datetime = _future_datetime()
+    existing = _appt(1, staff.ID, appointment_datetime, AppointmentStatus.CONFIRMED, client_id=99)
+    appt_repo = FakeAppointmentRepository([existing])
+    user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": appointment_datetime, "complaint": "Болит зуб"},
+        )
+
+    assert appt_repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_raises_when_slot_taken_by_another_confirmed():
+    own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.ADMIN, client_id=7)
+    other = _appt(2, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, client_id=8)
+    appt_repo = FakeAppointmentRepository([own, other])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_reconfirm_does_not_self_conflict():
+    """Re-confirming an appointment that is already CONFIRMED must not treat its
+    own row as a conflicting slot (self-exclusion by appointment id)."""
+    own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, created_by=CreatedBy.ADMIN, client_id=7)
+    appt_repo = FakeAppointmentRepository([own])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_request_raises_when_slot_taken_by_another_confirmed():
+    own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
+    other = _appt(2, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, client_id=8)
+    appt_repo = FakeAppointmentRepository([own, other])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service.confirm_pending_request(1, staff_telegram_id=999)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_request_succeeds_when_slot_free():
+    own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
+    appt_repo = FakeAppointmentRepository([own])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.confirm_pending_request(1, staff_telegram_id=999)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_raises_when_proposed_slot_already_confirmed():
+    proposed_datetime = _future_datetime(days=3, time_str="10:00")
+    own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
+    other = _appt(2, 50, proposed_datetime, AppointmentStatus.CONFIRMED, client_id=8)
+    appt_repo = FakeAppointmentRepository([own, other])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
+
+    assert appt_repo.proposed_datetime_updates == []
+    assert appt_repo.proposed_by_updates == []
+
+
+@pytest.mark.asyncio
+async def test_accept_proposed_datetime_raises_when_proposed_slot_already_confirmed():
+    own = _appt(
+        1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7,
+        proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN,
+    )
+    other = _appt(2, 50, "2026-07-11 10:00", AppointmentStatus.CONFIRMED, client_id=8)
+    appt_repo = FakeAppointmentRepository([own, other])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service.accept_proposed_datetime(1, client.telegram_user_id)
+
+    assert appt_repo.updated == []
+    assert appt_repo.proposed_datetime_updates == []
+
+
+@pytest.mark.asyncio
+async def test_accept_proposed_datetime_succeeds_when_only_own_confirmed_row_shares_the_day():
+    """The appointment's own current CONFIRMED row (a different time, same day)
+    must not be mistaken for a conflicting slot."""
+    own = _appt(
+        1, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, created_by=CreatedBy.CLIENT, client_id=7,
+        proposed_datetime="2026-07-10 16:00", proposed_by=CreatedBy.ADMIN,
+    )
+    appt_repo = FakeAppointmentRepository([own])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.accept_proposed_datetime(1, client.telegram_user_id)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appointment.datetime == "2026-07-10 16:00"
+    assert appt_repo.updated[0][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_accept_client_reschedule_raises_when_proposed_slot_already_confirmed():
+    own = _appt(
+        1, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, created_by=CreatedBy.CLIENT, client_id=7,
+        proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.CLIENT,
+    )
+    other = _appt(2, 50, "2026-07-11 10:00", AppointmentStatus.CONFIRMED, client_id=8)
+    appt_repo = FakeAppointmentRepository([own, other])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service.accept_client_reschedule(1, staff_telegram_id=999)
+
+    assert appt_repo.updated == []
+    assert appt_repo.proposed_datetime_updates == []
+
+
+@pytest.mark.asyncio
+async def test_accept_client_reschedule_succeeds_when_only_own_confirmed_row_shares_the_day():
+    own = _appt(
+        1, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, created_by=CreatedBy.CLIENT, client_id=7,
+        proposed_datetime="2026-07-10 16:00", proposed_by=CreatedBy.CLIENT,
+    )
+    appt_repo = FakeAppointmentRepository([own])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.accept_client_reschedule(1, staff_telegram_id=999)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appointment.datetime == "2026-07-10 16:00"
+    assert appt_repo.updated[0][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_two_pending_requests_for_same_doctor_and_slot_both_succeed():
+    """PENDING never blocks a slot -- only a CONFIRMED appointment does. Two
+    independent requests racing for the same doctor+datetime must both succeed
+    while pending, leaving the clinic to resolve the collision manually."""
+    admin = _staff_member()
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, admin=admin)
+    service = AppointmentManagement(
+        appt_repo, user_repo, FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        _clinic_repo(),
+    )
+    data = {"phone": client.phone, "appointment_datetime": _future_datetime(), "purpose": "Консультация"}
+
+    first = await service.create_appointment(admin.telegram_user_id, data)
+    appt_repo.appointments.append(first)
+    second = await service.create_appointment(admin.telegram_user_id, data)
+
+    assert first.status is AppointmentStatus.PENDING
+    assert second.status is AppointmentStatus.PENDING
+    assert len(appt_repo.created) == 2
+
+
+# --- Zombie PENDING fix (item 1/4): MIN_LEAD_TIME boundary tests ---
+#
+# MIN_LEAD_TIME = 2h30 is the real internal threshold; every user-facing text
+# says "2 hours" (the 30-minute buffer is intentionally hidden). These tests
+# pin the exact 2h29/2h30 boundary by freezing `now` via patching
+# get_current_tashkent_datetime, so the assertions never depend on wall-clock
+# timing at whatever moment the suite happens to run.
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_raises_when_lead_time_is_exactly_2h29():
+    """2h29 is 1 minute short of the hidden 2h30 buffer -- must still be
+    rejected, proving the real threshold is not simply '2 hours'."""
+    client = _booking_client()
+    staff = _staff_member()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        target = (base + timedelta(hours=2, minutes=29)).strftime("%Y-%m-%d %H:%M")
+
+        with pytest.raises(BookingTooSoonError):
+            await service.create_self_booking(
+                client.telegram_user_id,
+                {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+            )
+
+    assert appt_repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_succeeds_when_lead_time_is_exactly_2h30():
+    """2h30 is exactly the threshold; the guard is strict '<', so exactly
+    2h30 must pass, not raise."""
+    client = _booking_client()
+    staff = _staff_member()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        target = (base + timedelta(hours=2, minutes=30)).strftime("%Y-%m-%d %H:%M")
+
+        appointment = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+        )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("minutes", [31, 45, 59])
+async def test_create_self_booking_succeeds_when_lead_time_between_2h31_and_2h59(minutes):
+    """Comfortably above the hidden buffer -- must pass for any value in this
+    range. (That the reminder's own '-3h' arithmetic may itself be past-due
+    for these same values is a separate, expected concern covered by a
+    scheduler-level regression test, not a booking-validation failure.)"""
+    client = _booking_client()
+    staff = _staff_member()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    now = get_current_tashkent_datetime()
+    target = (now + timedelta(hours=2, minutes=minutes)).strftime("%Y-%m-%d %H:%M")
+
+    appointment = await service.create_self_booking(
+        client.telegram_user_id,
+        {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+    )
+
+    assert appointment.status is AppointmentStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_raises_when_lead_time_is_exactly_2h29():
+    """request_reschedule_by_client replaced its old 1h cutoff check with the
+    shared MIN_LEAD_TIME validation (see docs/zombie_pending_fix_prompt.md) --
+    pin the exact 2h29 boundary here too, not just a loose 30-minute margin."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=3), status=AppointmentStatus.CONFIRMED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        new_dt = (base + timedelta(hours=2, minutes=29)).strftime("%Y-%m-%d %H:%M")
+
+        with pytest.raises(BookingTooSoonError):
+            await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appt_repo.proposed_datetime_updates == []
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_succeeds_when_lead_time_is_exactly_2h30():
+    """Symmetric pass-side boundary check for request_reschedule_by_client:
+    exactly 2h30 must not raise."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=3), status=AppointmentStatus.CONFIRMED)]
+    )
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        new_dt = (base + timedelta(hours=2, minutes=30)).strftime("%Y-%m-%d %H:%M")
+
+        appointment = await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appointment.proposed_datetime == new_dt
+    assert appointment.proposed_by is CreatedBy.CLIENT
+    assert appt_repo.proposed_datetime_updates == [(1, new_dt)]
+
+
+# --- Zombie PENDING fix (item 2/4): admin walk-in exception on create_appointment ---
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_walk_in_under_2h30_creates_confirmed_directly():
+    """Admin-created walk-ins less than 2h30 out skip PENDING/negotiation
+    entirely and are created straight to CONFIRMED -- there is no negotiation
+    to time out, so no timer is needed and none is scheduled for this row."""
+    admin = _staff_member()
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, admin=admin)
+    service = AppointmentManagement(
+        appt_repo, user_repo, FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    now = get_current_tashkent_datetime()
+    walk_in_datetime = (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M")
+
+    appointment = await service.create_appointment(
+        admin.telegram_user_id,
+        {"phone": client.phone, "appointment_datetime": walk_in_datetime, "purpose": "Консультация"},
+    )
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_at_2h30_or_more_still_creates_pending():
+    """Regression check: the walk-in exception must not swallow the normal
+    admin-invite path -- a target a comfortable 3 hours out (well above 2h30)
+    still creates PENDING exactly like before this fix."""
+    admin = _staff_member()
+    client = _booking_client()
+    appt_repo = FakeAppointmentRepository()
+    user_repo = FakeUserRepo(client=client, admin=admin)
+    service = AppointmentManagement(
+        appt_repo, user_repo, FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    now = get_current_tashkent_datetime()
+    invite_datetime = (now + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M")
+
+    appointment = await service.create_appointment(
+        admin.telegram_user_id,
+        {"phone": client.phone, "appointment_datetime": invite_datetime, "purpose": "Консультация"},
+    )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+# --- Zombie PENDING fix (item 3/4): cancellation cutoff stays decoupled ---
+
+
+@pytest.mark.asyncio
+async def test_cancellation_cutoff_stays_1h_independent_of_2h30_booking_threshold():
+    """Key regression test: CANCELLATION_CUTOFF_HOURS (1h) must not have been
+    accidentally re-coupled to the new MIN_LEAD_TIME (2h30) threshold (see the
+    2026-07-16 decision in docs/zombie_pending_fix_prompt.md). A lead time of
+    ~1h15 clears the 1h cancellation cutoff -- cancelling succeeds -- even
+    though that exact same lead time sits inside the 2h30 zone that would
+    reject a booking/reschedule request with BookingTooSoonError. Two
+    independent rows are used so cancelling the first (which finalizes it)
+    cannot interfere with the reschedule attempt on the second."""
+    now = get_current_tashkent_datetime()
+    lead_time = timedelta(hours=1, minutes=15)
+    client = _owning_client()
+
+    cancel_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + lead_time, status=AppointmentStatus.CONFIRMED)]
+    )
+    cancel_service = AppointmentManagement(cancel_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    cancelled = await cancel_service.cancel_appointment_by_client(1, client.telegram_user_id, enforce_cutoff=True)
+
+    assert cancelled.status is AppointmentStatus.CANCELLED
+    assert cancel_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]
+
+    reschedule_repo = FakeAppointmentRepository(
+        [_appointment_at(2, now + timedelta(days=3), status=AppointmentStatus.CONFIRMED)]
+    )
+    reschedule_service = AppointmentManagement(
+        reschedule_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo()
+    )
+
+    new_dt = (now + lead_time).strftime("%Y-%m-%d %H:%M")
+    with pytest.raises(BookingTooSoonError):
+        await reschedule_service.request_reschedule_by_client(2, client.telegram_user_id, new_dt)
+
+    assert reschedule_repo.proposed_datetime_updates == []
 
 

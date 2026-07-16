@@ -1655,13 +1655,13 @@ async def test_expire_pending_request_job_skips_if_not_pending(
 
 
 @pytest.mark.asyncio
-async def test_expire_pending_request_job_skips_if_admin_created_without_proposal(
+async def test_expire_pending_request_job_expires_admin_created_without_proposal(
     mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test that the expiry job skips a PENDING, admin-created request that has no
-    outstanding client counter-proposal (proposed_datetime=None) -- this is the
-    ordinary unreviewed admin invite, which lives in the auto_confirm zone, not
-    pending_expiry."""
+    """Test that the expiry job now also expires a PENDING, admin-created invite that
+    has no outstanding client counter-proposal (proposed_datetime=None) -- the client
+    simply never answered the invite. Admin-track auto-CONFIRM is retired, so this
+    case must expire symmetrically with the CLIENT-created self-booking case."""
     sample_appointment.proposed_datetime = None
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
@@ -1687,8 +1687,14 @@ async def test_expire_pending_request_job_skips_if_admin_created_without_proposa
 
             await expire_pending_request_job(sample_appointment.id)
 
-            mock_appointment_repo.update_appointment_status.assert_not_called()
-            mock_notification_service.notify_client_pending_request_expired.assert_not_called()
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                sample_appointment.id,
+                AppointmentStatus.EXPIRED,
+                ANY,
+            )
+            mock_notification_service.notify_client_pending_request_expired.assert_called_once_with(
+                sample_appointment
+            )
 
 
 @pytest.mark.asyncio
@@ -1947,6 +1953,31 @@ async def test_proposal_reminder_skipped_while_pending_expiry_still_scheduled(
 
 
 @pytest.mark.asyncio
+async def test_proposal_reminder_silently_skipped_for_2h30_to_2h59_lead_time_window(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Documented, expected (non-buggy) behavior from the zombie-PENDING fix
+    design (docs/zombie_pending_fix_prompt.md, point 5): a target datetime
+    between 2h30 (the validation floor) and 2h59 away passes MIN_LEAD_TIME
+    validation at the service layer, but the reminder's own '-3h' arithmetic
+    is already past-due by the time schedule_proposal_reminder runs. It must
+    be silently skipped -- no job, no exception -- since safety is already
+    covered by the main timer plus the synchronous notification sent at
+    proposal time, not by this reminder."""
+    scheduler.start()
+
+    sample_appointment.datetime = (
+        _current_tashkent_time() + timedelta(hours=2, minutes=45)
+    ).isoformat()
+
+    await appointment_scheduler.schedule_proposal_reminder(sample_appointment)
+
+    assert scheduler.get_jobs() == []
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
 async def test_cancel_proposal_reminder_removes_job(
     appointment_scheduler, scheduler, sample_appointment
 ):
@@ -2103,13 +2134,15 @@ async def test_send_proposal_reminder_job_handles_missing_appointment(
 
 
 @pytest.mark.asyncio
-async def test_send_proposal_reminder_job_skips_if_not_pending(
+async def test_send_proposal_reminder_job_redirects_to_reschedule_reminder_if_confirmed(
     mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
 ):
-    """Test that the reminder job skips a request that is no longer PENDING
-    (already confirmed/rejected before the reminder fired)."""
+    """Test that a request that turned CONFIRMED before the reminder fired now
+    dispatches to the CONFIRMED-specific reschedule reminder instead of the
+    PENDING-specific proposal reminder (bidirectional reminder covers both)."""
     proposal_reminder_request.status = AppointmentStatus.CONFIRMED
     mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+    mock_notification_service.notify_client_appointment_reschedule_reminder = AsyncMock(return_value=True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -2134,16 +2167,20 @@ async def test_send_proposal_reminder_job_skips_if_not_pending(
             await send_proposal_reminder_job(proposal_reminder_request.id)
 
             mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+            mock_notification_service.notify_client_appointment_reschedule_reminder.assert_called_once_with(
+                proposal_reminder_request
+            )
 
 
 @pytest.mark.asyncio
-async def test_send_proposal_reminder_job_skips_if_not_client_created(
+async def test_send_proposal_reminder_job_notifies_regardless_of_created_by(
     mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
 ):
-    """Test that the reminder job skips a request that was originally created by
-    an admin (this reminder is only for client self-booking requests)."""
+    """Test that the reminder job no longer excludes admin-created requests --
+    dispatch depends only on proposed_by/status, not created_by."""
     proposal_reminder_request.created_by = CreatedBy.ADMIN
     mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+    mock_notification_service.notify_client_proposal_reminder = AsyncMock(return_value=True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -2167,7 +2204,9 @@ async def test_send_proposal_reminder_job_skips_if_not_client_created(
 
             await send_proposal_reminder_job(proposal_reminder_request.id)
 
-            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+            mock_notification_service.notify_client_proposal_reminder.assert_called_once_with(
+                proposal_reminder_request
+            )
 
 
 @pytest.mark.asyncio
@@ -2204,14 +2243,15 @@ async def test_send_proposal_reminder_job_skips_if_no_proposed_datetime(
 
 
 @pytest.mark.asyncio
-async def test_send_proposal_reminder_job_skips_if_proposed_by_not_admin(
+async def test_send_proposal_reminder_job_dispatches_client_proposal_to_admin_reminder(
     mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
 ):
-    """Test that the reminder job skips a request whose outstanding proposal was
-    made by the client (that's the separate reschedule-by-client scenario, not
-    the clinic-proposes-a-new-time scenario this reminder targets)."""
+    """Test that a request whose outstanding proposal was made by the client
+    dispatches to the admin-facing reminder instead of the client-facing one --
+    the recipient is always whichever side is NOT proposed_by."""
     proposal_reminder_request.proposed_by = CreatedBy.CLIENT
     mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+    mock_notification_service.notify_admin_proposal_reminder = AsyncMock(return_value=True)
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -2236,6 +2276,53 @@ async def test_send_proposal_reminder_job_skips_if_proposed_by_not_admin(
             await send_proposal_reminder_job(proposal_reminder_request.id)
 
             mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+            mock_notification_service.notify_admin_proposal_reminder.assert_called_once_with(
+                proposal_reminder_request
+            )
+
+
+@pytest.mark.asyncio
+async def test_send_proposal_reminder_job_dispatches_confirmed_client_reschedule_to_admin_reminder(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, proposal_reminder_request
+):
+    """Fourth and last negotiation direction: a CONFIRMED appointment with a
+    client-requested reschedule outstanding (proposed_by=CLIENT) must remind
+    the ADMIN side, not the client -- the same admin-facing reminder used for
+    the PENDING+admin-invite-countered-by-client direction, since the
+    recipient is always whichever side is NOT proposed_by, regardless of
+    status."""
+    proposal_reminder_request.status = AppointmentStatus.CONFIRMED
+    proposal_reminder_request.proposed_by = CreatedBy.CLIENT
+    mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
+    mock_notification_service.notify_admin_proposal_reminder = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await send_proposal_reminder_job(proposal_reminder_request.id)
+
+            mock_notification_service.notify_client_proposal_reminder.assert_not_called()
+            mock_notification_service.notify_client_appointment_reschedule_reminder.assert_not_called()
+            mock_notification_service.notify_admin_proposal_reminder.assert_called_once_with(
+                proposal_reminder_request
+            )
 
 
 @pytest.fixture
@@ -2749,7 +2836,10 @@ async def test_schedule_auto_confirm_creates_job(
 async def test_auto_confirm_time_calculated_correctly(
     appointment_scheduler, scheduler, sample_appointment
 ):
-    """Test that auto-confirm runs 2 hours before the appointment datetime."""
+    """[LEGACY] Test that auto-confirm timing is calculated correctly (2 hours before).
+
+    This tests the legacy auto-confirm mechanism, which is no longer scheduled
+    for new appointments but is tested for backward compatibility."""
     scheduler.start()
 
     appointment_dt = datetime.fromisoformat(sample_appointment.datetime)
@@ -2834,9 +2924,11 @@ async def test_schedule_auto_confirm_skips_if_not_pending(
 async def test_schedule_auto_confirm_skips_if_not_admin_created(
     appointment_scheduler, scheduler, sample_appointment
 ):
-    """Test that auto-confirm is never scheduled for a client self-booking
-    request, even while it is still PENDING. Only admin-created appointments
-    are locked in automatically."""
+    """[LEGACY] Test that auto-confirm is not scheduled for client self-booking.
+
+    Verifies the legacy auto-confirm mechanism only applies to admin-created
+    appointments. Note: auto-confirm is no longer used for new appointments —
+    both CLIENT and ADMIN tracks now expire via pending_expiry if unanswered."""
     scheduler.start()
 
     sample_appointment.created_by = CreatedBy.CLIENT
@@ -2886,8 +2978,11 @@ async def test_past_due_auto_confirm_scheduling_does_not_call_add_job(
 async def test_auto_confirm_pending_job_confirms_if_pending_and_admin_created(
     mock_appointment_repo, sample_appointment
 ):
-    """Test that the auto-confirm job transitions an admin-created PENDING
-    appointment to CONFIRMED."""
+    """[LEGACY] Test that legacy auto-confirm job transitions PENDING to CONFIRMED.
+
+    Tests the deprecated auto-confirm mechanism for backward compatibility.
+    New appointments no longer use auto-confirm — both CLIENT and ADMIN tracks
+    expire via pending_expiry if unanswered."""
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
@@ -3176,8 +3271,9 @@ async def test_resync_appointment_jobs_confirmed_with_proposal_also_schedules_re
     appointment_scheduler, scheduler, sample_appointment
 ):
     """CONFIRMED with a client-initiated proposal outstanding: reschedule_expiry
-    is added on top of reminders/completion -- and reminders/completion still
-    run against the ORIGINAL datetime, since nothing has been agreed yet."""
+    and the bidirectional proposal reminder are added on top of
+    reminders/completion -- and reminders/completion still run against the
+    ORIGINAL datetime, since nothing has been agreed yet."""
     scheduler.start()
 
     sample_appointment.status = AppointmentStatus.CONFIRMED
@@ -3194,6 +3290,7 @@ async def test_resync_appointment_jobs_confirmed_with_proposal_also_schedules_re
         f"appt_{sample_appointment.id}_2h",
         f"appt_{sample_appointment.id}_complete",
         f"appt_{sample_appointment.id}_resch_expire",
+        f"appt_{sample_appointment.id}_propose_reminder",
     }
 
     expected_24h = datetime.fromisoformat(original_datetime) - timedelta(hours=24)
@@ -3230,6 +3327,7 @@ async def test_resync_appointment_jobs_confirmed_with_admin_proposal_also_schedu
         f"appt_{sample_appointment.id}_2h",
         f"appt_{sample_appointment.id}_complete",
         f"appt_{sample_appointment.id}_resch_expire",
+        f"appt_{sample_appointment.id}_propose_reminder",
     }
 
     expected_24h = datetime.fromisoformat(original_datetime) - timedelta(hours=24)
@@ -3311,12 +3409,14 @@ async def test_resync_appointment_jobs_pending_client_admin_proposal_anchors_to_
 
 
 @pytest.mark.asyncio
-async def test_resync_appointment_jobs_pending_admin_created_schedules_auto_confirm_only(
+async def test_resync_appointment_jobs_pending_admin_created_no_proposal_schedules_pending_expiry_only(
     appointment_scheduler, scheduler, sample_appointment
 ):
-    """PENDING appointment created by the ADMIN (client hasn't reacted yet):
-    only auto_confirm is scheduled -- pending_expiry/proposal_reminder never
-    apply to an admin-created row."""
+    """PENDING appointment created by the ADMIN with no outstanding client
+    counter-proposal (ordinary unanswered invite): pending_expiry is scheduled
+    against the appointment's own datetime, exactly like a CLIENT self-booking
+    request with no counter. Admin-track auto-CONFIRM is retired -- both tracks
+    now resolve to EXPIRED symmetrically on timeout."""
     scheduler.start()
 
     sample_appointment.status = AppointmentStatus.PENDING
@@ -3325,27 +3425,26 @@ async def test_resync_appointment_jobs_pending_admin_created_schedules_auto_conf
     await appointment_scheduler.resync_appointment_jobs(sample_appointment)
 
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert job_ids == {f"appt_{sample_appointment.id}_autoconf"}
+    assert job_ids == {f"appt_{sample_appointment.id}_expire"}
 
     scheduler.shutdown(wait=False)
 
 
 @pytest.mark.asyncio
-async def test_resync_appointment_jobs_pending_admin_created_with_proposal_schedules_pending_expiry(
+async def test_resync_appointment_jobs_pending_admin_created_with_proposal_anchors_to_proposed_datetime(
     appointment_scheduler, scheduler, sample_appointment
 ):
     """PENDING+ADMIN with a client counter-proposal outstanding must NOT keep ticking
-    towards auto_confirm -- the clinic needs to decide on the client's proposed time
-    first. Instead of auto_confirm (or a reschedule_expiry that would leave the
-    original invite silently un-actionable), the request now expires like a
-    self-booking request: pending_expiry is scheduled, anchored on the appointment's
-    ORIGINAL datetime (NOT the proposed_datetime -- unlike the PENDING+CLIENT case
-    with an admin counter-proposal, which redirects to the proposed time). No
-    auto_confirm and no reschedule_expiry job may remain.
+    towards auto_confirm (retired) or stay anchored to the STALE original datetime.
+    The clinic needs to decide on the client's proposed time; if it doesn't, the
+    request expires relative to the PROPOSED datetime -- recomputed on this very
+    resync, not left over from an earlier schedule -- and the bidirectional proposal
+    reminder is scheduled against that same target. No auto_confirm and no
+    reschedule_expiry job may remain.
 
-    Pre-seeds a real auto_confirm job first (via a first resync with no proposal)
-    so this proves the job is actively CANCELLED by the second resync, not merely
-    absent because it was never created."""
+    Pre-seeds a real pending_expiry job first (via a first resync with no proposal)
+    so this proves the job is actively CANCELLED and RESCHEDULED by the second
+    resync, not merely absent because it was never created."""
     scheduler.start()
 
     sample_appointment.status = AppointmentStatus.PENDING
@@ -3353,9 +3452,8 @@ async def test_resync_appointment_jobs_pending_admin_created_with_proposal_sched
     sample_appointment.proposed_datetime = None
 
     await appointment_scheduler.resync_appointment_jobs(sample_appointment)
-    assert {job.id for job in scheduler.get_jobs()} == {f"appt_{sample_appointment.id}_autoconf"}
+    assert {job.id for job in scheduler.get_jobs()} == {f"appt_{sample_appointment.id}_expire"}
 
-    original_datetime = sample_appointment.datetime
     proposed_dt = _current_tashkent_time() + timedelta(days=5)
     sample_appointment.proposed_datetime = proposed_dt.isoformat()
     sample_appointment.proposed_by = CreatedBy.CLIENT
@@ -3363,15 +3461,86 @@ async def test_resync_appointment_jobs_pending_admin_created_with_proposal_sched
     await appointment_scheduler.resync_appointment_jobs(sample_appointment)
 
     jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
-    assert set(jobs) == {f"appt_{sample_appointment.id}_expire"}
+    assert set(jobs) == {
+        f"appt_{sample_appointment.id}_expire",
+        f"appt_{sample_appointment.id}_propose_reminder",
+    }
     assert f"appt_{sample_appointment.id}_autoconf" not in jobs
     assert f"appt_{sample_appointment.id}_resch_expire" not in jobs
 
-    expected_expiry = datetime.fromisoformat(original_datetime) - timedelta(hours=2)
+    expected_expiry = proposed_dt - timedelta(hours=2)
+    expected_reminder = proposed_dt - timedelta(hours=3)
     actual_expiry = jobs[f"appt_{sample_appointment.id}_expire"]
+    actual_reminder = jobs[f"appt_{sample_appointment.id}_propose_reminder"]
     if actual_expiry.tzinfo:
         expected_expiry = expected_expiry.replace(tzinfo=actual_expiry.tzinfo)
+    if actual_reminder.tzinfo:
+        expected_reminder = expected_reminder.replace(tzinfo=actual_reminder.tzinfo)
     assert abs((actual_expiry - expected_expiry).total_seconds()) < 1
+    assert abs((actual_reminder - expected_reminder).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_admin_track_multi_round_negotiation_reschedules_timer_each_round(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Core scenario this fix targets: simulates 3 rounds of back-and-forth
+    negotiation on an admin-invite track (client counters, admin counters
+    back, client counters again). At every single round, resync_appointment_jobs
+    must cancel the previous round's pending_expiry/propose_reminder pair and
+    reschedule a fresh one anchored to the LATEST proposed_datetime -- job ids
+    stay stable (no duplicates ever accumulate) while next_run_time advances
+    each round, and auto_confirm/reschedule_expiry never appear on this track."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.ADMIN
+    sample_appointment.proposed_datetime = None
+
+    # Round 0: plain unanswered invite, no proposal yet.
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+    assert {job.id for job in scheduler.get_jobs()} == {f"appt_{sample_appointment.id}_expire"}
+
+    rounds = [
+        (_current_tashkent_time() + timedelta(days=3), CreatedBy.CLIENT),
+        (_current_tashkent_time() + timedelta(days=6), CreatedBy.ADMIN),
+        (_current_tashkent_time() + timedelta(days=9), CreatedBy.CLIENT),
+    ]
+
+    previous_run_times = None
+    for proposed_dt, proposed_by in rounds:
+        sample_appointment.proposed_datetime = proposed_dt.isoformat()
+        sample_appointment.proposed_by = proposed_by
+
+        await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+        jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+        assert set(jobs) == {
+            f"appt_{sample_appointment.id}_expire",
+            f"appt_{sample_appointment.id}_propose_reminder",
+        }
+        assert f"appt_{sample_appointment.id}_autoconf" not in jobs
+        assert f"appt_{sample_appointment.id}_resch_expire" not in jobs
+
+        expected_expiry = proposed_dt - timedelta(hours=2)
+        expected_reminder = proposed_dt - timedelta(hours=3)
+        actual_expiry = jobs[f"appt_{sample_appointment.id}_expire"]
+        actual_reminder = jobs[f"appt_{sample_appointment.id}_propose_reminder"]
+        if actual_expiry.tzinfo:
+            expected_expiry = expected_expiry.replace(tzinfo=actual_expiry.tzinfo)
+        if actual_reminder.tzinfo:
+            expected_reminder = expected_reminder.replace(tzinfo=actual_reminder.tzinfo)
+        assert abs((actual_expiry - expected_expiry).total_seconds()) < 1
+        assert abs((actual_reminder - expected_reminder).total_seconds()) < 1
+
+        if previous_run_times is not None:
+            # Proves the job was actually cancelled and rescheduled this round,
+            # not left over untouched from the previous round.
+            assert actual_expiry != previous_run_times[0]
+            assert actual_reminder != previous_run_times[1]
+        previous_run_times = (actual_expiry, actual_reminder)
 
     scheduler.shutdown(wait=False)
 
