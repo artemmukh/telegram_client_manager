@@ -15,6 +15,5 @@ class User:
     reminder_2h: bool = True
     pending_full_name: str | None = None
     created_at: str | None = None
-    visibility_scope: str | None = None
 
 

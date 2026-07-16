@@ -112,6 +112,8 @@ class FakeStaffRepo:
         self.staff = staff
 
     async def get_staff(self, telegram_user_id):
+        if isinstance(self.staff, dict):
+            return self.staff.get(telegram_user_id)
         return self.staff
 
 
@@ -275,9 +277,12 @@ async def test_list_bookable_staff_excludes_clinic_scope_admins():
     client = _booking_client()
     own_scope_doctor = _staff_member(staff_id=99, telegram_user_id=999, full_name="Петров Петр")
     clinic_scope_admin = _staff_member(staff_id=100, telegram_user_id=1000, full_name="Артём Управляющий")
-    clinic_scope_admin.visibility_scope = "clinic"
     user_repo = FakeUserRepo(client=client, staff_by_clinic={1: [own_scope_doctor, clinic_scope_admin]})
-    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1),
+        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="clinic"),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
 
     staff_list = await service.list_bookable_staff(client.telegram_user_id)
 
@@ -290,9 +295,12 @@ async def test_list_bookable_staff_keeps_own_and_none_scope_admins():
     client = _booking_client()
     none_scope = _staff_member(staff_id=99, telegram_user_id=999, full_name="Петров Петр")
     own_scope = _staff_member(staff_id=101, telegram_user_id=1001, full_name="Елена Врач")
-    own_scope.visibility_scope = "own"
     user_repo = FakeUserRepo(client=client, staff_by_clinic={1: [none_scope, own_scope]})
-    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1),
+        1001: Staff(telegram_user_id=1001, clinic_id=1, visibility_scope="own"),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
 
     staff_list = await service.list_bookable_staff(client.telegram_user_id)
 
@@ -302,7 +310,7 @@ async def test_list_bookable_staff_keeps_own_and_none_scope_admins():
 # --- resolve_admin_appointment_filter ---
 
 def _admin_with_scope(scope: str | None, admin_id=42, telegram_user_id=999):
-    return User(
+    admin = User(
         full_name="Петров Петр",
         phone="+998907654321",
         role=Role.ADMIN,
@@ -310,17 +318,19 @@ def _admin_with_scope(scope: str | None, admin_id=42, telegram_user_id=999):
         ID=admin_id,
         clinic_id=1,
         clinic_name="Зуб Мудрости",
-        visibility_scope=scope,
     )
+    staff = Staff(telegram_user_id=telegram_user_id, clinic_id=1, visibility_scope=scope)
+
+    return admin, staff
 
 
 @pytest.mark.asyncio
 async def test_resolve_admin_appointment_filter_none_scope_returns_own_admin_id():
-    admin = _admin_with_scope(None)
+    admin, staff = _admin_with_scope(None)
     service = AppointmentManagement(
         FakeAppointmentRepository(),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -331,11 +341,11 @@ async def test_resolve_admin_appointment_filter_none_scope_returns_own_admin_id(
 
 @pytest.mark.asyncio
 async def test_resolve_admin_appointment_filter_own_scope_returns_own_admin_id():
-    admin = _admin_with_scope("own")
+    admin, staff = _admin_with_scope("own")
     service = AppointmentManagement(
         FakeAppointmentRepository(),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -346,11 +356,11 @@ async def test_resolve_admin_appointment_filter_own_scope_returns_own_admin_id()
 
 @pytest.mark.asyncio
 async def test_resolve_admin_appointment_filter_clinic_scope_returns_no_doctor_filter():
-    admin = _admin_with_scope("clinic")
+    admin, staff = _admin_with_scope("clinic")
     service = AppointmentManagement(
         FakeAppointmentRepository(),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -376,12 +386,12 @@ def _appointment_with_doctor(appointment_id=1, clinic_id=1, doctor_id=None):
 
 @pytest.mark.asyncio
 async def test_get_appointment_for_admin_own_scope_blocks_other_doctor_same_clinic():
-    admin = _admin_with_scope("own")
+    admin, staff = _admin_with_scope("own")
     other_doctor_appointment = _appointment_with_doctor(clinic_id=1, doctor_id=777)
     service = AppointmentManagement(
         FakeAppointmentRepository([other_doctor_appointment]),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -394,12 +404,12 @@ async def test_get_appointment_for_admin_own_scope_blocks_other_doctor_same_clin
 
 @pytest.mark.asyncio
 async def test_get_appointment_for_admin_own_scope_blocks_other_clinic():
-    admin = _admin_with_scope("own")
+    admin, staff = _admin_with_scope("own")
     other_clinic_appointment = _appointment_with_doctor(clinic_id=2, doctor_id=admin.ID)
     service = AppointmentManagement(
         FakeAppointmentRepository([other_clinic_appointment]),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -412,12 +422,12 @@ async def test_get_appointment_for_admin_own_scope_blocks_other_clinic():
 
 @pytest.mark.asyncio
 async def test_get_appointment_for_admin_own_scope_allows_own_appointment():
-    admin = _admin_with_scope("own")
+    admin, staff = _admin_with_scope("own")
     own_appointment = _appointment_with_doctor(clinic_id=1, doctor_id=admin.ID)
     service = AppointmentManagement(
         FakeAppointmentRepository([own_appointment]),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -428,12 +438,12 @@ async def test_get_appointment_for_admin_own_scope_allows_own_appointment():
 
 @pytest.mark.asyncio
 async def test_get_appointment_for_admin_clinic_scope_allows_any_doctor_same_clinic():
-    admin = _admin_with_scope("clinic")
+    admin, staff = _admin_with_scope("clinic")
     other_doctor_appointment = _appointment_with_doctor(clinic_id=1, doctor_id=777)
     service = AppointmentManagement(
         FakeAppointmentRepository([other_doctor_appointment]),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -446,12 +456,12 @@ async def test_get_appointment_for_admin_clinic_scope_allows_any_doctor_same_cli
 
 @pytest.mark.asyncio
 async def test_get_appointment_for_admin_clinic_scope_blocks_other_clinic():
-    admin = _admin_with_scope("clinic")
+    admin, staff = _admin_with_scope("clinic")
     other_clinic_appointment = _appointment_with_doctor(clinic_id=2, doctor_id=777)
     service = AppointmentManagement(
         FakeAppointmentRepository([other_clinic_appointment]),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 
@@ -479,11 +489,11 @@ async def test_get_appointment_for_admin_returns_none_when_admin_user_missing():
 
 @pytest.mark.asyncio
 async def test_get_appointment_for_admin_returns_none_when_appointment_missing():
-    admin = _admin_with_scope("clinic")
+    admin, staff = _admin_with_scope("clinic")
     service = AppointmentManagement(
         FakeAppointmentRepository([]),
         FakeUserRepo(admin=admin),
-        FakeStaffRepo(Staff(telegram_user_id=admin.telegram_user_id, clinic_id=1)),
+        FakeStaffRepo(staff),
         _clinic_repo(),
     )
 

@@ -76,13 +76,12 @@ class FakeUserRepo:
             ID=ADMIN_ID,
             clinic_id=1,
             clinic_name="Zub Mudrosti",
-            visibility_scope="clinic",
         )
 
 
 class FakeStaffRepo:
     async def get_staff(self, telegram_user_id):
-        return Staff(telegram_user_id=telegram_user_id, clinic_id=1)
+        return Staff(telegram_user_id=telegram_user_id, clinic_id=1, visibility_scope="clinic")
 
 
 class FakeClinicRepo:

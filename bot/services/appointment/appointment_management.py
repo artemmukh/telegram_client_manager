@@ -88,13 +88,21 @@ class AppointmentManagement:
 
         staff = await self.user_repository.get_staff_users_by_clinic_id(client.clinic_id)
 
-        return [member for member in staff if member.visibility_scope != "clinic"]
+        bookable = []
+        for member in staff:
+            staff_record = await self.staff_repository.get_staff(member.telegram_user_id)
+            if staff_record is not None and staff_record.visibility_scope == "clinic":
+                continue
+            bookable.append(member)
+
+        return bookable
 
     async def resolve_admin_appointment_filter(self, admin_telegram_id: int) -> tuple[int, int | None]:
         clinic = await self.get_admin_clinic(admin_telegram_id)
         admin_user = await self.user_repository.get_user_by_telegram_id(admin_telegram_id)
+        staff_record = await self.staff_repository.get_staff(admin_telegram_id)
 
-        if admin_user is None or admin_user.visibility_scope in (None, "own"):
+        if staff_record is None or staff_record.visibility_scope in (None, "own"):
             return clinic.clinic_id, admin_user.ID if admin_user else None
 
         return clinic.clinic_id, None

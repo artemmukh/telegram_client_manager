@@ -32,6 +32,28 @@ class StaffRepository:
                     (37470594, 1);
                                       """)
 
+        cursor = await self.connection.execute("PRAGMA table_info(staff)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "visibility_scope" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE staff ADD COLUMN visibility_scope TEXT DEFAULT NULL"
+            )
+
+            users_cursor = await self.connection.execute("PRAGMA table_info(users)")
+            users_columns = {row[1] for row in await users_cursor.fetchall()}
+
+            if "visibility_scope" in users_columns:
+                await self.connection.execute("""
+                    UPDATE staff SET visibility_scope = (
+                        SELECT u.visibility_scope FROM users u
+                        WHERE u.telegram_user_id = staff.telegram_user_id
+                    )
+                    WHERE EXISTS (
+                        SELECT 1 FROM users u WHERE u.telegram_user_id = staff.telegram_user_id
+                    )
+                """)
+
         await self.connection.commit()
 
     async def get_staff(self, telegram_user_id: int) -> Staff | None:
@@ -39,7 +61,8 @@ class StaffRepository:
             """
             SELECT
                 telegram_user_id,
-                clinic_id
+                clinic_id,
+                visibility_scope
             FROM staff
             WHERE telegram_user_id = ?
             """,
@@ -55,4 +78,5 @@ class StaffRepository:
         return Staff(
             telegram_user_id=row[0],
             clinic_id=row[1],
+            visibility_scope=row[2],
         )

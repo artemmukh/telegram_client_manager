@@ -102,7 +102,6 @@ def _own_admin():
         ID=OWN_ADMIN_ID,
         clinic_id=1,
         clinic_name="Zub Mudrosti",
-        visibility_scope="own",
     )
 
 
@@ -115,7 +114,6 @@ def _clinic_admin():
         ID=CLINIC_ADMIN_ID,
         clinic_id=1,
         clinic_name="Zub Mudrosti",
-        visibility_scope="clinic",
     )
 
 
@@ -155,8 +153,8 @@ def _build_router(appointment_repo, admins=None):
     admins = admins or {OWN_ADMIN_TELEGRAM_ID: _own_admin(), CLINIC_ADMIN_TELEGRAM_ID: _clinic_admin()}
     user_repo = FakeUserRepo(admins)
     staff_repo = FakeStaffRepo({
-        OWN_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=OWN_ADMIN_TELEGRAM_ID, clinic_id=1),
-        CLINIC_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=CLINIC_ADMIN_TELEGRAM_ID, clinic_id=1),
+        OWN_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=OWN_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
+        CLINIC_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=CLINIC_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
     })
     clinic_repo = FakeClinicRepo({1: Clinic(clinic_id=1, name="Zub Mudrosti", token="t")})
     return create_admin_reschedule_requests_router(appointment_repo, user_repo, staff_repo, clinic_repo)

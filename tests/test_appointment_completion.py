@@ -51,7 +51,6 @@ class FakeUserRepo:
                 ID=1,
                 clinic_id=1,
                 clinic_name="Зуб Мудрости",
-                visibility_scope="own",
             ),
             OTHER_ADMIN_TELEGRAM_ID: User(
                 full_name="Сидоров Сидор",
@@ -61,7 +60,6 @@ class FakeUserRepo:
                 ID=2,
                 clinic_id=1,
                 clinic_name="Зуб Мудрости",
-                visibility_scope="own",
             ),
         }
 
@@ -71,7 +69,7 @@ class FakeUserRepo:
 
 class FakeStaffRepo:
     async def get_staff(self, telegram_user_id):
-        return Staff(telegram_user_id=telegram_user_id, clinic_id=1)
+        return Staff(telegram_user_id=telegram_user_id, clinic_id=1, visibility_scope="own")
 
 
 class FakeClinicRepo:
