@@ -32,7 +32,6 @@ from bot.keyboards.client.appointment_response_kb import (
     appointment_response_kb,
     cancel_confirmation_kb,
 )
-from bot.repositories.appointment_repository import AppointmentRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
@@ -56,14 +55,14 @@ _HISTORY_TAB_TITLES = {
 
 
 def create_client_appointment_router(
-    appointment_repo: AppointmentRepository,
+    appointment_pagination_service: AppointmentPaginationService,
     appointment_management_service: AppointmentManagement = None,
     notification_service: AppointmentNotificationService = None,
     appointment_scheduler=None,
 ) -> Router:
     router = Router()
 
-    pagination_service = AppointmentPaginationService(appointment_repo)
+    pagination_service = appointment_pagination_service
 
     router.message.filter(RoleFilter("client"))
     router.callback_query.filter(RoleFilter("client"))

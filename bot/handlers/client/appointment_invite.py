@@ -8,7 +8,6 @@ from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException
 from bot.keyboards.client.appointment_invite_cb import AppointmentInviteActionCB
 from bot.keyboards.client.appointment_response_kb import appointment_invite_kb, cancel_confirmation_kb
-from bot.repositories.appointment_repository import AppointmentRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
@@ -19,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 def create_client_appointment_invite_router(
-    appointment_repo: AppointmentRepository,
     appointment_management_service: AppointmentManagement,
     notification_service: AppointmentNotificationService,
     appointment_scheduler: AppointmentScheduler,

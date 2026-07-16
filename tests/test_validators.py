@@ -3,7 +3,6 @@ import pytest
 from bot.exceptions.user_exceptions import (
     InvalidFullNameError,
     InvalidPhoneError,
-    PhoneAlreadyExistsError,
     ValidationError,
 )
 from bot.validators.validators import (
@@ -11,16 +10,7 @@ from bot.validators.validators import (
     validate_fields_filled,
     validate_full_name,
     validate_phone,
-    validate_phone_available,
 )
-
-
-class PhoneLookupRepository:
-    def __init__(self, existing_phones):
-        self.existing_phones = set(existing_phones)
-
-    async def phone_exists(self, phone: str) -> bool:
-        return phone in self.existing_phones
 
 
 @pytest.mark.parametrize(
@@ -71,21 +61,6 @@ def test_validate_phone_accepts_and_normalizes_valid_numbers(raw_phone, expected
 def test_validate_phone_rejects_invalid_numbers(raw_phone):
     with pytest.raises(InvalidPhoneError):
         validate_phone(raw_phone)
-
-
-@pytest.mark.asyncio
-async def test_validate_phone_available_allows_missing_phone():
-    repo = PhoneLookupRepository(existing_phones=set())
-
-    assert await validate_phone_available(repo, "+998901234567") is None
-
-
-@pytest.mark.asyncio
-async def test_validate_phone_available_rejects_existing_phone():
-    repo = PhoneLookupRepository(existing_phones={"+998901234567"})
-
-    with pytest.raises(PhoneAlreadyExistsError):
-        await validate_phone_available(repo, "+998901234567")
 
 
 def test_validate_fields_filled_accepts_required_registration_data():

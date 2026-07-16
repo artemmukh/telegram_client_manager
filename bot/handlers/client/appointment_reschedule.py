@@ -27,7 +27,6 @@ from bot.keyboards.client.reschedule_kb import (
     reschedule_slot_kb,
 )
 from bot.models.user import User
-from bot.repositories.appointment_repository import AppointmentRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
@@ -44,7 +43,6 @@ logger = logging.getLogger(__name__)
 
 
 def create_client_reschedule_router(
-    appointment_repo: AppointmentRepository,
     appointment_management_service: AppointmentManagement,
     notification_service: AppointmentNotificationService,
     appointment_scheduler: AppointmentScheduler,

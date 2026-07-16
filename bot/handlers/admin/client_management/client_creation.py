@@ -15,7 +15,7 @@ from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 from bot.keyboards.admin.client_management_kb.client_creation_kb import client_creation_back_kb, client_creation_kb
 from bot.services.client.client_management import ClientManagement
 from bot.states.admin.client_management.client_creation_states import ClientCreationStates
-from bot.validators.validators import validate_fields_filled, validate_phone_available
+from bot.validators.validators import validate_fields_filled
 
 
 def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
@@ -23,6 +23,10 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
     router = Router()
 
     cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo)
+
+    async def validate_phone_available(phone: str):
+        if await cl_mng.is_phone_taken(phone):
+            raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
 
 
     router.message.filter(RoleFilter("admin"))
@@ -55,7 +59,8 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
         if not await phone_processing(
                 message,
                 state,
-                validator=lambda phone: validate_phone_available(user_repo, phone),final_state=ClientCreationStates.confirm_create
+                validator=validate_phone_available,
+                final_state=ClientCreationStates.confirm_create
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb())
@@ -95,7 +100,8 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
     async def process_phone_edition(message: Message, state: FSMContext):
         if not await phone_processing(message,
                 state,
-                validator=lambda phone: validate_phone_available(user_repo, phone),final_state=ClientCreationStates.confirm_create
+                validator=validate_phone_available,
+                final_state=ClientCreationStates.confirm_create
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb())

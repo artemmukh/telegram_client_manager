@@ -75,7 +75,7 @@ async def test_submit_reschedule_direct_edit_branch_notifies_and_reschedules_pen
     appointment_scheduler.schedule_reschedule_expiry = AsyncMock()
 
     router = create_client_reschedule_router(
-        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+        appointment_management_service, notification_service, appointment_scheduler,
     )
     submit_reschedule = _get_submit_reschedule_handler(router)
 
@@ -115,7 +115,7 @@ async def test_submit_reschedule_negotiation_branch_notifies_staff_and_resyncs_j
     appointment_scheduler.schedule_reschedule_expiry = AsyncMock()
 
     router = create_client_reschedule_router(
-        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+        appointment_management_service, notification_service, appointment_scheduler,
     )
     submit_reschedule = _get_submit_reschedule_handler(router)
 

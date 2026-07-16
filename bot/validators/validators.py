@@ -2,8 +2,7 @@
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPriceError, InvalidPurposeError
-from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError, PhoneAlreadyExistsError, ValidationError
-from bot.repositories.user_repository import UserRepository
+from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError, ValidationError
 from bot.utils.tools import normalize_phone
 
 DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
@@ -47,14 +46,6 @@ def validate_phone(phone: str) -> str:
 
     return phone
 
-async def validate_phone_available(
-    user_repo: UserRepository,
-    phone: str
-):
-    if await user_repo.phone_exists(phone):
-        raise PhoneAlreadyExistsError(
-            "Номер уже зарегистрирован. Пожалуйста, введите другой:"
-        )
 
 def validate_fields_filled(data):
     if "full_name" not in data:

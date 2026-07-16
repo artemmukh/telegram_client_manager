@@ -66,7 +66,6 @@ def _build_router(
     appointment_management_service=None, notification_service=None, appointment_scheduler=None,
 ):
     return create_client_appointment_invite_router(
-        MagicMock(),
         appointment_management_service or MagicMock(),
         notification_service or MagicMock(),
         appointment_scheduler or MagicMock(),
