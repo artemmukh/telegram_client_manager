@@ -277,7 +277,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
         if not await full_name_processing(
             message, state,
             next_state=ClientBrowserStates.confirm_new_full_name,
-            re_pattern=FULL_NAME_PATTERN,
+            re_pattern=SEARCH_NAME_PATTERN,
         ):
             return
 

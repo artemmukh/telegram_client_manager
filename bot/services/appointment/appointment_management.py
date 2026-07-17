@@ -26,7 +26,8 @@ from bot.services.utils.date_parser import get_current_tashkent_time, get_curren
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, validate_phone, FULL_NAME_PATTERN
+from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, \
+    validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
@@ -73,7 +74,11 @@ class AppointmentManagement:
         appointment_dt = datetime.fromisoformat(appointment_datetime)
         now = get_current_tashkent_datetime()
         is_walk_in = appointment_dt - now < MIN_LEAD_TIME
-        status = AppointmentStatus.CONFIRMED if is_walk_in else AppointmentStatus.PENDING
+
+        if client.telegram_user_id is None:
+            status = AppointmentStatus.CONFIRMED
+        else:
+            status = AppointmentStatus.EXPIRED if is_walk_in else AppointmentStatus.PENDING
 
         appointment = Appointment(
             clinic_id=clinic.clinic_id,
@@ -194,7 +199,7 @@ class AppointmentManagement:
             # Fallback: inline creation if ClientManagement not injected
             # This shouldn't happen in production
             full_name = full_name.strip()
-            validate_full_name(full_name, FULL_NAME_PATTERN)
+            validate_full_name(full_name, SEARCH_NAME_PATTERN)
             validate_phone(phone)
 
             clinic = await self.get_admin_clinic(admin_telegram_id)

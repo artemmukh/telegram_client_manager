@@ -171,7 +171,7 @@ def create_admin_appointment_creation_router(
 
     @router.message(AppointmentCreationStates.edit_full_name, F.text)
     async def process_edit_client_name(message: Message, state: FSMContext):
-        if not await full_name_processing(message, state, AppointmentCreationStates.confirm_create, re_pattern=FULL_NAME_PATTERN):
+        if not await full_name_processing(message, state, AppointmentCreationStates.confirm_create, re_pattern=SEARCH_NAME_PATTERN):
             return
         await show_confirmation(message, state, reply_markup=client_creation_confirm_kb())
 
