@@ -37,6 +37,7 @@ async def test_visibility_scope_backfill_transfers_value_from_users():
 
         staff = await staff_repo.get_staff(685889801)
         assert staff.visibility_scope == "clinic"
+        assert staff.is_doctor is False
 
         cursor = await connection.execute("PRAGMA table_info(users)")
         users_columns = {row[1] for row in await cursor.fetchall()}
@@ -124,6 +125,7 @@ async def test_visibility_scope_source_column_dropped_even_if_staff_already_migr
 
         staff = await staff_repo.get_staff(685889801)
         assert staff.visibility_scope == "clinic"
+        assert staff.is_doctor is False
 
         cursor = await connection.execute("PRAGMA table_info(users)")
         users_columns = {row[1] for row in await cursor.fetchall()}

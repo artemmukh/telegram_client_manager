@@ -116,6 +116,13 @@ class FakeStaffRepo:
             return self.staff.get(telegram_user_id)
         return self.staff
 
+    async def get_staff_by_clinic_id(self, clinic_id):
+        if isinstance(self.staff, dict):
+            return [s for s in self.staff.values() if s.clinic_id == clinic_id]
+        if self.staff is not None and self.staff.clinic_id == clinic_id:
+            return [self.staff]
+        return []
+
 
 class FakeClinicRepo:
     def __init__(self, clinic=None):
@@ -272,7 +279,7 @@ async def test_list_bookable_staff_raises_when_client_not_found():
 
 @pytest.mark.asyncio
 async def test_list_bookable_staff_excludes_clinic_scope_admins():
-    """Reception/manager admins with visibility_scope='clinic' are not doctors and
+    """Reception/manager admins with is_doctor=False are not doctors and
     must not appear in the self-booking staff-selection keyboard."""
     client = _booking_client()
     own_scope_doctor = _staff_member(staff_id=99, telegram_user_id=999, full_name="Петров Петр")
@@ -280,7 +287,7 @@ async def test_list_bookable_staff_excludes_clinic_scope_admins():
     user_repo = FakeUserRepo(client=client, staff_by_clinic={1: [own_scope_doctor, clinic_scope_admin]})
     staff_repo = FakeStaffRepo({
         999: Staff(telegram_user_id=999, clinic_id=1),
-        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="clinic"),
+        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="clinic", is_doctor=False),
     })
     service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
 
@@ -367,6 +374,182 @@ async def test_resolve_admin_appointment_filter_clinic_scope_returns_no_doctor_f
     clinic_id, doctor_id = await service.resolve_admin_appointment_filter(admin.telegram_user_id)
 
     assert (clinic_id, doctor_id) == (1, None)
+
+
+# --- list_clinic_doctors_for_creation ---
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_creation_own_scope_returns_empty():
+    admin, staff = _admin_with_scope("own")
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(admin=admin),
+        FakeStaffRepo(staff),
+        _clinic_repo(),
+    )
+
+    doctors = await service.list_clinic_doctors_for_creation(admin.telegram_user_id)
+
+    assert doctors == []
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_creation_none_scope_returns_empty():
+    admin, staff = _admin_with_scope(None)
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(admin=admin),
+        FakeStaffRepo(staff),
+        _clinic_repo(),
+    )
+
+    doctors = await service.list_clinic_doctors_for_creation(admin.telegram_user_id)
+
+    assert doctors == []
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_creation_clinic_scope_filters_by_is_doctor_including_self():
+    """Candidate filtering now follows is_doctor for every staff member, self
+    included: the requesting admin's own visibility_scope only gates whether
+    the picker is shown at all, it no longer force-includes them."""
+    requesting_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+    doctor_colleague = _staff_member(staff_id=99, telegram_user_id=1000, full_name="Петров Петр")
+    non_doctor_staff = _staff_member(staff_id=101, telegram_user_id=1001, full_name="Другой Управляющий")
+
+    user_repo = FakeUserRepo(
+        admin=requesting_admin,
+        staff_by_clinic={1: [requesting_admin, doctor_colleague, non_doctor_staff]},
+    )
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic", is_doctor=True),
+        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="own", is_doctor=True),
+        1001: Staff(telegram_user_id=1001, clinic_id=1, visibility_scope="clinic", is_doctor=False),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
+
+    doctors = await service.list_clinic_doctors_for_creation(requesting_admin.telegram_user_id)
+
+    assert doctors == [requesting_admin, doctor_colleague]
+    assert non_doctor_staff not in doctors
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_creation_excludes_self_when_not_a_doctor():
+    """The old 'always keep self' carve-out is dropped: a requesting admin
+    with is_doctor=False is excluded from the picker just like anyone else,
+    even though their own visibility_scope='clinic' still opens the picker."""
+    requesting_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+    doctor_colleague = _staff_member(staff_id=99, telegram_user_id=1000, full_name="Петров Петр")
+
+    user_repo = FakeUserRepo(
+        admin=requesting_admin,
+        staff_by_clinic={1: [requesting_admin, doctor_colleague]},
+    )
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic", is_doctor=False),
+        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="own", is_doctor=True),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
+
+    doctors = await service.list_clinic_doctors_for_creation(requesting_admin.telegram_user_id)
+
+    assert doctors == [doctor_colleague]
+    assert requesting_admin not in doctors
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_creation_clinic_scope_shows_picker_with_single_doctor():
+    requesting_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+
+    user_repo = FakeUserRepo(admin=requesting_admin, staff_by_clinic={1: [requesting_admin]})
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic", is_doctor=True),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
+
+    doctors = await service.list_clinic_doctors_for_creation(requesting_admin.telegram_user_id)
+
+    assert doctors == [requesting_admin]
+
+
+# --- create_appointment with an explicitly chosen doctor ---
+
+@pytest.mark.asyncio
+async def test_create_appointment_uses_chosen_doctor_when_staff_user_id_present():
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Управляющий", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    chosen_doctor = User(full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN, ID=99, telegram_user_id=1000, clinic_id=1)
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={99: chosen_doctor})
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {
+            "phone": "+998901234567",
+            "appointment_datetime": _future_datetime(),
+            "purpose": "Консультация",
+            "staff_user_id": 99,
+        },
+    )
+
+    assert appointment.doctor_id == 99
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_raises_when_chosen_doctor_not_found():
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Управляющий", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={})
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    with pytest.raises(UserNotFoundError):
+        await service.create_appointment(
+            999,
+            {
+                "phone": "+998901234567",
+                "appointment_datetime": _future_datetime(),
+                "purpose": "Консультация",
+                "staff_user_id": 404,
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_rejects_doctor_from_another_clinic():
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Управляющий", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    other_clinic_doctor = User(
+        full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN, ID=99, telegram_user_id=1000, clinic_id=2
+    )
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={99: other_clinic_doctor})
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    with pytest.raises(UserNotFoundError):
+        await service.create_appointment(
+            999,
+            {
+                "phone": "+998901234567",
+                "appointment_datetime": _future_datetime(),
+                "purpose": "Консультация",
+                "staff_user_id": 99,
+            },
+        )
 
 
 # --- get_appointment_for_admin ---

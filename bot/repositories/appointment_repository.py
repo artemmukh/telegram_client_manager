@@ -26,11 +26,13 @@ SELECT
     a.admin_notification_message_id,
     d.full_name AS doctor_full_name,
     d.phone AS doctor_phone,
-    a.price
+    a.price,
+    s.is_doctor AS doctor_is_doctor
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
 LEFT JOIN users d ON d.id = a.admin_id
+LEFT JOIN staff s ON s.telegram_user_id = d.telegram_user_id
 """
 
 
@@ -187,11 +189,12 @@ class AppointmentRepository:
                 a.notification_message_id, a.proposed_datetime, a.proposal_message_id,
                 a.proposed_by, a.admin_notification_message_id,
                 d.full_name AS doctor_full_name, d.phone AS doctor_phone,
-                a.price
+                a.price, s.is_doctor AS doctor_is_doctor
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
             LEFT JOIN users d ON d.id = a.admin_id
+            LEFT JOIN staff s ON s.telegram_user_id = d.telegram_user_id
             WHERE u.telegram_user_id = ?
             ORDER BY a.created_at DESC
             """,
@@ -509,6 +512,53 @@ class AppointmentRepository:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def count_appointments_by_date_and_status(
+        self, date_str: str, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+    ) -> int:
+        """Получить количество записей на конкретную дату с определённым статусом (для календаря)"""
+        conditions = ["date(datetime) = ?", "status = ?", "clinic_id = ?"]
+        params = [date_str, status.value, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("admin_id = ?")
+            params.append(doctor_id)
+
+        sql = f"SELECT COUNT(*) FROM appointments WHERE {' AND '.join(conditions)}"
+        cursor = await self.connection.execute(sql, params)
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_appointments_by_date_and_status_page(
+        self,
+        date_str: str,
+        status: AppointmentStatus,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        per_page: int = 10,
+    ) -> list[Appointment]:
+        """Получить страницу записей на конкретную дату с определённым статусом,
+        отсортированную по времени приёма (для календаря)"""
+        offset = (page - 1) * per_page
+
+        conditions = ["date(a.datetime) = ?", "a.status = ?", "a.clinic_id = ?"]
+        params = [date_str, status.value, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"""
+        WHERE {' AND '.join(conditions)}
+        ORDER BY a.datetime ASC, a.id ASC
+        LIMIT ? OFFSET ?
+        """
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
     @staticmethod
     def _status_order_by(status: AppointmentStatus) -> str:
         if status == AppointmentStatus.CONFIRMED:
@@ -583,4 +633,5 @@ class AppointmentRepository:
             doctor_full_name=row[19],
             doctor_phone=row[20],
             price=row[21],
+            doctor_is_doctor=bool(row[22]) if row[22] is not None else None,
         )

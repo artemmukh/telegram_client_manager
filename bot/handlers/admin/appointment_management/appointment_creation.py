@@ -24,6 +24,8 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
     client_creation_confirm_kb,
     back_to_records_kb,
 )
+from bot.keyboards.client.booking_cb import ClientBookDoctorCB
+from bot.keyboards.client.booking_kb import booking_doctor_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
@@ -51,6 +53,27 @@ def create_admin_appointment_creation_router(
             return
 
         await state.update_data(clinic_name=clinic.name)
+
+        doctors = await appt_mng.list_clinic_doctors_for_creation(callback_query.from_user.id)
+        if doctors:
+            await state.update_data(staff_options={str(d.ID): d.full_name for d in doctors})
+            await state.set_state(AppointmentCreationStates.choose_doctor)
+            await callback_query.answer('')
+            await callback_query.message.edit_text(
+                "Выберите врача:",
+                reply_markup=booking_doctor_kb(doctors, cancel_callback_data="back_to_main_records"),
+            )
+            return
+
+        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
+
+    @router.callback_query(AppointmentCreationStates.choose_doctor, ClientBookDoctorCB.filter())
+    async def pick_doctor(callback_query: CallbackQuery, callback_data: ClientBookDoctorCB, state: FSMContext):
+        data = await state.get_data()
+        staff_options = data.get("staff_options", {})
+        staff_name = staff_options.get(str(callback_data.staff_user_id), "Врач")
+
+        await state.update_data(staff_user_id=callback_data.staff_user_id, staff_name=staff_name)
         await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
 
     @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "restart_appointment_create")

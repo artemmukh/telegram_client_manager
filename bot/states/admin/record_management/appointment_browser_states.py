@@ -20,3 +20,6 @@ class AppointmentBrowserStates(StatesGroup):
     confirm_new_price = State()
 
     confirm_delete = State()
+
+    calendar_month = State()
+    calendar_day = State()

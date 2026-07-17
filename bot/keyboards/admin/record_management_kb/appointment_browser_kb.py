@@ -2,8 +2,15 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import build_appointment_button_text
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    format_month_label,
+    generate_month_days,
+    shift_month,
+)
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptActionCB,
+    ApptCalendarDayCB,
+    ApptCalendarMonthCB,
     ApptCardCB,
     ApptPageCB,
 )
@@ -64,9 +71,10 @@ def appointment_browser_search_kb() -> InlineKeyboardMarkup:
     builder.button(text="👤 Поиск по имени", callback_data="appt_search_name")
     builder.button(text="📞 Поиск по номеру", callback_data="appt_search_phone")
     builder.button(text="📋 Показать все записи", callback_data="appt_search_all")
+    builder.button(text="📅 Календарь", callback_data="appt_search_calendar")
     builder.button(text="⬅️ К меню", callback_data="back_to_main_records")
 
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
@@ -98,6 +106,8 @@ def appointment_list_kb(
     current_page: int,
     total_pages: int,
     tab: str = "",
+    back_callback_data: str = "browse_appointments",
+    back_label: str = "⬅️ К меню поиска",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
@@ -135,8 +145,41 @@ def appointment_list_kb(
         builder.button(text="Страница 1 из 1", callback_data="noop")
         rows += [1]
 
-    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    builder.button(text=back_label, callback_data=back_callback_data)
     rows += [1]
+
+    builder.adjust(*rows)
+    return builder.as_markup()
+
+
+def appointment_calendar_kb(year: int, month: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    days = generate_month_days(year, month)
+    rows = []
+
+    for day in days:
+        builder.button(
+            text=str(day),
+            callback_data=ApptCalendarDayCB(year=year, month=month, day=day).pack(),
+        )
+
+    remaining = len(days)
+    while remaining > 0:
+        rows.append(min(7, remaining))
+        remaining -= 7
+
+    builder.button(text=format_month_label(year, month), callback_data="noop")
+    rows.append(1)
+
+    prev_year, prev_month = shift_month(year, month, "prev")
+    next_year, next_month = shift_month(year, month, "next")
+
+    builder.button(text="⬅️", callback_data=ApptCalendarMonthCB(year=prev_year, month=prev_month).pack())
+    builder.button(text="➡️", callback_data=ApptCalendarMonthCB(year=next_year, month=next_month).pack())
+    rows.append(2)
+
+    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    rows.append(1)
 
     builder.adjust(*rows)
     return builder.as_markup()

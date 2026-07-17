@@ -59,7 +59,16 @@ class AppointmentManagement:
         if admin is None:
             raise UserNotFoundError("Врач не найден.")
 
-        await self._ensure_slot_available(admin.ID, appointment_datetime, None)
+        doctor_id = admin.ID
+        if data.get("staff_user_id") is not None:
+            doctor = await self.user_repository.get_user_by_id(data["staff_user_id"])
+            if doctor is None:
+                raise UserNotFoundError("Врач не найден.")
+            if doctor.clinic_id != clinic.clinic_id:
+                raise UserNotFoundError("Врач не найден.")
+            doctor_id = doctor.ID
+
+        await self._ensure_slot_available(doctor_id, appointment_datetime, None)
 
         appointment_dt = datetime.fromisoformat(appointment_datetime)
         now = get_current_tashkent_datetime()
@@ -69,7 +78,7 @@ class AppointmentManagement:
         appointment = Appointment(
             clinic_id=clinic.clinic_id,
             client_id=client.ID,
-            doctor_id=admin.ID,
+            doctor_id=doctor_id,
             datetime=appointment_datetime,
             purpose=purpose,
             created_by=CreatedBy.ADMIN,
@@ -81,21 +90,28 @@ class AppointmentManagement:
 
         return await self.appointment_repository.create_appointment(appointment)
 
+    async def list_clinic_doctors(self, clinic_id: int) -> list[User]:
+        candidates = await self.user_repository.get_staff_users_by_clinic_id(clinic_id)
+        staff_records = await self.staff_repository.get_staff_by_clinic_id(clinic_id)
+        is_doctor_by_telegram_id = {s.telegram_user_id: s.is_doctor for s in staff_records}
+
+        return [u for u in candidates if is_doctor_by_telegram_id.get(u.telegram_user_id, True)]
+
     async def list_bookable_staff(self, client_telegram_id: int) -> list[User]:
         client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
         if client is None or client.clinic_id is None:
             raise UserNotFoundError("Клиент не найден или не привязан к клинике.")
 
-        staff = await self.user_repository.get_staff_users_by_clinic_id(client.clinic_id)
+        return await self.list_clinic_doctors(client.clinic_id)
 
-        bookable = []
-        for member in staff:
-            staff_record = await self.staff_repository.get_staff(member.telegram_user_id)
-            if staff_record is not None and staff_record.visibility_scope == "clinic":
-                continue
-            bookable.append(member)
+    async def list_clinic_doctors_for_creation(self, admin_telegram_id: int) -> list[User]:
+        clinic = await self.get_admin_clinic(admin_telegram_id)
+        staff_record = await self.staff_repository.get_staff(admin_telegram_id)
 
-        return bookable
+        if staff_record is None or staff_record.visibility_scope in (None, "own"):
+            return []
+
+        return await self.list_clinic_doctors(clinic.clinic_id)
 
     async def resolve_admin_appointment_filter(self, admin_telegram_id: int) -> tuple[int, int | None]:
         clinic = await self.get_admin_clinic(admin_telegram_id)

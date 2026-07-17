@@ -6,6 +6,7 @@ from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
@@ -18,10 +19,12 @@ async def appointment_setup(tmp_path):
 
     clinic_repo = ClinicRepository(connection)
     user_repo = UserRepository(connection)
+    staff_repo = StaffRepository(connection)
     appointment_repo = AppointmentRepository(connection)
 
     await clinic_repo.init()
     await user_repo.init()
+    await staff_repo.init()
     await appointment_repo.init()
 
     await user_repo.create_user(
@@ -102,10 +105,12 @@ async def _in_memory_repos():
     connection = await aiosqlite.connect(":memory:")
     clinic_repo = ClinicRepository(connection)
     user_repo = UserRepository(connection)
+    staff_repo = StaffRepository(connection)
     appointment_repo = AppointmentRepository(connection)
 
     await clinic_repo.init()
     await user_repo.init()
+    await staff_repo.init()
     await appointment_repo.init()
 
     return connection, user_repo, appointment_repo
@@ -408,6 +413,115 @@ async def test_count_appointments_by_status_returns_zero_when_no_matches():
         )
 
         assert await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED, clinic_id=1) == 0
+    finally:
+        await connection.close()
+
+
+# --- Calendar: date + status filtering (appt_search_calendar feature) ---
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_date_and_status_page_filters_exact_day_sorted_by_datetime_asc():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        matching_later = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 15:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        matching_earlier = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 09:00:00", AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00")
+        )
+        # Different day, same status - must be excluded.
+        await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-11 09:00:00", AppointmentStatus.CONFIRMED, "2026-07-03 10:00:00")
+        )
+        # Same day, different status - must be excluded.
+        await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 12:00:00", AppointmentStatus.PENDING, "2026-07-04 10:00:00")
+        )
+
+        count = await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1
+        )
+        page = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10
+        )
+
+        assert count == 2
+        assert [a.id for a in page] == [matching_earlier.id, matching_later.id]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_date_and_status_page_respects_clinic_and_doctor_scope():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        own_doctor = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=100,
+                datetime="2026-07-10 10:00", purpose="Consultation",
+                created_by=CreatedBy.ADMIN, status=AppointmentStatus.CONFIRMED,
+            )
+        )
+        await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=200,
+                datetime="2026-07-10 11:00", purpose="Consultation",
+                created_by=CreatedBy.ADMIN, status=AppointmentStatus.CONFIRMED,
+            )
+        )
+        await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=2, client_id=client.ID, doctor_id=100,
+                datetime="2026-07-10 12:00", purpose="Consultation",
+                created_by=CreatedBy.ADMIN, status=AppointmentStatus.CONFIRMED,
+            )
+        )
+
+        by_doctor = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, doctor_id=100, per_page=10
+        )
+        assert [a.id for a in by_doctor] == [own_doctor.id]
+        assert await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1, doctor_id=100
+        ) == 1
+
+        clinic_wide = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10
+        )
+        assert len(clinic_wide) == 2
+        assert await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1
+        ) == 2
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_date_and_status_page_paginates_with_offset():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        for hour in range(9, 12):
+            await appointment_repo.create_appointment(
+                _appointment_with_status(
+                    client.ID, f"2026-07-10 {hour:02d}:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00"
+                )
+            )
+
+        page_one = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=2
+        )
+        page_two = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 2, clinic_id=1, per_page=2
+        )
+
+        assert [a.datetime for a in page_one] == ["2026-07-10 09:00:00", "2026-07-10 10:00:00"]
+        assert [a.datetime for a in page_two] == ["2026-07-10 11:00:00"]
     finally:
         await connection.close()
 

@@ -40,3 +40,16 @@ class ApptActionCB(CallbackData, prefix="appt_act"):
     page: int
     value: str = ""
     post_appt: bool = False
+
+
+class ApptCalendarMonthCB(CallbackData, prefix="appt_cal_month"):
+    """Переключение месяца в календарной сетке (кнопки '<'/'>')."""
+    year: int
+    month: int
+
+
+class ApptCalendarDayCB(CallbackData, prefix="appt_cal_day"):
+    """Выбор дня в календарной сетке."""
+    year: int
+    month: int
+    day: int

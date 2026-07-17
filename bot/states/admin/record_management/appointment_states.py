@@ -2,6 +2,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 
 class AppointmentCreationStates(StatesGroup):
+    choose_doctor = State()
     client_full_name = State()
     client_phone = State()
     confirm_create = State()

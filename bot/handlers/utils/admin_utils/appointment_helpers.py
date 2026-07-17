@@ -42,6 +42,10 @@ def build_appointment_card(appointment: Appointment) -> str:
     if appointment.client_phone:
         lines.append(f"Телефон: {appointment.client_phone}")
 
+    if appointment.doctor_full_name and appointment.doctor_is_doctor:
+        lines.append(f"Врач: {appointment.doctor_full_name}")
+        lines.append(f"Телефон врача: {appointment.doctor_phone or '—'}")
+
     lines += [
         f"Время: {format_appointment_card_datetime(appointment.datetime)}",
         f"Услуга: {appointment.purpose}",

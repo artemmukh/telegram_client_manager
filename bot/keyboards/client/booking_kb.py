@@ -20,7 +20,9 @@ def booking_cancel_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def booking_doctor_kb(staff_list: list[User]) -> InlineKeyboardMarkup:
+def booking_doctor_kb(
+    staff_list: list[User], cancel_callback_data: str = "client_appointment_menu"
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for staff in staff_list:
@@ -30,7 +32,7 @@ def booking_doctor_kb(staff_list: list[User]) -> InlineKeyboardMarkup:
         )
     rows = [1] * len(staff_list)
 
-    builder.button(text="❌ Отмена", callback_data="client_appointment_menu")
+    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)

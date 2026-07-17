@@ -67,6 +67,26 @@ class FakeAppointmentRepository:
         self.calls.append(("count_appointments_by_status", status, clinic_id, doctor_id))
         return self.total_count
 
+    async def get_appointments_by_date_and_status_page(
+        self,
+        date_str: str,
+        status: AppointmentStatus,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None,
+        per_page: int,
+    ) -> list[Appointment]:
+        self.calls.append(
+            ("get_appointments_by_date_and_status_page", date_str, status, page, clinic_id, doctor_id, per_page)
+        )
+        return self.page_items
+
+    async def count_appointments_by_date_and_status(
+        self, date_str: str, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+    ) -> int:
+        self.calls.append(("count_appointments_by_date_and_status", date_str, status, clinic_id, doctor_id))
+        return self.total_count
+
 
 def _appointment(appointment_id: int) -> Appointment:
     return Appointment(
@@ -597,6 +617,125 @@ async def test_paginate_all_appointments_by_tab_empty_result_returns_single_page
     service = AppointmentPaginationService(repo)
 
     result = await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1)
+
+    assert result.total_count == 0
+    assert result.total_pages == 1
+    assert result.current_page == 1
+    assert result.items == []
+
+
+# --- paginate_appointments_by_date_and_tab ---
+# NOTE: mirrors paginate_all_appointments_by_tab's tests (see the note above
+# that block) - SQL-level pagination, so these only verify routing.
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_routes_date_and_resolved_status_to_repository():
+    items = [_appointment(1), _appointment(2)]
+    repo = FakeAppointmentRepository(total_count=2, page_items=items)
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 1, clinic_id=1)
+
+    assert result.items == items
+    assert result.total_count == 2
+    assert ("count_appointments_by_date_and_status", "2026-07-10", AppointmentStatus.CONFIRMED, 1, None) in repo.calls
+    assert (
+        "get_appointments_by_date_and_status_page",
+        "2026-07-10",
+        AppointmentStatus.CONFIRMED,
+        1,
+        1,
+        None,
+        APPOINTMENTS_PER_PAGE,
+    ) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_forwards_concrete_doctor_id_to_repository():
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 1, clinic_id=1, doctor_id=5)
+
+    assert ("count_appointments_by_date_and_status", "2026-07-10", AppointmentStatus.CONFIRMED, 1, 5) in repo.calls
+    assert (
+        "get_appointments_by_date_and_status_page",
+        "2026-07-10",
+        AppointmentStatus.CONFIRMED,
+        1,
+        1,
+        5,
+        APPOINTMENTS_PER_PAGE,
+    ) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_resolves_each_tab_to_its_status():
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    for tab, status in AppointmentPaginationService._STATUS_TABS.items():
+        repo.calls.clear()
+        await service.paginate_appointments_by_date_and_tab("2026-07-10", tab, 1, clinic_id=1)
+        assert ("count_appointments_by_date_and_status", "2026-07-10", status, 1, None) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_unknown_tab_raises_pagination_error():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    with pytest.raises(PaginationError):
+        await service.paginate_appointments_by_date_and_tab("2026-07-10", "unknown", 1, clinic_id=1)
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_unknown_tab_does_not_touch_repository():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    with pytest.raises(PaginationError):
+        await service.paginate_appointments_by_date_and_tab("2026-07-10", "unknown", 1, clinic_id=1)
+
+    assert repo.calls == []
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_total_pages_computed_with_ceil():
+    repo = FakeAppointmentRepository(total_count=21, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 1, clinic_id=1)
+
+    assert result.total_pages == 3  # ceil(21 / 10)
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_clamps_page_before_querying_repository():
+    repo = FakeAppointmentRepository(total_count=15, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 999, clinic_id=1)
+
+    assert result.total_pages == 2  # ceil(15 / 10)
+    assert result.current_page == 2
+    assert (
+        "get_appointments_by_date_and_status_page",
+        "2026-07-10",
+        AppointmentStatus.CONFIRMED,
+        2,
+        1,
+        None,
+        APPOINTMENTS_PER_PAGE,
+    ) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_empty_result_returns_single_page():
+    repo = FakeAppointmentRepository(page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 1, clinic_id=1)
 
     assert result.total_count == 0
     assert result.total_pages == 1

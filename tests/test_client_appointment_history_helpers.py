@@ -100,3 +100,36 @@ def test_build_history_card_text_falls_back_to_status_value_for_unlabeled_status
     text = build_history_card_text(appointment)
 
     assert "Статус: archived" in text
+
+
+def test_build_history_card_text_shows_doctor_when_flagged_as_doctor():
+    appointment = _appointment(AppointmentStatus.PENDING)
+    appointment.doctor_full_name = "Петров Петр"
+    appointment.doctor_phone = "+998907654321"
+    appointment.doctor_is_doctor = True
+
+    text = build_history_card_text(appointment)
+
+    assert "Врач: Петров Петр" in text
+    assert "Телефон врача: +998907654321" in text
+
+
+def test_build_history_card_text_omits_doctor_when_not_flagged_as_doctor():
+    appointment = _appointment(AppointmentStatus.PENDING)
+    appointment.doctor_full_name = "Петров Петр"
+    appointment.doctor_phone = "+998907654321"
+    appointment.doctor_is_doctor = False
+
+    text = build_history_card_text(appointment)
+
+    assert "Врач:" not in text
+    assert "Телефон врача:" not in text
+
+
+def test_build_history_card_text_omits_doctor_when_name_absent():
+    appointment = _appointment(AppointmentStatus.PENDING)
+
+    text = build_history_card_text(appointment)
+
+    assert "Врач:" not in text
+    assert "Телефон врача:" not in text

@@ -11,6 +11,11 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     edit_tracked_message,
     remember_tracked_message,
 )
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    clamp_month_to_range,
+    format_calendar_date_display,
+    format_month_label,
+)
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
     datetime_processing,
@@ -28,6 +33,8 @@ from bot.handlers.utils.admin_utils.input_helpers import (
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptActionCB,
+    ApptCalendarDayCB,
+    ApptCalendarMonthCB,
     ApptCardCB,
     ApptPageCB,
 )
@@ -37,6 +44,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_browser_confirm_name_kb,
     appointment_browser_confirm_phone_kb,
     appointment_browser_search_kb,
+    appointment_calendar_kb,
     appointment_card_kb,
     appointment_confirm_new_datetime_kb,
     appointment_confirm_new_price_kb,
@@ -47,7 +55,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
-from bot.services.utils.date_parser import format_datetime_for_db
+from bot.services.utils.date_parser import format_datetime_for_db, get_current_tashkent_datetime
 from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
@@ -156,6 +164,60 @@ def create_admin_appointment_browser_router(
         clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
         await render_list(
             callback_query, state, mode="list", page=1, tab="confirmed", clinic_id=clinic_id, doctor_id=doctor_id,
+        )
+
+    # --- Calendar search ---
+
+    @router.callback_query(F.data == "appt_search_calendar")
+    async def open_calendar(callback_query: CallbackQuery, state: FSMContext):
+        await state.clear()
+        today = get_current_tashkent_datetime().date()
+        year, month = clamp_month_to_range(today.year, today.month)
+
+        await state.update_data(calendar_year=year, calendar_month=month)
+        await state.set_state(AppointmentBrowserStates.calendar_month)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            f"📅 {format_month_label(year, month)}",
+            reply_markup=appointment_calendar_kb(year, month),
+        )
+        await remember_tracked_message(state, callback_query.message)
+
+    @router.callback_query(ApptCalendarMonthCB.filter())
+    async def change_calendar_month(
+        callback_query: CallbackQuery, callback_data: ApptCalendarMonthCB, state: FSMContext,
+    ):
+        year, month = callback_data.year, callback_data.month
+
+        await state.update_data(calendar_year=year, calendar_month=month)
+        await state.set_state(AppointmentBrowserStates.calendar_month)
+        await callback_query.answer('')
+
+        try:
+            await callback_query.message.edit_text(
+                f"📅 {format_month_label(year, month)}",
+                reply_markup=appointment_calendar_kb(year, month),
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                raise
+
+        await remember_tracked_message(state, callback_query.message)
+
+    @router.callback_query(ApptCalendarDayCB.filter())
+    async def pick_calendar_day(
+        callback_query: CallbackQuery, callback_data: ApptCalendarDayCB, state: FSMContext,
+    ):
+        calendar_date = f"{callback_data.year:04d}-{callback_data.month:02d}-{callback_data.day:02d}"
+
+        await state.update_data(
+            calendar_date=calendar_date, calendar_year=callback_data.year, calendar_month=callback_data.month,
+        )
+        await state.set_state(AppointmentBrowserStates.calendar_day)
+
+        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+        await render_list(
+            callback_query, state, mode="calendar", page=1, tab="confirmed", clinic_id=clinic_id, doctor_id=doctor_id,
         )
 
     # --- Resolve the search query and show results ---
@@ -654,11 +716,26 @@ def create_admin_appointment_browser_router(
     ) -> None:
         try:
             tab = tab or "confirmed"
+            back_callback_data = "browse_appointments"
+            back_label = "⬅️ К меню поиска"
 
             if mode == "list":
                 result = await pagination_service.paginate_all_appointments_by_tab(
                     tab, page, clinic_id, doctor_id
                 )
+                title = "📒 Все записи"
+            elif mode == "calendar":
+                data = await state.get_data()
+                calendar_date = data.get("calendar_date")
+                calendar_year = data.get("calendar_year")
+                calendar_month = data.get("calendar_month")
+
+                result = await pagination_service.paginate_appointments_by_date_and_tab(
+                    calendar_date, tab, page, clinic_id, doctor_id
+                )
+                title = f"📅 Записи за {format_calendar_date_display(calendar_date)}"
+                back_callback_data = ApptCalendarMonthCB(year=calendar_year, month=calendar_month).pack()
+                back_label = "⬅️ К календарю"
             else:
                 search_data = None
                 if mode in ("search", "phone"):
@@ -668,18 +745,20 @@ def create_admin_appointment_browser_router(
                 result = await pagination_service.paginate_appointments(
                     mode, page, clinic_id, doctor_id, search_data, tab
                 )
+                titles = {
+                    "search": "🔍 Результаты поиска",
+                    "phone": "📞 Записи клиента",
+                }
+                title = titles.get(mode, "📒 Записи")
 
-            titles = {
-                "list": "📒 Все записи",
-                "search": "🔍 Результаты поиска",
-                "phone": "📞 Записи клиента",
-            }
-            title = titles.get(mode, "📒 Записи")
             text = f"{prefix}{title} ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"
 
             await callback_query.message.edit_text(
                 text,
-                reply_markup=appointment_list_kb(result.items, mode, result.current_page, result.total_pages, tab),
+                reply_markup=appointment_list_kb(
+                    result.items, mode, result.current_page, result.total_pages, tab,
+                    back_callback_data=back_callback_data, back_label=back_label,
+                ),
             )
             await callback_query.answer()
             await remember_tracked_message(state, callback_query.message)

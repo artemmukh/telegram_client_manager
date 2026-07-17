@@ -54,6 +54,14 @@ class StaffRepository:
                     )
                 """)
 
+        if "is_doctor" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE staff ADD COLUMN is_doctor INTEGER NOT NULL DEFAULT 1"
+            )
+            await self.connection.execute(
+                "UPDATE staff SET is_doctor = CASE WHEN visibility_scope = 'clinic' THEN 0 ELSE 1 END"
+            )
+
         # Drop the now-redundant source column from users, independent of the
         # backfill guard above: on a database that already ran the backfill in
         # a prior deploy (staff.visibility_scope already exists), the block
@@ -73,7 +81,8 @@ class StaffRepository:
             SELECT
                 telegram_user_id,
                 clinic_id,
-                visibility_scope
+                visibility_scope,
+                is_doctor
             FROM staff
             WHERE telegram_user_id = ?
             """,
@@ -81,6 +90,18 @@ class StaffRepository:
         )
 
         return self._row_to_staff(await cursor.fetchone())
+
+    async def get_staff_by_clinic_id(self, clinic_id: int) -> list[Staff]:
+        cursor = await self.connection.execute(
+            """
+            SELECT telegram_user_id, clinic_id, visibility_scope, is_doctor
+            FROM staff
+            WHERE clinic_id = ?
+            """,
+            (clinic_id,)
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_staff(row) for row in rows]
 
     def _row_to_staff(self, row) -> Staff | None:
         if row is None:
@@ -90,4 +111,5 @@ class StaffRepository:
             telegram_user_id=row[0],
             clinic_id=row[1],
             visibility_scope=row[2],
+            is_doctor=bool(row[3]),
         )

@@ -255,6 +255,52 @@ class AppointmentPaginationService:
             total_count=total_count,
         )
 
+    async def paginate_appointments_by_date_and_tab(
+        self,
+        date_str: str,
+        tab: str,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        per_page: int | None = None,
+    ) -> AppointmentPaginationResult:
+        """
+        Получить страницу записей на конкретную дату (календарь) по вкладке.
+
+        В отличие от paginate_all_appointments_by_tab, сортировка всегда идёт
+        по времени приёма (a.datetime ASC), а не по стандартной для вкладки -
+        весь смысл календарного представления в хронологическом порядке
+        записей за выбранный день.
+
+        Args:
+            date_str: дата в формате 'YYYY-MM-DD'
+            tab: вкладка по статусу ('confirmed'/'pending'/'cancelled'/'no_show'/'completed'/'expired')
+            page: номер страницы
+            clinic_id: клиника, к которой скоупится выборка
+            doctor_id: если задан, ограничивает выборку записями этого врача
+        """
+        if tab not in self._STATUS_TABS:
+            raise PaginationError(f"Неизвестная вкладка: {tab}")
+
+        per_page = per_page or APPOINTMENTS_PER_PAGE
+        status = self._STATUS_TABS[tab]
+
+        total_count = await self.appointment_repo.count_appointments_by_date_and_status(
+            date_str, status, clinic_id, doctor_id
+        )
+        page, total_pages = self._paginate_math(total_count, page, per_page)
+
+        items = await self.appointment_repo.get_appointments_by_date_and_status_page(
+            date_str, status, page, clinic_id, doctor_id, per_page
+        )
+
+        return AppointmentPaginationResult(
+            items=items,
+            current_page=page,
+            total_pages=total_pages,
+            total_count=total_count,
+        )
+
     async def paginate_active_client_appointments(
         self,
         telegram_id: int,
