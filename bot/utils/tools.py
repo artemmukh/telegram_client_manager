@@ -13,6 +13,21 @@ def normalize_phone(phone: str) -> str:
     if phone.startswith("998"):
         return "+" + phone
 
+    if phone.startswith("+7"):
+        return phone
+
+    if phone.startswith("7") and len(phone) == 11:
+        return "+" + phone
+
+    if phone.startswith("8") and len(phone) == 11:
+        return "+7" + phone[1:]
+
+    if phone.startswith("+375"):
+        return phone
+
+    if phone.startswith("375") and len(phone) == 12:
+        return "+" + phone
+
     if len(phone) == 9:
         return "+998" + phone
 

@@ -12,7 +12,13 @@ FULL_NAME_PATTERN = re.compile(
     r"(?: [А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?){1,2}$"
 )
 
-PHONE_PATTERN = re.compile(r"^(?:\+998|998)?\d{9}$")
+PHONE_PATTERN = re.compile(
+    r"^(?:"
+    r"\+998\d{9}|"    # Uzbekistan: +998 XXXXXXXXX (9 digits)
+    r"\+7\d{10}|"     # Russia: +7 XXXXXXXXXX (10 digits)
+    r"\+375\d{9}"     # Belarus: +375 XXXXXXXXX (9 digits)
+    r")$"
+)
 
 SEARCH_NAME_PATTERN = re.compile(
     r"^[А-ЯЁа-яё]{2,}(?:[- ][А-ЯЁа-яё]{2,})*$"
