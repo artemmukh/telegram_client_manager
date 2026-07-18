@@ -78,7 +78,7 @@ class AppointmentManagement:
         if client.telegram_user_id is None:
             status = AppointmentStatus.CONFIRMED
         else:
-            status = AppointmentStatus.EXPIRED if is_walk_in else AppointmentStatus.PENDING
+            status = AppointmentStatus.CONFIRMED if is_walk_in else AppointmentStatus.PENDING
 
         appointment = Appointment(
             clinic_id=clinic.clinic_id,
