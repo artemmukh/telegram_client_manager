@@ -20,6 +20,7 @@ from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.client.client_management import ClientManagement
 from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
@@ -110,6 +111,30 @@ class FakeUserRepo:
 
     async def get_user_by_id(self, user_id):
         return self.users_by_id.get(user_id)
+
+    async def phone_exists(self, phone):
+        return self.client is not None and self.client.phone == phone
+
+    async def create_user(self, user):
+        if user.ID is None:
+            user.ID = 500  # simulates a DB-assigned cursor.lastrowid
+        self.client = user
+
+
+class FakeClientClinicRepo:
+    def __init__(self):
+        self.links = set()
+        self.link_calls = []
+
+    async def link_client_to_clinic(self, client_id, clinic_id):
+        self.link_calls.append((client_id, clinic_id))
+        self.links.add((client_id, clinic_id))
+
+    async def client_linked_to_clinic(self, client_id, clinic_id):
+        return (client_id, clinic_id) in self.links
+
+    async def get_client_clinic_ids(self, client_id):
+        return [cid for (uid, cid) in self.links if uid == client_id]
 
 
 class FakeStaffRepo:
@@ -879,6 +904,160 @@ async def test_find_client_by_phone_with_clinic_id_excludes_other_clinics():
 
     assert found_same_clinic is client
     assert found_other_clinic is None
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_links_existing_client_to_new_clinic():
+    """Client belongs to clinic 2 ("home" clinic), but an admin from clinic 1 books
+    them. This is the dead-end scenario: the client must get auto-linked to clinic 1
+    and the appointment must proceed without any PhoneAlreadyExistsError dead end."""
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    client = User(
+        full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7,
+        telegram_user_id=555, clinic_id=2,
+    )
+    client_clinic_repo = FakeClientClinicRepo()
+    service = AppointmentManagement(
+        appt_repo,
+        FakeUserRepo(client, admin=admin),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+        client_clinic_repository=client_clinic_repo,
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": _future_datetime(), "purpose": "Консультация"},
+    )
+
+    assert appointment.clinic_id == 1
+    assert appointment.client_id == 7
+    assert await client_clinic_repo.client_linked_to_clinic(7, 1) is True
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_link_is_safe_when_client_already_linked():
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    client = User(
+        full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7,
+        telegram_user_id=555, clinic_id=1,
+    )
+    client_clinic_repo = FakeClientClinicRepo()
+    await client_clinic_repo.link_client_to_clinic(7, 1)
+    service = AppointmentManagement(
+        appt_repo,
+        FakeUserRepo(client, admin=admin),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+        client_clinic_repository=client_clinic_repo,
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": _future_datetime(), "purpose": "Консультация"},
+    )
+
+    assert appointment.client_id == 7
+    assert await client_clinic_repo.client_linked_to_clinic(7, 1) is True
+
+
+@pytest.mark.asyncio
+async def test_check_or_create_client_links_existing_client_to_requesting_clinic():
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    client = User(
+        full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, clinic_id=2,
+    )
+    client_clinic_repo = FakeClientClinicRepo()
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(client, admin=admin),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+        client_clinic_repository=client_clinic_repo,
+    )
+
+    result = await service.check_or_create_client(999, "Иванов Иван", "+998901234567")
+
+    assert result is client
+    assert await client_clinic_repo.client_linked_to_clinic(7, 1) is True
+
+
+@pytest.mark.asyncio
+async def test_check_or_create_client_creates_and_links_new_client():
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    client_clinic_repo = FakeClientClinicRepo()
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(client=None, admin=admin),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+        client_clinic_repository=client_clinic_repo,
+    )
+
+    new_client = await service.check_or_create_client(999, "Петров Петр", "+998907654321")
+
+    assert new_client.full_name == "Петров Петр"
+    assert new_client.phone == "+998907654321"
+    assert new_client.ID is not None
+    assert await client_clinic_repo.client_linked_to_clinic(new_client.ID, 1) is True
+
+
+@pytest.mark.asyncio
+async def test_check_or_create_client_creates_and_links_new_client_via_client_management():
+    """Covers the ClientManagement-delegated branch, which is what actually runs in
+    production (run.py always wires client_management) -- the inline fallback tested
+    above is explicitly documented as "shouldn't happen in production"."""
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    user_repo = FakeUserRepo(client=None, admin=admin)
+    client_clinic_repo = FakeClientClinicRepo()
+    client_management = ClientManagement(
+        user_repo, FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)), _clinic_repo(clinic_id=1),
+    )
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+        client_management=client_management,
+        client_clinic_repository=client_clinic_repo,
+    )
+
+    new_client = await service.check_or_create_client(999, "Петров Петр", "+998907654321")
+
+    assert new_client.full_name == "Петров Петр"
+    assert new_client.ID is not None
+    assert await client_clinic_repo.client_linked_to_clinic(new_client.ID, 1) is True
+
+
+@pytest.mark.asyncio
+async def test_check_or_create_client_without_repository_wired_behaves_as_before():
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    client = User(
+        full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, clinic_id=2,
+    )
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(client, admin=admin),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+    )
+
+    result = await service.check_or_create_client(999, "Иванов Иван", "+998901234567")
+
+    assert result is client
+
+    new_client_service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(client=None, admin=admin),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(clinic_id=1),
+    )
+
+    new_client = await new_client_service.check_or_create_client(999, "Петров Петр", "+998907654321")
+
+    assert new_client.full_name == "Петров Петр"
 
 
 @pytest.mark.asyncio

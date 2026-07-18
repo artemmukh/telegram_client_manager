@@ -18,6 +18,7 @@ from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
@@ -41,12 +42,14 @@ class AppointmentManagement:
         staff_repository: StaffRepository,
         clinic_repository: ClinicRepository,
         client_management=None,
+        client_clinic_repository: ClientClinicRepository | None = None,
     ):
         self.appointment_repository = appointment_repository
         self.user_repository = user_repository
         self.staff_repository = staff_repository
         self.clinic_repository = clinic_repository
         self.client_management = client_management
+        self.client_clinic_repository = client_clinic_repository
 
     async def create_appointment(self, doctor_telegram_id: int, data: dict) -> Appointment:
         clinic = await self.get_admin_clinic(doctor_telegram_id)
@@ -70,6 +73,9 @@ class AppointmentManagement:
             doctor_id = doctor.ID
 
         await self._ensure_slot_available(doctor_id, appointment_datetime, None)
+
+        if self.client_clinic_repository is not None:
+            await self.client_clinic_repository.link_client_to_clinic(client.ID, clinic.clinic_id)
 
         appointment_dt = datetime.fromisoformat(appointment_datetime)
         now = get_current_tashkent_datetime()
@@ -195,13 +201,20 @@ class AppointmentManagement:
 
         client = await self.user_repository.get_client_by_phone(phone)
         if client is not None:
+            if self.client_clinic_repository is not None:
+                clinic = await self.get_admin_clinic(admin_telegram_id)
+                await self.client_clinic_repository.link_client_to_clinic(client.ID, clinic.clinic_id)
             return client
 
         if self.client_management:
-            return await self.client_management.create_client(
+            new_client = await self.client_management.create_client(
                 admin_telegram_id,
                 {"full_name": full_name, "phone": phone}
             )
+            if self.client_clinic_repository is not None:
+                clinic = await self.get_admin_clinic(admin_telegram_id)
+                await self.client_clinic_repository.link_client_to_clinic(new_client.ID, clinic.clinic_id)
+            return new_client
         else:
             # Fallback: inline creation if ClientManagement not injected
             # This shouldn't happen in production
@@ -224,6 +237,9 @@ class AppointmentManagement:
             )
 
             await self.user_repository.create_user(new_client)
+
+            if self.client_clinic_repository is not None:
+                await self.client_clinic_repository.link_client_to_clinic(new_client.ID, clinic.clinic_id)
 
             return new_client
 

@@ -35,11 +35,15 @@ from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 
 def create_admin_appointment_creation_router(
-    appointment_repo, user_repo, staff_repo, clinic_repo, client_management=None, notification_service=None, scheduler=None
+    appointment_repo, user_repo, staff_repo, clinic_repo, client_management=None, notification_service=None,
+    scheduler=None, client_clinic_repo=None,
 ):
     router = Router()
 
-    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo, client_management)
+    appt_mng = AppointmentManagement(
+        appointment_repo, user_repo, staff_repo, clinic_repo, client_management,
+        client_clinic_repository=client_clinic_repo,
+    )
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))

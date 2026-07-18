@@ -34,6 +34,7 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.staff_repository import StaffRepository
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
@@ -52,11 +53,13 @@ async def main():
     appointment_repo = AppointmentRepository(connection)
     clinic_repo = ClinicRepository(connection)
     staff_repo = StaffRepository(connection)
+    client_clinic_repo = ClientClinicRepository(connection)
 
     await user_repo.init()
     await appointment_repo.init()
     await clinic_repo.init()
     await staff_repo.init()
+    await client_clinic_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["appointment_repo"] = appointment_repo
@@ -72,7 +75,10 @@ async def main():
 
     # Create services
     client_management_service = ClientManagement(user_repo, staff_repo, clinic_repo)
-    appointment_management_service = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    appointment_management_service = AppointmentManagement(
+        appointment_repo, user_repo, staff_repo, clinic_repo,
+        client_clinic_repository=client_clinic_repo,
+    )
     notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     client_notification_service = ClientNotificationService(bot, user_repo)
     appointment_pagination_service = AppointmentPaginationService(appointment_repo)
@@ -120,7 +126,8 @@ async def main():
     #record handlers
     dp.include_router(create_admin_record_router())
     dp.include_router(create_admin_appointment_creation_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service, appointment_scheduler
+        appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service,
+        appointment_scheduler, client_clinic_repo,
     ))
     dp.include_router(create_admin_appointment_browser_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service

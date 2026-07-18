@@ -74,7 +74,7 @@ class UserRepository:
 
     async def create_user(self, user: User) -> None:
         try:
-            await self.connection.execute(
+            cursor = await self.connection.execute(
                 """
                 INSERT INTO users(
                     telegram_user_id,
@@ -96,6 +96,7 @@ class UserRepository:
                 )
             )
             await self.connection.commit()
+            user.ID = cursor.lastrowid
 
         except aiosqlite.IntegrityError:
             raise UserAlreadyExistsError()
