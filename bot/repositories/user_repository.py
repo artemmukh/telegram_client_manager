@@ -132,6 +132,27 @@ class UserRepository:
 
         return [self._row_to_user(row) for row in rows]
 
+    async def get_clients_by_name_in_clinic(self, full_name: str, clinic_id: int) -> list[User]:
+        parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
+        conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        sql = USER_SELECT + f"""
+        WHERE u.role = 'client'
+        AND ({conditions})
+        AND u.clinic_id = ?
+        ORDER BY u.full_name, u.id
+        """
+        params.append(clinic_id)
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+
+        return [self._row_to_user(row) for row in rows]
+
     async def get_clients_by_exact_name(self, full_name: str, clinic_id: int) -> list[User]:
         cursor = await self.connection.execute(
             USER_SELECT + """
@@ -153,6 +174,17 @@ class UserRepository:
             AND u.phone = ?
             """,
             (phone,)
+        )
+        return self._row_to_user(await cursor.fetchone())
+
+    async def get_client_by_phone_in_clinic(self, phone: str, clinic_id: int) -> User | None:
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.phone = ?
+            AND u.clinic_id = ?
+            """,
+            (phone, clinic_id)
         )
         return self._row_to_user(await cursor.fetchone())
 
@@ -325,6 +357,32 @@ class UserRepository:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def get_clients_page_in_clinic(
+        self, clinic_id: int, page: int, per_page: int = 10
+    ) -> list[User]:
+        """Получить страницу клиентов клиники"""
+        offset = (page - 1) * per_page
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.clinic_id = ?
+            ORDER BY u.full_name, u.id
+            LIMIT ? OFFSET ?
+            """,
+            (clinic_id, per_page, offset)
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_user(row) for row in rows]
+
+    async def count_clients_in_clinic(self, clinic_id: int) -> int:
+        """Получить общее количество клиентов клиники"""
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM users WHERE role = 'client' AND clinic_id = ?",
+            (clinic_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
     async def get_clients_by_name_page(
         self, full_name: str, page: int, per_page: int = 10
     ) -> list[User]:
@@ -360,6 +418,48 @@ class UserRepository:
         params = [f"%{part}%" for part in parts]
 
         sql = f"SELECT COUNT(*) FROM users WHERE role = 'client' AND ({conditions})"
+        cursor = await self.connection.execute(sql, params)
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_clients_by_name_page_in_clinic(
+        self, full_name: str, clinic_id: int, page: int, per_page: int = 10
+    ) -> list[User]:
+        """Получить страницу результатов поиска по имени в пределах клиники"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return []
+
+        conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        offset = (page - 1) * per_page
+
+        sql = USER_SELECT + f"""
+        WHERE u.role = 'client'
+        AND ({conditions})
+        AND u.clinic_id = ?
+        ORDER BY u.full_name, u.id
+        LIMIT ? OFFSET ?
+        """
+        params.append(clinic_id)
+        params.extend([per_page, offset])
+
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_user(row) for row in rows]
+
+    async def count_clients_by_name_in_clinic(self, full_name: str, clinic_id: int) -> int:
+        """Получить количество результатов поиска по имени в пределах клиники"""
+        parts = full_name.strip().title().split()
+        if not parts:
+            return 0
+
+        conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
+        params = [f"%{part}%" for part in parts]
+
+        sql = f"SELECT COUNT(*) FROM users WHERE role = 'client' AND ({conditions}) AND clinic_id = ?"
+        params.append(clinic_id)
         cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()
         return row[0] if row else 0

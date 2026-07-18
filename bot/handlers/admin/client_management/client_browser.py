@@ -149,7 +149,12 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
     @router.callback_query(F.data == "cl_search_all")
     async def search_all(callback_query: CallbackQuery, state: FSMContext):
         await state.clear()
-        await render_list(callback_query, state, mode="list", page=1)
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        await render_list(callback_query, state, mode="list", page=1, clinic_id=clinic.clinic_id)
 
     # --- Resolve the search query and show results ---
 
@@ -158,7 +163,13 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         data = await state.get_data()
 
         try:
-            found = await cl_mng.search_client(data)
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        try:
+            found = await cl_mng.search_client(data, clinic.clinic_id)
         except (InvalidPhoneError, InvalidFullNameError, UserNotFoundError) as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -174,13 +185,20 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
             return
 
         await state.update_data(search_data=data)
-        await render_list(callback_query, state, mode="search", page=1)
+        await render_list(callback_query, state, mode="search", page=1, clinic_id=clinic.clinic_id)
 
     # --- Pagination ---
 
     @router.callback_query(ClientPageCB.filter())
     async def paginate(callback_query: CallbackQuery, callback_data: ClientPageCB, state: FSMContext):
-        await render_list(callback_query, state, mode=callback_data.mode, page=callback_data.page)
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+        await render_list(
+            callback_query, state, mode=callback_data.mode, page=callback_data.page, clinic_id=clinic.clinic_id,
+        )
 
     # --- Open a client's card ---
 
@@ -264,9 +282,16 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
             )
             return
 
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
         await render_list(
             callback_query, state,
-            mode=callback_data.mode, page=callback_data.page, prefix="✅ Клиент удалён.\n\n",
+            mode=callback_data.mode, page=callback_data.page, clinic_id=clinic.clinic_id,
+            prefix="✅ Клиент удалён.\n\n",
         )
 
     @router.callback_query(ClientActionCB.filter(F.action == "cancel_edit"))
@@ -389,7 +414,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
     # --- Shared renderers ---
 
     async def render_list(
-        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, prefix: str = "",
+        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, clinic_id: int, prefix: str = "",
     ) -> None:
         try:
             search_data = None
@@ -397,7 +422,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
                 data = await state.get_data()
                 search_data = data.get("search_data") or {"full_name": data.get("full_name", "")}
 
-            result = await pagination_service.paginate_clients(mode, page, search_data)
+            result = await pagination_service.paginate_clients(mode, page, clinic_id, search_data)
 
             title = "📋 Список всех клиентов" if mode == "list" else "🔍 Результаты поиска"
             text = f"{prefix}{title} ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"

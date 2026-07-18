@@ -67,14 +67,14 @@ class ClientManagement:
     async def is_phone_taken(self, phone: str) -> bool:
         return await self.user_repository.phone_exists(phone)
 
-    async def search_client(self, data) -> User | list[User]:
+    async def search_client(self, data: dict, clinic_id: int) -> User | list[User]:
         phone = data.get("phone")
         full_name = data.get("full_name")
 
         if phone:
             phone = normalize_phone(phone.strip())
 
-            user = await self.user_repository.get_client_by_phone(phone)
+            user = await self.user_repository.get_client_by_phone_in_clinic(phone, clinic_id)
 
             if user is None:
                 raise UserNotFoundError("Клиент не был найден.")
@@ -84,7 +84,7 @@ class ClientManagement:
         if full_name:
             full_name = full_name.strip()
 
-            users = await self.user_repository.get_clients_by_name(full_name)
+            users = await self.user_repository.get_clients_by_name_in_clinic(full_name, clinic_id)
 
             if not users:
                 raise UserNotFoundError("Клиент не был найден.")

@@ -228,7 +228,7 @@ def create_admin_appointment_browser_router(
         clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
 
         if data.get("phone"):
-            client = await appt_mng.find_client_by_phone(data["phone"])
+            client = await appt_mng.find_client_by_phone(data["phone"], clinic_id)
             if client is None:
                 await callback_query.answer("Клиент не был найден.", show_alert=True)
                 return

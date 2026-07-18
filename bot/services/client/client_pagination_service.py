@@ -26,6 +26,7 @@ class ClientPaginationService:
         self,
         mode: str,
         page: int,
+        clinic_id: int,
         search_data: dict = None
     ) -> PaginationResult:
         """
@@ -34,21 +35,22 @@ class ClientPaginationService:
         Args:
             mode: 'list' - все клиенты, 'search' - результаты поиска
             page: номер страницы
+            clinic_id: клиника, к которой скоупится выборка
             search_data: dict с 'full_name' для mode='search'
 
         Returns:
             PaginationResult с информацией о странице
         """
         if mode == "list":
-            total_count = await self.user_repo.count_all_clients()
-            items = await self.user_repo.get_clients_page(page, CLIENTS_PER_PAGE)
+            total_count = await self.user_repo.count_clients_in_clinic(clinic_id)
+            items = await self.user_repo.get_clients_page_in_clinic(clinic_id, page, CLIENTS_PER_PAGE)
         elif mode == "search":
             if not search_data:
                 search_data = {}
             full_name = search_data.get("full_name", "")
-            total_count = await self.user_repo.count_clients_by_name(full_name)
-            items = await self.user_repo.get_clients_by_name_page(
-                full_name, page, CLIENTS_PER_PAGE
+            total_count = await self.user_repo.count_clients_by_name_in_clinic(full_name, clinic_id)
+            items = await self.user_repo.get_clients_by_name_page_in_clinic(
+                full_name, clinic_id, page, CLIENTS_PER_PAGE
             )
         else:
             raise PaginationError(f"Неизвестный режим пагинации: {mode}")

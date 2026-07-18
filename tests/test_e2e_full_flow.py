@@ -239,14 +239,14 @@ async def test_admin_client_management_full_lifecycle(e2e):
     assert client.ID is not None
 
     # Search: by phone and by (partial) full name.
-    by_phone = await e2e.client_management.search_client({"phone": phone})
+    by_phone = await e2e.client_management.search_client({"phone": phone}, e2e.admin.clinic_id)
     assert [u.ID for u in by_phone] == [client.ID]
 
-    by_name = await e2e.client_management.search_client({"full_name": "Ахмедов"})
+    by_name = await e2e.client_management.search_client({"full_name": "Ахмедов"}, e2e.admin.clinic_id)
     assert client.ID in {u.ID for u in by_name}
 
     # Visible in the client browser's paginated listing.
-    listed = await e2e.client_pagination.paginate_clients("list", page=1)
+    listed = await e2e.client_pagination.paginate_clients("list", page=1, clinic_id=e2e.admin.clinic_id)
     assert client.ID in {u.ID for u in listed.items}
 
     # Edit: phone.
@@ -280,7 +280,7 @@ async def test_admin_client_management_full_lifecycle(e2e):
     assert await e2e.client_management.delete_client(client.ID) is True
     assert await e2e.client_management.get_client_by_id(client.ID) is None
 
-    listed_after_delete = await e2e.client_pagination.paginate_clients("list", page=1)
+    listed_after_delete = await e2e.client_pagination.paginate_clients("list", page=1, clinic_id=e2e.admin.clinic_id)
     assert client.ID not in {u.ID for u in listed_after_delete.items}
 
 

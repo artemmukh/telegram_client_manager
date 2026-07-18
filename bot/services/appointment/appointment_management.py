@@ -172,10 +172,17 @@ class AppointmentManagement:
             self.staff_repository, self.clinic_repository, doctor_telegram_id
         )
 
-    async def find_client_by_phone(self, phone: str) -> User | None:
-        """Find existing client by phone. Returns None if not found."""
+    async def find_client_by_phone(self, phone: str, clinic_id: int | None = None) -> User | None:
+        """Find existing client by phone. Returns None if not found.
+
+        When clinic_id is given, the lookup is scoped to that clinic (admin client-browser
+        search). When omitted, it falls back to the global lookup used by the appointment
+        creation flow, which must match the (intentionally unscoped) check_or_create_client
+        precheck it precedes."""
         phone = normalize_phone(phone.strip())
-        return await self.user_repository.get_client_by_phone(phone)
+        if clinic_id is None:
+            return await self.user_repository.get_client_by_phone(phone)
+        return await self.user_repository.get_client_by_phone_in_clinic(phone, clinic_id)
 
     async def check_or_create_client(
         self,
@@ -219,47 +226,6 @@ class AppointmentManagement:
             await self.user_repository.create_user(new_client)
 
             return new_client
-
-    async def search_appointments(self, data: dict) -> list[Appointment]:
-        phone = data.get("phone")
-        full_name = data.get("full_name")
-
-        if phone:
-            phone = normalize_phone(phone.strip())
-
-            client = await self.user_repository.get_client_by_phone(phone)
-            if client is None:
-                raise UserNotFoundError("Клиент не был найден.")
-
-            appointments = await self.appointment_repository.get_appointments_by_client_id(
-                client.ID, client.clinic_id
-            )
-            if not appointments:
-                raise AppointmentNotFoundError("У клиента нет записей.")
-
-            return appointments
-
-        if full_name:
-            full_name = full_name.strip()
-
-            clients = await self.user_repository.get_clients_by_name(full_name)
-            if not clients:
-                raise UserNotFoundError("Клиент не был найден.")
-
-            client_ids = [client.ID for client in clients]
-            appointments = await self.appointment_repository.get_appointments_by_client_ids(
-                client_ids, clients[0].clinic_id
-            )
-
-            if not appointments:
-                raise AppointmentNotFoundError("У найденных клиентов нет записей.")
-
-            return appointments
-
-        raise AppointmentNotFoundError("Укажите телефон или фамилию для поиска.")
-
-    async def get_all_appointments(self) -> list[Appointment]:
-        return await self.appointment_repository.get_all_appointments()
 
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
         return await self.appointment_repository.get_appointment_by_id(appointment_id)

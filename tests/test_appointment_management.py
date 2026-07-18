@@ -88,6 +88,11 @@ class FakeUserRepo:
             return self.client
         return None
 
+    async def get_client_by_phone_in_clinic(self, phone, clinic_id):
+        if self.client and self.client.phone == phone and self.client.clinic_id == clinic_id:
+            return self.client
+        return None
+
     async def get_client_by_id(self, client_id):
         if self.client and self.client.ID == client_id:
             return self.client
@@ -851,31 +856,29 @@ async def test_ensure_pending_limit_ignores_admin_created_pending_appointment():
 
 
 @pytest.mark.asyncio
-async def test_search_appointments_returns_client_appointments():
+async def test_find_client_by_phone_without_clinic_id_uses_global_lookup():
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, clinic_id=1)
     service = AppointmentManagement(
-        FakeAppointmentRepository([_appointment()]),
-        FakeUserRepo(_client()),
-        FakeStaffRepo(None),
-        _clinic_repo(),
+        FakeAppointmentRepository([]), FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo(),
     )
 
-    appointments = await service.search_appointments({"phone": "+998901234567"})
+    found = await service.find_client_by_phone("+998901234567")
 
-    assert len(appointments) == 1
-    assert appointments[0].id == 1
+    assert found is client
 
 
 @pytest.mark.asyncio
-async def test_search_appointments_raises_when_empty():
+async def test_find_client_by_phone_with_clinic_id_excludes_other_clinics():
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, clinic_id=1)
     service = AppointmentManagement(
-        FakeAppointmentRepository([]),
-        FakeUserRepo(_client()),
-        FakeStaffRepo(None),
-        _clinic_repo(),
+        FakeAppointmentRepository([]), FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo(),
     )
 
-    with pytest.raises(AppointmentNotFoundError):
-        await service.search_appointments({"phone": "+998901234567"})
+    found_same_clinic = await service.find_client_by_phone("+998901234567", clinic_id=1)
+    found_other_clinic = await service.find_client_by_phone("+998901234567", clinic_id=2)
+
+    assert found_same_clinic is client
+    assert found_other_clinic is None
 
 
 @pytest.mark.asyncio

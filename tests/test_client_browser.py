@@ -113,22 +113,23 @@ async def test_search_paginate_update_delete_flow_composes():
         user_repo = UserRepository(connection)
         await user_repo.init()
 
+        clinic_id = 1
         await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT)
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=clinic_id)
         )
         await user_repo.create_user(
-            User(full_name="Иванов Пётр", phone="+998902222222", role=Role.CLIENT)
+            User(full_name="Иванов Пётр", phone="+998902222222", role=Role.CLIENT, clinic_id=clinic_id)
         )
 
         cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
         pagination = ClientPaginationService(user_repo)
 
         # Search by name (fuzzy, multiple matches) - same mechanism the browser reuses.
-        found = await cl_mng.search_client({"full_name": "Иванов"})
+        found = await cl_mng.search_client({"full_name": "Иванов"}, clinic_id)
         assert len(found) == 2
 
         # Pagination over the same search - what the list screen renders.
-        result = await pagination.paginate_clients("search", 1, {"full_name": "Иванов"})
+        result = await pagination.paginate_clients("search", 1, clinic_id, {"full_name": "Иванов"})
         assert result.total_count == 2
         assert len(result.items) == 2
 
@@ -139,19 +140,96 @@ async def test_search_paginate_update_delete_flow_composes():
         assert updated.full_name == "Иванов Иван-Обновлённый"
 
         # Re-render the same page - updated name must be reflected.
-        result = await pagination.paginate_clients("search", 1, {"full_name": "Иванов"})
+        result = await pagination.paginate_clients("search", 1, clinic_id, {"full_name": "Иванов"})
         names = {u.ID: u.full_name for u in result.items}
         assert names[target_id] == "Иванов Иван-Обновлённый"
 
         # Delete - the card's "Удалить" action after confirmation.
         await cl_mng.delete_client(target_id)
 
-        result = await pagination.paginate_clients("search", 1, {"full_name": "Иванов"})
+        result = await pagination.paginate_clients("search", 1, clinic_id, {"full_name": "Иванов"})
         assert result.total_count == 1
         assert all(u.ID != target_id for u in result.items)
 
         with pytest.raises(UserNotFoundError):
-            await cl_mng.search_client({"phone": "+998901111111"})
+            await cl_mng.search_client({"phone": "+998901111111"}, clinic_id)
+    finally:
+        await connection.close()
+
+
+# --- Client search/list scoped to the acting admin's own clinic ---
+
+@pytest.mark.asyncio
+async def test_search_client_by_name_excludes_clients_from_other_clinics():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await ClinicRepository(connection).init()
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
+        )
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998902222222", role=Role.CLIENT, clinic_id=2)
+        )
+
+        cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
+
+        found = await cl_mng.search_client({"full_name": "Иванов"}, 1)
+
+        assert [u.phone for u in found] == ["+998901111111"]
+
+        with pytest.raises(UserNotFoundError):
+            await cl_mng.search_client({"full_name": "Иванов"}, 3)
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_search_client_by_phone_excludes_clients_from_other_clinics():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await ClinicRepository(connection).init()
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
+        )
+
+        cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
+
+        found = await cl_mng.search_client({"phone": "+998901111111"}, 1)
+        assert [u.phone for u in found] == ["+998901111111"]
+
+        with pytest.raises(UserNotFoundError):
+            await cl_mng.search_client({"phone": "+998901111111"}, 2)
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_paginate_clients_list_mode_excludes_other_clinics():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await ClinicRepository(connection).init()
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
+        )
+        await user_repo.create_user(
+            User(full_name="Петров Петр", phone="+998902222222", role=Role.CLIENT, clinic_id=2)
+        )
+
+        pagination = ClientPaginationService(user_repo)
+
+        result = await pagination.paginate_clients("list", 1, 1)
+
+        assert result.total_count == 1
+        assert [u.phone for u in result.items] == ["+998901111111"]
     finally:
         await connection.close()
 

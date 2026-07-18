@@ -319,13 +319,6 @@ class AppointmentRepository:
         )
         return await cursor.fetchone() is not None
 
-    async def get_all_appointments(self) -> list[Appointment]:
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "\nORDER BY a.created_at DESC"
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_appointment(row) for row in rows]
-
     async def count_appointments(self, clinic_id: int, doctor_id: int | None = None) -> int:
         conditions = ["clinic_id = ?"]
         params = [clinic_id]
