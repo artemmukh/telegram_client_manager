@@ -54,10 +54,10 @@ from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 logger = logging.getLogger(__name__)
 
 
-def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
+def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appointment_repo=None):
     router = Router()
 
-    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo)
+    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo, appointment_repo)
     pagination_service = ClientPaginationService(user_repo)
 
     router.message.filter(RoleFilter("admin"))
@@ -226,10 +226,16 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo):
             await callback_query.answer("Клиент не найден.", show_alert=True)
             return
 
+        appointments_count = await cl_mng.count_client_appointments(user.ID, user.clinic_id)
+
+        text = f"⚠️ Удалить {user.full_name} безвозвратно?"
+        if appointments_count > 0:
+            text += f"\n\nБудут также удалены все его записи на приём ({appointments_count})."
+
         await state.set_state(ClientBrowserStates.confirm_delete)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            f"⚠️ Удалить {user.full_name} безвозвратно?",
+            text,
             reply_markup=client_delete_confirm_kb(
                 callback_data.client_id, callback_data.mode, callback_data.page,
             ),

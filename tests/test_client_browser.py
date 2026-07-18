@@ -1,12 +1,16 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import aiosqlite
 import pytest
 
 from bot.exceptions.user_exceptions import UserNotFoundError
+from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
 from bot.keyboards.admin.client_management_kb.client_browser_cb import (
     ClientActionCB,
     ClientCardCB,
     ClientPageCB,
 )
+from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
 from bot.models.user import User
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
@@ -150,3 +154,85 @@ async def test_search_paginate_update_delete_flow_composes():
             await cl_mng.search_client({"phone": "+998901111111"})
     finally:
         await connection.close()
+
+
+# --- client_card_kb: delete button removed ---
+
+def test_client_card_kb_has_no_delete_button():
+    markup = client_card_kb(client_id=1, mode="list", page=1)
+
+    all_buttons = [button for row in markup.inline_keyboard for button in row]
+    assert not any("delete" in (button.callback_data or "") for button in all_buttons)
+    assert not any("Удалить" in button.text for button in all_buttons)
+
+
+def test_client_card_kb_adjust_layout_has_two_rows_of_buttons():
+    markup = client_card_kb(client_id=1, mode="list", page=1)
+
+    row_lengths = [len(row) for row in markup.inline_keyboard]
+    assert row_lengths == [2, 1]
+
+
+# --- start_delete: appointment-count warning ---
+
+ADMIN_TELEGRAM_ID = 999
+
+
+class FakeUserRepoForDelete:
+    def __init__(self, client):
+        self.client = client
+
+    async def get_client_by_id(self, user_id):
+        return self.client if self.client and self.client.ID == user_id else None
+
+
+class FakeAppointmentRepoForDelete:
+    def __init__(self, count):
+        self.count = count
+
+    async def count_appointments_by_client_id(self, client_id, clinic_id):
+        return self.count
+
+
+def _find_handler(router, name):
+    for handler in router.callback_query.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback
+    raise AssertionError(f"handler {name} not found")
+
+
+def _callback_query():
+    callback_query = MagicMock()
+    callback_query.from_user.id = ADMIN_TELEGRAM_ID
+    callback_query.answer = AsyncMock()
+    callback_query.message.edit_text = AsyncMock()
+    return callback_query
+
+
+async def _run_start_delete(appointments_count):
+    client = User(ID=1, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+    user_repo = FakeUserRepoForDelete(client)
+    appointment_repo = FakeAppointmentRepoForDelete(appointments_count)
+    router = create_admin_client_browser_router(user_repo, FakeStaffRepo(), FakeClinicRepo(), appointment_repo)
+    start_delete = _find_handler(router, "start_delete")
+
+    callback_data = ClientActionCB(action="delete", client_id=1, mode="list", page=1)
+    callback_query = _callback_query()
+    await start_delete(callback_query, callback_data, AsyncMock())
+
+    return callback_query.message.edit_text.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_start_delete_warning_omits_count_when_no_appointments():
+    text = await _run_start_delete(0)
+
+    assert "записи на приём" not in text
+
+
+@pytest.mark.asyncio
+async def test_start_delete_warning_includes_count_when_appointments_exist():
+    text = await _run_start_delete(3)
+
+    assert "записи на приём" in text
+    assert "3" in text

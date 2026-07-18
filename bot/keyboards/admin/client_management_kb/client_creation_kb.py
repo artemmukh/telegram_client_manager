@@ -25,3 +25,16 @@ def client_creation_kb():
     builder.adjust(1, 2, 1)
 
     return builder.as_markup()
+
+
+def client_creation_duplicate_name_kb():
+
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="✅ Да", callback_data="client_creation_duplicate_confirm")
+
+    builder.button(text="❌ Нет", callback_data="client_creation_duplicate_cancel")
+
+    builder.adjust(2)
+
+    return builder.as_markup()

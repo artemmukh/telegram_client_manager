@@ -114,10 +114,6 @@ def client_card_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup
         text="📞 Изменить телефон",
         callback_data=ClientActionCB(action="edit_phone", client_id=client_id, mode=mode, page=page).pack(),
     )
-    builder.button(
-        text="🗑 Удалить",
-        callback_data=ClientActionCB(action="delete", client_id=client_id, mode=mode, page=page).pack(),
-    )
 
     if mode == "direct":
         # Карточка открыта напрямую (поиск по номеру всегда даёт 0 или 1
@@ -129,7 +125,7 @@ def client_card_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup
             callback_data=ClientPageCB(mode=mode, page=page).pack(),
         )
 
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 

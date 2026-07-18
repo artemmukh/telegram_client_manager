@@ -111,6 +111,43 @@ async def test_user_repository_searches_users_by_name(user_repo):
 
 
 @pytest.mark.asyncio
+async def test_get_clients_by_exact_name_matches_exact_name_within_clinic():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+
+        full_name = "Иванов Иван"
+        await user_repo.create_user(
+            User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        )
+        await user_repo.create_user(
+            User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=1)
+        )
+        # Same name, different clinic - must not be returned.
+        await user_repo.create_user(
+            User(full_name=full_name, phone="+998901234569", role=Role.CLIENT, clinic_id=2)
+        )
+        # Partial match (LIKE-style substring) must not be returned by exact match.
+        await user_repo.create_user(
+            User(full_name="Иванов Иван Иванович", phone="+998901234570", role=Role.CLIENT, clinic_id=1)
+        )
+
+        matches = await user_repo.get_clients_by_exact_name(full_name, 1)
+
+        assert [user.phone for user in matches] == ["+998901234567", "+998901234568"]
+        assert await user_repo.get_clients_by_exact_name(full_name, 2) == [
+            (await user_repo.get_client_by_phone("+998901234569"))
+        ]
+        assert await user_repo.get_clients_by_exact_name("Петров Петр", 1) == []
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_user_repository_enforces_unique_phone(user_repo):
     await user_repo.create_user(
         User(

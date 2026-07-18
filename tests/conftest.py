@@ -14,11 +14,13 @@ class FakeUserRepository:
         clients_by_id=None,
         users_by_id=None,
         staff_by_clinic_id=None,
+        clients_by_exact_name=None,
     ):
         self.existing_phones = set(existing_phones or [])
         self.existing_telegram_ids = set(existing_telegram_ids or [])
         self.clients_by_phone = dict(clients_by_phone or {})
         self.clients_by_id = dict(clients_by_id or {})
+        self.clients_by_exact_name = dict(clients_by_exact_name or {})
         # get_user_by_id() is role-agnostic (clients AND admins), unlike
         # get_client_by_id(). Seed it from clients_by_id so existing tests
         # that only populate clients_by_id keep working, and allow callers
@@ -48,6 +50,9 @@ class FakeUserRepository:
 
     async def get_client_by_id(self, user_id):
         return self.clients_by_id.get(user_id)
+
+    async def get_clients_by_exact_name(self, full_name, clinic_id):
+        return self.clients_by_exact_name.get((full_name, clinic_id), [])
 
     async def get_user_by_id(self, user_id):
         return self.users_by_id.get(user_id)

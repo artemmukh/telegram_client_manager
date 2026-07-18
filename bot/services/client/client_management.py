@@ -2,6 +2,7 @@ from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError, ValidationError
 from bot.models.clinic import Clinic
 from bot.models.user import User
+from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
@@ -9,7 +10,7 @@ from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
+from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 
 class ClientManagement:
@@ -18,10 +19,12 @@ class ClientManagement:
         user_repository: UserRepository,
         staff_repository: StaffRepository,
         clinic_repository: ClinicRepository,
+        appointment_repository: AppointmentRepository | None = None,
     ):
         self.user_repository = user_repository
         self.staff_repository = staff_repository
         self.clinic_repository = clinic_repository
+        self.appointment_repository = appointment_repository
 
     async def create_client(self, admin_telegram_id: int, data: dict) -> User:
 
@@ -30,7 +33,7 @@ class ClientManagement:
         # but we re-validate to keep the service safe when called from elsewhere.
         phone = data['phone'].strip()
 
-        validate_full_name(full_name, FULL_NAME_PATTERN)
+        validate_full_name(full_name, SEARCH_NAME_PATTERN)
         validate_phone(phone)
 
         phone = normalize_phone(phone)
@@ -90,6 +93,10 @@ class ClientManagement:
 
         raise UserNotFoundError("Клиент не был найден.")
 
+    async def find_clients_by_exact_name(self, full_name: str, clinic_id: int) -> list[User]:
+        full_name = full_name.strip()
+        return await self.user_repository.get_clients_by_exact_name(full_name, clinic_id)
+
     async def delete_client(self, user_id: int) -> bool:
 
         if user_id:
@@ -97,6 +104,11 @@ class ClientManagement:
             return True
 
         raise BotException("Ошибка удаления клиента")
+
+    async def count_client_appointments(self, user_id: int, clinic_id: int) -> int:
+        if self.appointment_repository is None:
+            raise BotException("Проверка количества записей недоступна")
+        return await self.appointment_repository.count_appointments_by_client_id(user_id, clinic_id)
 
     async def update_client_name(self, user_id: int, new_full_name: str) -> User:
         new_full_name = new_full_name.strip()

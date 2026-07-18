@@ -1,5 +1,6 @@
 import pytest
 
+from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import (
     InvalidFullNameError,
     PhoneAlreadyExistsError,
@@ -235,3 +236,61 @@ async def test_approve_name_change_returns_none_when_already_resolved(fake_user_
     result = await service.approve_name_change(1)
 
     assert result is None
+
+
+# --- find_clients_by_exact_name ---
+
+@pytest.mark.asyncio
+async def test_find_clients_by_exact_name_returns_matches(fake_user_repo_factory):
+    existing = _existing_client()
+    repo = fake_user_repo_factory(clients_by_exact_name={("Иванов Иван", 1): [existing]})
+    service = _service(repo)
+
+    result = await service.find_clients_by_exact_name("  Иванов Иван  ", 1)
+
+    assert result == [existing]
+
+
+@pytest.mark.asyncio
+async def test_find_clients_by_exact_name_returns_empty_list_without_raising(fake_user_repo):
+    service = _service(fake_user_repo)
+
+    result = await service.find_clients_by_exact_name("Иванов Иван", 1)
+
+    assert result == []
+
+
+# --- count_client_appointments ---
+
+class FakeAppointmentRepo:
+    def __init__(self, count=0):
+        self.count = count
+        self.calls = []
+
+    async def count_appointments_by_client_id(self, client_id, clinic_id):
+        self.calls.append((client_id, clinic_id))
+        return self.count
+
+
+@pytest.mark.asyncio
+async def test_count_client_appointments_returns_repository_count(fake_user_repo):
+    appointment_repo = FakeAppointmentRepo(count=3)
+    service = ClientManagement(
+        fake_user_repo,
+        FakeStaffRepo(),
+        FakeClinicRepo(),
+        appointment_repo,
+    )
+
+    result = await service.count_client_appointments(1, 1)
+
+    assert result == 3
+    assert appointment_repo.calls == [(1, 1)]
+
+
+@pytest.mark.asyncio
+async def test_count_client_appointments_raises_when_repository_not_wired(fake_user_repo):
+    service = _service(fake_user_repo)
+
+    with pytest.raises(BotException):
+        await service.count_client_appointments(1, 1)

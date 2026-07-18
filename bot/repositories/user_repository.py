@@ -132,6 +132,20 @@ class UserRepository:
 
         return [self._row_to_user(row) for row in rows]
 
+    async def get_clients_by_exact_name(self, full_name: str, clinic_id: int) -> list[User]:
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.full_name = ?
+            AND u.clinic_id = ?
+            ORDER BY u.full_name, u.id
+            """,
+            (full_name, clinic_id)
+        )
+        rows = await cursor.fetchall()
+
+        return [self._row_to_user(row) for row in rows]
+
     async def get_client_by_phone(self, phone: str) -> User | None:
         cursor = await self.connection.execute(
             USER_SELECT + """

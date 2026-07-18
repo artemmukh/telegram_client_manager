@@ -45,6 +45,7 @@ async def show_success(
 
     text = build_client_text(title, kwargs)
 
+    await callback_query.answer('')
     await callback_query.message.edit_text(
         text=text, reply_markup=back_to_menu_kb()
     )

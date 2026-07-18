@@ -8,4 +8,5 @@ class ClientCreationStates(StatesGroup):
     confirm_create = State()
     edit_full_name = State()
     edit_phone = State()
+    confirm_duplicate_name = State()
 
