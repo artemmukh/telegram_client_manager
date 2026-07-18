@@ -163,9 +163,12 @@ def _appointment(appointment_id=1, client_id=7):
 async def test_create_appointment_resolves_clinic_and_client():
     appt_repo = FakeAppointmentRepository()
     admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    # telegram_user_id is set so this exercises the default PENDING path, not the
+    # "client has no Telegram account -> auto-confirm" branch (covered separately).
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
     service = AppointmentManagement(
         appt_repo,
-        FakeUserRepo(_client(), admin=admin),
+        FakeUserRepo(client, admin=admin),
         FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
         _clinic_repo(),
     )
@@ -182,6 +185,25 @@ async def test_create_appointment_resolves_clinic_and_client():
     assert appointment.clinic_name == "Зуб Мудрости"
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.created_by is CreatedBy.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_auto_confirms_client_without_telegram_account():
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    service = AppointmentManagement(
+        appt_repo,
+        FakeUserRepo(_client(), admin=admin),  # _client() has no telegram_user_id
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": _future_datetime(), "purpose": "Консультация"},
+    )
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
 
 
 @pytest.mark.asyncio
