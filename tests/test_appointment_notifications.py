@@ -1485,6 +1485,82 @@ async def test_notify_client_proposal_reminder_returns_false_when_user_not_found
 
 
 @pytest.mark.asyncio
+async def test_notify_admin_proposal_reminder_sends_to_given_telegram_id():
+    """notify_admin_proposal_reminder(telegram_id, appointment) sends directly to
+    whatever telegram_id it's called with -- it no longer resolves or gates on
+    appointment.created_by_telegram_id at all (that internal single-recipient
+    guard was removed as part of the resolve_notification_recipients fan-out)."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    await service.notify_admin_proposal_reminder(54321, appointment)
+
+    assert len(bot.sent_messages) == 1
+    msg = bot.sent_messages[0]
+    assert msg['chat_id'] == 54321
+    assert msg['text'] == "⏰ Клиент предложил другое время, ответ ещё не получен."
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_proposal_reminder_ignores_created_by_telegram_id():
+    """Proves the old internal guard is really gone: even when
+    created_by_telegram_id is set to a DIFFERENT value than the telegram_id the
+    method is called with, the message still goes to the passed-in telegram_id,
+    not to created_by_telegram_id."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.created_by_telegram_id = 11111
+
+    await service.notify_admin_proposal_reminder(54321, appointment)
+
+    assert len(bot.sent_messages) == 1
+    assert bot.sent_messages[0]['chat_id'] == 54321
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_proposal_reminder_replies_when_admin_message_id_set():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = 888
+
+    await service.notify_admin_proposal_reminder(54321, appointment)
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=888,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_admin_proposal_reminder_no_reply_parameters_when_admin_message_id_missing():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.admin_notification_message_id = None
+
+    await service.notify_admin_proposal_reminder(54321, appointment)
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] is None
+
+
+@pytest.mark.asyncio
 async def test_notify_client_proposal_reminder_returns_false_when_telegram_id_missing():
     bot = FakeBot()
     client = _client()

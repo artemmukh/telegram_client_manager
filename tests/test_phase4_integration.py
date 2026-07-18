@@ -265,8 +265,11 @@ async def test_completion_job_sends_followup_prompt_and_keeps_pending_status(
     appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
     """Test: Completion job asks the admin instead of auto-completing a PENDING appointment."""
-    sample_appointment.created_by_telegram_id = 54321
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
 
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
@@ -290,10 +293,13 @@ async def test_completion_job_sends_followup_prompt_and_keeps_confirmed_status(
         created_by=CreatedBy.ADMIN,
         status=AppointmentStatus.CONFIRMED,
         clinic_name="Test Clinic",
-        created_by_telegram_id=54321,
+        doctor_id=42,
     )
 
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
 
     await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
 
@@ -377,12 +383,15 @@ async def test_completion_job_skips_already_completed(
 
 @pytest.mark.asyncio
 async def test_completion_job_notifies_admin_not_client(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Completion job notifies the admin who created the appointment, never the client."""
-    sample_appointment.created_by_telegram_id = 54321
+    """Test: Completion job notifies the treating doctor, never the client."""
+    sample_appointment.doctor_id = 42
 
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
 
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
@@ -393,34 +402,50 @@ async def test_completion_job_notifies_admin_not_client(
 
 
 @pytest.mark.asyncio
-async def test_completion_job_skips_admin_notification_when_no_creator(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+async def test_completion_job_skips_admin_notification_when_no_recipients(
+    appointment_scheduler, mock_appointment_repo, mock_staff_repo, mock_notification_service, sample_appointment
 ):
-    """Test: Completion job does not attempt an admin notification when created_by_telegram_id is unset."""
-    sample_appointment.created_by_telegram_id = None
+    """Test: Completion job does not attempt an admin notification when
+    resolve_notification_recipients resolves to nobody -- no doctor_id set on
+    the appointment AND no clinic-scope staff for its clinic. created_by_telegram_id
+    no longer drives targeting at all, so it is deliberately left unset here."""
+    assert sample_appointment.doctor_id is None
+    mock_staff_repo.get_staff_by_clinic_id.return_value = []
 
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
     # Should not raise error
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
-    # Status must stay unchanged; no admin to notify since there's no creator
+    # Status must stay unchanged; no admin to notify since there are no resolvable recipients
     mock_appointment_repo.update_appointment_status.assert_not_called()
     mock_notification_service.notify_admin_completion.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_completion_job_swallows_admin_notification_failure(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_staff_repo,
+    mock_notification_service, sample_appointment,
 ):
-    """Test: A failed admin follow-up notification must not crash the job."""
-    sample_appointment.created_by_telegram_id = 54321
+    """Test: A failed admin follow-up notification must not crash the job.
+
+    The appointment must resolve to at least one recipient (here: the treating
+    doctor) so the notify_admin_completion side_effect actually fires inside the
+    per-recipient loop -- otherwise this test would pass vacuously without ever
+    exercising the exception-swallowing behavior it claims to cover.
+    """
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_staff_repo.get_staff_by_clinic_id.return_value = []
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
     mock_notification_service.notify_admin_completion.side_effect = Exception("boom")
 
     # Should not raise error
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
+    mock_notification_service.notify_admin_completion.assert_called_once_with(54321, sample_appointment)
     mock_appointment_repo.update_appointment_status.assert_not_called()
 
 
@@ -431,7 +456,10 @@ async def test_full_workflow_pending_to_completed(
     """Test: Full workflow - create → stay PENDING → 1h follow-up prompt sent, status untouched."""
     scheduler.start()
 
-    sample_appointment.created_by_telegram_id = 54321
+    sample_appointment.doctor_id = 42
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
 
     # 1. Create appointment (initially PENDING)
     await appointment_scheduler.schedule_appointment_completion(sample_appointment)

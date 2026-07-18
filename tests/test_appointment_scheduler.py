@@ -13,6 +13,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
+from bot.models.staff import Staff
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_jobs import (
@@ -47,6 +48,16 @@ def mock_user_repo():
 
 
 @pytest.fixture
+def mock_staff_repo():
+    """Mock StaffRepository. Defaults to no clinic-scope staff (empty list) so
+    resolve_notification_recipients falls back to doctor-only unless a test
+    explicitly configures get_staff_by_clinic_id."""
+    repo = AsyncMock()
+    repo.get_staff_by_clinic_id.return_value = []
+    return repo
+
+
+@pytest.fixture
 def mock_notification_service():
     """Mock AppointmentNotificationService."""
     service = AsyncMock()
@@ -57,11 +68,11 @@ def mock_notification_service():
 
 
 @pytest.fixture
-def mock_appointment_management(mock_appointment_repo, mock_user_repo):
+def mock_appointment_management(mock_appointment_repo, mock_user_repo, mock_staff_repo):
     """Real AppointmentManagement wrapping the mocked repositories, so that
     delegated repo calls remain observable on mock_appointment_repo/mock_user_repo."""
     return AppointmentManagement(
-        mock_appointment_repo, mock_user_repo, AsyncMock(), AsyncMock(),
+        mock_appointment_repo, mock_user_repo, mock_staff_repo, AsyncMock(),
     )
 
 
@@ -459,10 +470,14 @@ async def test_send_reminder_job_handles_notification_failure(
     appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
     """Test that reminder job handles client notification failure gracefully AND sends admin notification."""
-    # Setup appointment with admin telegram ID
-    sample_appointment.created_by_telegram_id = 12345
+    # Setup appointment with a treating doctor
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
     mock_user_repo.get_client_by_id.return_value = MagicMock(full_name="Test Client")
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN,
+        telegram_user_id=12345, reminder_24h=True, reminder_2h=True,
+    )
 
     # Client notification fails (exception)
     mock_notification_service.notify_client_reminder_without_buttons = AsyncMock(
@@ -895,10 +910,12 @@ async def test_fired_reminder_suppresses_client_when_only_admin_wants_24h_slot(
     DB at firing time): the CLIENT message must NOT be sent while the ADMIN
     message IS sent. The job is fired with the opposite notify_client/
     notify_admin kwargs to prove those frozen args no longer decide anything."""
-    sample_appointment.created_by_telegram_id = 12345
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(False, True)
-    mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, True)
+    admin = _admin_with_preferences(True, True)
+    admin.telegram_user_id = 12345
+    mock_user_repo.get_user_by_id.return_value = admin
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -927,7 +944,7 @@ async def test_fired_reminder_suppresses_client_when_only_admin_wants_24h_slot(
             mock_notification_service.notify_client_reminder_without_buttons.assert_not_called()
             mock_notification_service.notify_client_reminder_with_buttons.assert_not_called()
             mock_notification_service.notify_admin_upcoming_appointment.assert_called_once_with(
-                sample_appointment.created_by_telegram_id, sample_appointment, "Test Client",
+                12345, sample_appointment, "Test Client",
             )
 
 
@@ -935,15 +952,35 @@ async def test_fired_reminder_suppresses_client_when_only_admin_wants_24h_slot(
 async def test_fired_reminder_suppresses_admin_when_only_client_wants_2h_slot(
     appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
-    """Mirror case: admin reminder_2h=False, client reminder_2h=True (read
-    live from the DB at firing time). The ADMIN message must NOT be sent
-    while the CLIENT message IS sent. The job is fired with the opposite
-    notify_client/notify_admin kwargs to prove those frozen args no longer
-    decide anything."""
-    sample_appointment.created_by_telegram_id = 12345
+    """Mirror case: two resolved recipients (the treating doctor + a clinic-scope
+    admin), each with their OWN reminder_2h read live from the DB at firing time.
+    The doctor opted out (reminder_2h=False) and must NOT get a message; the
+    clinic-scope admin opted in (reminder_2h=True) and must. The appointment
+    deliberately has no doctor_id/clinic-scope staff resolved via the frozen
+    notify_client/notify_admin kwargs -- those are fired as the opposite of the
+    live preferences to prove the live DB read, not the frozen args, decides the
+    outcome. (Regression note: an earlier version of this test resolved zero
+    recipients at all -- doctor_id unset, no clinic-scope staff -- so the admin
+    loop body never ran and the assertion passed vacuously without exercising any
+    gating logic. This version resolves two real, independently-gated recipients.)"""
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
-    mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, False)
+
+    doctor = _admin_with_preferences(True, False)
+    doctor.telegram_user_id = 54321
+    clinic_admin = _admin_with_preferences(True, True)
+    clinic_admin.telegram_user_id = 99999
+
+    mock_user_repo.get_user_by_id.side_effect = lambda user_id: doctor if user_id == 42 else None
+    mock_user_repo.get_user_by_telegram_id.side_effect = (
+        lambda telegram_id: clinic_admin if telegram_id == 99999 else None
+    )
+
+    mock_staff_repo = AsyncMock()
+    mock_staff_repo.get_staff_by_clinic_id.return_value = [
+        Staff(telegram_user_id=99999, clinic_id=sample_appointment.clinic_id, visibility_scope="clinic"),
+    ]
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -959,10 +996,12 @@ async def test_fired_reminder_suppresses_admin_when_only_client_wants_2h_slot(
 
         with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
              patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.StaffRepository") as mock_staff_repo_class, \
              patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
 
             mock_repo_class.return_value = mock_appointment_repo
             mock_user_repo_class.return_value = mock_user_repo
+            mock_staff_repo_class.return_value = mock_staff_repo
             mock_notif_class.return_value = mock_notification_service
 
             await appointment_scheduler._send_reminder_job(
@@ -972,7 +1011,65 @@ async def test_fired_reminder_suppresses_admin_when_only_client_wants_2h_slot(
             mock_notification_service.notify_client_reminder_with_buttons.assert_called_once_with(
                 sample_appointment
             )
-            mock_notification_service.notify_admin_upcoming_appointment.assert_not_called()
+            mock_notification_service.notify_admin_upcoming_appointment.assert_called_once_with(
+                99999, sample_appointment, "Test Client",
+            )
+
+
+@pytest.mark.asyncio
+async def test_fired_reminder_gates_multiple_clinic_admins_independently(
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
+):
+    """Two clinic-scope admins (no treating doctor involved at all) each have
+    their own reminder_24h preference: only the one who wants it gets sent to,
+    the other is skipped, proving per-recipient gating scales beyond a single
+    doctor/admin pair."""
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
+
+    wants_admin = _admin_with_preferences(True, True)
+    wants_admin.telegram_user_id = 11111
+    opts_out_admin = _admin_with_preferences(False, True)
+    opts_out_admin.telegram_user_id = 22222
+
+    mock_user_repo.get_user_by_telegram_id.side_effect = {
+        11111: wants_admin,
+        22222: opts_out_admin,
+    }.get
+
+    mock_staff_repo = AsyncMock()
+    mock_staff_repo.get_staff_by_clinic_id.return_value = [
+        Staff(telegram_user_id=11111, clinic_id=sample_appointment.clinic_id, visibility_scope="clinic"),
+        Staff(telegram_user_id=22222, clinic_id=sample_appointment.clinic_id, visibility_scope="clinic"),
+    ]
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.StaffRepository") as mock_staff_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_staff_repo_class.return_value = mock_staff_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await appointment_scheduler._send_reminder_job(sample_appointment.id, hours_before=24)
+
+            mock_notification_service.notify_admin_upcoming_appointment.assert_called_once_with(
+                11111, sample_appointment, "Test Client",
+            )
 
 
 @pytest.mark.asyncio
@@ -983,10 +1080,12 @@ async def test_fired_reminder_sends_to_both_when_both_want_slot(
     time) -> both messages sent (existing behavior, must not regress). The
     job is fired with notify_client=False, notify_admin=False to prove the
     live DB read - not the frozen args - decides the outcome."""
-    sample_appointment.created_by_telegram_id = 12345
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
     mock_user_repo.get_client_by_id.return_value = _client_with_preferences(True, True)
-    mock_user_repo.get_user_by_telegram_id.return_value = _admin_with_preferences(True, True)
+    admin = _admin_with_preferences(True, True)
+    admin.telegram_user_id = 12345
+    mock_user_repo.get_user_by_id.return_value = admin
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -1016,7 +1115,7 @@ async def test_fired_reminder_sends_to_both_when_both_want_slot(
                 sample_appointment
             )
             mock_notification_service.notify_admin_upcoming_appointment.assert_called_once_with(
-                sample_appointment.created_by_telegram_id, sample_appointment, "Test Client",
+                12345, sample_appointment, "Test Client",
             )
 
 
@@ -1116,11 +1215,14 @@ async def test_cancel_completions_idempotent_no_error(
 
 @pytest.mark.asyncio
 async def test_mark_appointment_completed_job_sends_prompt_and_keeps_status_if_pending(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
     """Test that completion job sends the admin follow-up prompt without changing status if PENDING."""
-    sample_appointment.created_by_telegram_id = 54321
+    sample_appointment.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
 
     await appointment_scheduler._mark_appointment_completed_job(sample_appointment.id)
 
@@ -1132,7 +1234,7 @@ async def test_mark_appointment_completed_job_sends_prompt_and_keeps_status_if_p
 
 @pytest.mark.asyncio
 async def test_mark_appointment_completed_job_sends_prompt_and_keeps_status_if_confirmed(
-    appointment_scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+    appointment_scheduler, mock_appointment_repo, mock_user_repo, mock_notification_service, sample_appointment
 ):
     """Test that completion job sends the admin follow-up prompt without changing status if CONFIRMED."""
     confirmed_appointment = Appointment(
@@ -1144,9 +1246,12 @@ async def test_mark_appointment_completed_job_sends_prompt_and_keeps_status_if_c
         created_by=CreatedBy.ADMIN,
         status=AppointmentStatus.CONFIRMED,
         clinic_name="Test Clinic",
-        created_by_telegram_id=54321,
+        doctor_id=42,
     )
     mock_appointment_repo.get_appointment_by_id.return_value = confirmed_appointment
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
 
     await appointment_scheduler._mark_appointment_completed_job(confirmed_appointment.id)
 
@@ -2294,8 +2399,12 @@ async def test_send_proposal_reminder_job_dispatches_client_proposal_to_admin_re
     dispatches to the admin-facing reminder instead of the client-facing one --
     the recipient is always whichever side is NOT proposed_by."""
     proposal_reminder_request.proposed_by = CreatedBy.CLIENT
+    proposal_reminder_request.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
-    mock_notification_service.notify_admin_proposal_reminder = AsyncMock(return_value=True)
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
+    mock_notification_service.notify_admin_proposal_reminder = AsyncMock()
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -2321,7 +2430,7 @@ async def test_send_proposal_reminder_job_dispatches_client_proposal_to_admin_re
 
             mock_notification_service.notify_client_proposal_reminder.assert_not_called()
             mock_notification_service.notify_admin_proposal_reminder.assert_called_once_with(
-                proposal_reminder_request
+                54321, proposal_reminder_request
             )
 
 
@@ -2337,8 +2446,12 @@ async def test_send_proposal_reminder_job_dispatches_confirmed_client_reschedule
     status."""
     proposal_reminder_request.status = AppointmentStatus.CONFIRMED
     proposal_reminder_request.proposed_by = CreatedBy.CLIENT
+    proposal_reminder_request.doctor_id = 42
     mock_appointment_repo.get_appointment_by_id.return_value = proposal_reminder_request
-    mock_notification_service.notify_admin_proposal_reminder = AsyncMock(return_value=True)
+    mock_user_repo.get_user_by_id.return_value = User(
+        ID=42, full_name="Test Doctor", phone="+998907654321", role=Role.ADMIN, telegram_user_id=54321,
+    )
+    mock_notification_service.notify_admin_proposal_reminder = AsyncMock()
 
     with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
          patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
@@ -2365,7 +2478,7 @@ async def test_send_proposal_reminder_job_dispatches_confirmed_client_reschedule
             mock_notification_service.notify_client_proposal_reminder.assert_not_called()
             mock_notification_service.notify_client_appointment_reschedule_reminder.assert_not_called()
             mock_notification_service.notify_admin_proposal_reminder.assert_called_once_with(
-                proposal_reminder_request
+                54321, proposal_reminder_request
             )
 
 

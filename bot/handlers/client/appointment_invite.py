@@ -46,15 +46,20 @@ def create_client_appointment_invite_router(
             await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
             await callback_query.answer()
 
-            if notification_service and appointment.created_by_telegram_id:
+            if notification_service:
                 try:
-                    await notification_service.notify_admin_confirmation(
-                        appointment.created_by_telegram_id,
-                        appointment,
-                        client.full_name if client else "Неизвестный клиент",
-                    )
+                    recipients = await appointment_management_service.resolve_notification_recipients(appointment)
                 except Exception:
-                    pass  # Graceful fail если не получилось отправить
+                    recipients = []
+                for recipient in recipients:
+                    try:
+                        await notification_service.notify_admin_confirmation(
+                            recipient.telegram_user_id,
+                            appointment,
+                            client.full_name if client else "Неизвестный клиент",
+                        )
+                    except Exception:
+                        pass  # Graceful fail если не получилось отправить
         except AppointmentNotFoundError:
             await callback_query.answer("Запись не найдена", show_alert=True)
         except BotException as e:
@@ -98,15 +103,20 @@ def create_client_appointment_invite_router(
             await callback_query.message.edit_text("✅ Ваша запись отменена")
             await callback_query.answer()
 
-            if notification_service and appointment.created_by_telegram_id:
+            if notification_service:
                 try:
-                    await notification_service.notify_admin_cancellation(
-                        appointment.created_by_telegram_id,
-                        appointment,
-                        client.full_name if client else "Неизвестный клиент",
-                    )
+                    recipients = await appointment_management_service.resolve_notification_recipients(appointment)
                 except Exception:
-                    pass  # Graceful fail если не получилось отправить
+                    recipients = []
+                for recipient in recipients:
+                    try:
+                        await notification_service.notify_admin_cancellation(
+                            recipient.telegram_user_id,
+                            appointment,
+                            client.full_name if client else "Неизвестный клиент",
+                        )
+                    except Exception:
+                        pass  # Graceful fail если не получилось отправить
         except AppointmentNotFoundError:
             await callback_query.answer("Запись не найдена", show_alert=True)
         except BotException as e:

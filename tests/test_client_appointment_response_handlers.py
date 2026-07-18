@@ -254,6 +254,110 @@ async def test_handle_appointment_confirm_handler_does_not_notify_admin():
     notification_service.notify_admin_confirmation.assert_not_awaited()
 
 
+def _make_state_with_appointment_id(appointment_id=1):
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={"appointment_id": appointment_id})
+    state.clear = AsyncMock()
+    return state
+
+
+@pytest.mark.asyncio
+async def test_handle_cancel_confirmation_yes_notifies_sole_doctor_recipient():
+    """Regression/backward-compat case: resolve_notification_recipients resolves
+    to exactly one recipient (the treating doctor, who is also the appointment's
+    sole clinic-scope admin in the common solo-doctor setup) -- notify_admin_cancellation
+    must fire exactly once, to that one recipient."""
+    cancelled_appointment = _appointment()
+    cancelled_appointment.status = AppointmentStatus.CANCELLED
+    client = _client()
+    doctor = _admin()
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.cancel_appointment_by_client = AsyncMock(return_value=cancelled_appointment)
+    appointment_management_service.get_appointment_with_client_info = AsyncMock(
+        return_value=(cancelled_appointment, client)
+    )
+    appointment_management_service.resolve_notification_recipients = AsyncMock(return_value=[doctor])
+
+    notification_service = MagicMock()
+    notification_service.notify_admin_cancellation = AsyncMock()
+
+    appointment_scheduler = MagicMock()
+    for method_name in (
+        "cancel_appointment_reminders", "cancel_appointment_completions", "cancel_pending_expiry",
+        "cancel_proposal_reminder", "cancel_reschedule_expiry", "cancel_auto_confirm",
+    ):
+        setattr(appointment_scheduler, method_name, AsyncMock())
+
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+    )
+    handle_cancel_confirmation_yes = _get_handler_by_name(router, "handle_cancel_confirmation_yes")
+
+    callback_query = _make_callback_query("appt_cancel_confirm_yes")
+    state = _make_state_with_appointment_id(1)
+
+    await handle_cancel_confirmation_yes(callback_query, state)
+
+    notification_service.notify_admin_cancellation.assert_awaited_once_with(
+        doctor.telegram_user_id, cancelled_appointment, client.full_name,
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_cancel_confirmation_yes_notifies_remaining_recipients_after_one_fails():
+    """Per-recipient failure isolation: with two resolved recipients, the first
+    recipient's send raising must not prevent the second recipient in the loop
+    from being attempted -- each send is independently wrapped."""
+    cancelled_appointment = _appointment()
+    cancelled_appointment.status = AppointmentStatus.CANCELLED
+    client = _client()
+    doctor = _admin()
+    clinic_admin = User(
+        full_name="Админ Клиники", phone="+998901234569", role=Role.ADMIN, telegram_user_id=67890, ID=1000,
+    )
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.cancel_appointment_by_client = AsyncMock(return_value=cancelled_appointment)
+    appointment_management_service.get_appointment_with_client_info = AsyncMock(
+        return_value=(cancelled_appointment, client)
+    )
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        return_value=[doctor, clinic_admin]
+    )
+
+    notification_service = MagicMock()
+    notification_service.notify_admin_cancellation = AsyncMock(
+        side_effect=[Exception("boom"), None]
+    )
+
+    appointment_scheduler = MagicMock()
+    for method_name in (
+        "cancel_appointment_reminders", "cancel_appointment_completions", "cancel_pending_expiry",
+        "cancel_proposal_reminder", "cancel_reschedule_expiry", "cancel_auto_confirm",
+    ):
+        setattr(appointment_scheduler, method_name, AsyncMock())
+
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+    )
+    handle_cancel_confirmation_yes = _get_handler_by_name(router, "handle_cancel_confirmation_yes")
+
+    callback_query = _make_callback_query("appt_cancel_confirm_yes")
+    state = _make_state_with_appointment_id(1)
+
+    # Should not raise, despite the first recipient's send failing.
+    await handle_cancel_confirmation_yes(callback_query, state)
+
+    assert notification_service.notify_admin_cancellation.await_count == 2
+    notification_service.notify_admin_cancellation.assert_any_await(
+        doctor.telegram_user_id, cancelled_appointment, client.full_name,
+    )
+    notification_service.notify_admin_cancellation.assert_any_await(
+        clinic_admin.telegram_user_id, cancelled_appointment, client.full_name,
+    )
+
+
 @pytest.mark.asyncio
 async def test_handler_sends_cancellation_message_to_admin():
     """Test that handler sends cancellation message to admin when appointment cancelled."""

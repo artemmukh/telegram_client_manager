@@ -207,19 +207,28 @@ def create_client_booking_router(
         )
         await callback_query.answer()
 
-        if notification_service and appointment.created_by_telegram_id:
+        if notification_service:
             try:
-                admin_message_id = await notification_service.notify_staff_new_booking_request(
-                    appointment.created_by_telegram_id,
-                    appointment,
-                    current_user.full_name,
-                )
-                if admin_message_id is not None:
-                    await appointment_management_service.update_admin_notification_message_id(
-                        appointment.id, admin_message_id
-                    )
+                recipients = await appointment_management_service.resolve_notification_recipients(appointment)
             except Exception:
-                pass  # Graceful fail если не получилось отправить
+                recipients = []
+            for recipient in recipients:
+                try:
+                    admin_message_id = await notification_service.notify_staff_new_booking_request(
+                        recipient.telegram_user_id,
+                        appointment,
+                        current_user.full_name,
+                    )
+                    # admin_notification_message_id is a single column and can only reply-thread
+                    # to one recipient's chat; keep the first successful send (the treating
+                    # doctor, matching prior single-recipient behavior).
+                    if admin_message_id is not None and appointment.admin_notification_message_id is None:
+                        await appointment_management_service.update_admin_notification_message_id(
+                            appointment.id, admin_message_id
+                        )
+                        appointment.admin_notification_message_id = admin_message_id
+                except Exception:
+                    pass  # Graceful fail если не получилось отправить
 
         if appointment_scheduler:
             await appointment_scheduler.schedule_pending_expiry(appointment)

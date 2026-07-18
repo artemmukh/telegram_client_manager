@@ -695,3 +695,23 @@ class AppointmentManagement:
         booked_times = {appointment.datetime.split(" ")[1] for appointment in confirmed}
 
         return [slot for slot in slots if slot not in booked_times]
+
+    async def resolve_notification_recipients(self, appointment: Appointment) -> list[User]:
+        """Resolve who should receive admin/staff-facing notifications for an appointment:
+        the treating doctor plus every clinic-scope admin of that clinic, deduplicated."""
+        recipients: dict[int, User] = {}
+
+        if appointment.doctor_id is not None:
+            doctor = await self.user_repository.get_user_by_id(appointment.doctor_id)
+            if doctor is not None and doctor.telegram_user_id is not None:
+                recipients[doctor.telegram_user_id] = doctor
+
+        staff_records = await self.staff_repository.get_staff_by_clinic_id(appointment.clinic_id)
+        for staff in staff_records:
+            if staff.visibility_scope != "clinic":
+                continue
+            admin_user = await self.user_repository.get_user_by_telegram_id(staff.telegram_user_id)
+            if admin_user is not None and admin_user.telegram_user_id is not None:
+                recipients[admin_user.telegram_user_id] = admin_user
+
+        return list(recipients.values())

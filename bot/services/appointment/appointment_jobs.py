@@ -87,7 +87,6 @@ async def send_reminder_job(
         # Get client info for potential admin notification
         client = await appointment_management.get_client_by_id(appointment.client_id)
         client_name = client.full_name if client else "Неизвестный клиент"
-        admin = await appointment_management.get_user_by_telegram_id(appointment.created_by_telegram_id)
 
         if hours_before not in (24, 2):
             logger.warning(f"Unknown reminder time: {hours_before}h")
@@ -98,10 +97,8 @@ async def send_reminder_job(
 
         if hours_before == 24:
             client_wants = client.reminder_24h if client else True
-            admin_wants = admin.reminder_24h if admin else True
         else:
             client_wants = client.reminder_2h if client else True
-            admin_wants = admin.reminder_2h if admin else True
 
         if client_wants:
             notification_sent = False
@@ -137,24 +134,36 @@ async def send_reminder_job(
                 reminder_type = f"{hours_before}h (failed)"
 
         # Send reminder to ADMIN (INDEPENDENT, must always attempt)
-        if admin_wants and appointment.created_by_telegram_id and client:
+        if client:
             try:
-                await notification_service.notify_admin_upcoming_appointment(
-                    appointment.created_by_telegram_id,
-                    appointment,
-                    client_name,
-                )
-                logger.info(
-                    f"Admin reminder sent for appointment {appointment_id} ({reminder_type})"
-                )
-            except NotificationDeliveryError as e:
-                logger.warning(
-                    f"Failed to send admin reminder for appointment {appointment_id}: {e}"
-                )
+                recipients = await appointment_management.resolve_notification_recipients(appointment)
             except Exception as e:
-                logger.exception(
-                    f"Unexpected error sending admin reminder for appointment {appointment_id}: {e}"
+                logger.warning(
+                    f"Failed to resolve notification recipients for appointment {appointment_id}: {e}"
                 )
+                recipients = []
+            for recipient in recipients:
+                recipient_wants = recipient.reminder_24h if hours_before == 24 else recipient.reminder_2h
+                if not recipient_wants:
+                    continue
+
+                try:
+                    await notification_service.notify_admin_upcoming_appointment(
+                        recipient.telegram_user_id,
+                        appointment,
+                        client_name,
+                    )
+                    logger.info(
+                        f"Admin reminder sent for appointment {appointment_id} ({reminder_type})"
+                    )
+                except NotificationDeliveryError as e:
+                    logger.warning(
+                        f"Failed to send admin reminder for appointment {appointment_id}: {e}"
+                    )
+                except Exception as e:
+                    logger.exception(
+                        f"Unexpected error sending admin reminder for appointment {appointment_id}: {e}"
+                    )
 
     except AppointmentNotFoundError:
         logger.warning(f"Send reminder job: appointment {appointment_id} not found")
@@ -207,10 +216,18 @@ async def complete_appointment(
         )
         return
 
-    if appointment.created_by_telegram_id:
+    try:
+        recipients = await appointment_management.resolve_notification_recipients(appointment)
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve notification recipients for appointment {appointment_id}: {e}"
+        )
+        recipients = []
+
+    for recipient in recipients:
         try:
             await notification_service.notify_admin_completion(
-                appointment.created_by_telegram_id, appointment
+                recipient.telegram_user_id, appointment
             )
             logger.info(
                 f"Sent completion notification to admin for appointment {appointment_id}"
@@ -390,6 +407,8 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
             return
 
         try:
+            notification_sent = False
+
             if appointment.proposed_by == CreatedBy.ADMIN:
                 if appointment.status == AppointmentStatus.PENDING:
                     notification_sent = await notification_service.notify_client_proposal_reminder(appointment)
@@ -398,7 +417,23 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
                         appointment
                     )
             else:
-                notification_sent = await notification_service.notify_admin_proposal_reminder(appointment)
+                try:
+                    recipients = await appointment_management.resolve_notification_recipients(appointment)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to resolve notification recipients for appointment {appointment_id}: {e}"
+                    )
+                    recipients = []
+                for recipient in recipients:
+                    try:
+                        await notification_service.notify_admin_proposal_reminder(
+                            recipient.telegram_user_id, appointment
+                        )
+                        notification_sent = True
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to send proposal reminder to admin for appointment {appointment_id}: {e}"
+                        )
 
             if notification_sent:
                 logger.info(f"Proposal reminder sent for appointment {appointment_id}")

@@ -557,25 +557,18 @@ class AppointmentNotificationService:
             reply_parameters=self._admin_reply_parameters(appointment),
         )
 
-    async def notify_admin_proposal_reminder(self, appointment: Appointment) -> bool:
+    async def notify_admin_proposal_reminder(self, telegram_id: int, appointment: Appointment) -> None:
         """Remind the clinic that the client's proposed time is still awaiting a response.
 
         Status-neutral: reused for both an outstanding client counter-proposal on a
         PENDING admin-created invite, and a client-requested reschedule on a CONFIRMED
         appointment. Sent as a reply to the original admin notification message.
-
-        Returns True if message sent, False if the admin has no telegram_id on record.
         """
-        if not appointment.created_by_telegram_id:
-            return False
-
         await self.bot.send_message(
-            chat_id=appointment.created_by_telegram_id,
+            chat_id=telegram_id,
             text="⏰ Клиент предложил другое время, ответ ещё не получен.",
             reply_parameters=self._admin_reply_parameters(appointment),
         )
-
-        return True
 
     async def notify_staff_reschedule_requested(
         self,

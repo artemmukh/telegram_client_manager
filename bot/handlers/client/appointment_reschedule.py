@@ -220,22 +220,27 @@ def create_client_reschedule_router(
         await callback_query.message.edit_text(message_text, reply_markup=success_kb)
         await callback_query.answer()
 
-        if notification_service and appointment.created_by_telegram_id:
+        if notification_service:
             try:
-                if is_direct_edit:
-                    await notification_service.notify_admin_client_changed_time(
-                        appointment.created_by_telegram_id,
-                        appointment,
-                        current_user.full_name if current_user else "Неизвестный клиент",
-                    )
-                else:
-                    await notification_service.notify_staff_reschedule_requested(
-                        appointment.created_by_telegram_id,
-                        appointment,
-                        current_user.full_name if current_user else "Неизвестный клиент",
-                    )
+                recipients = await appointment_management_service.resolve_notification_recipients(appointment)
             except Exception:
-                pass  # Graceful fail если не получилось отправить
+                recipients = []
+            for recipient in recipients:
+                try:
+                    if is_direct_edit:
+                        await notification_service.notify_admin_client_changed_time(
+                            recipient.telegram_user_id,
+                            appointment,
+                            current_user.full_name if current_user else "Неизвестный клиент",
+                        )
+                    else:
+                        await notification_service.notify_staff_reschedule_requested(
+                            recipient.telegram_user_id,
+                            appointment,
+                            current_user.full_name if current_user else "Неизвестный клиент",
+                        )
+                except Exception:
+                    pass  # Graceful fail если не получилось отправить
 
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)

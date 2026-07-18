@@ -1,0 +1,194 @@
+"""Handler-level tests for the client self-booking submission flow
+(bot/handlers/client/appointment_booking.py::submit_booking).
+
+Before the notification-routing refactor this handler had NO dedicated test
+file at all -- coverage only existed at the AppointmentNotificationService
+level (test_appointment_notifications.py::test_notify_staff_new_booking_request_*).
+These tests close that gap, following the same direct-handler-call convention
+used in test_appointment_invite_handler.py: build the router with mock
+collaborators, pull the decorated callback out of router.callback_query.handlers,
+and invoke it directly with mock aiogram objects.
+"""
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+from bot.handlers.client.appointment_booking import create_client_booking_router
+from bot.models.appointment import Appointment
+from bot.models.user import User
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.role import Role
+
+
+def _get_handler_by_name(router, name):
+    for handler in router.callback_query.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback
+    raise AssertionError(f"{name} handler not found on router")
+
+
+def _current_user():
+    return User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, telegram_user_id=555, ID=7)
+
+
+def _created_appointment():
+    return Appointment(
+        clinic_id=1,
+        client_id=7,
+        doctor_id=42,
+        datetime="2026-08-01 10:00",
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING,
+        id=1,
+    )
+
+
+def _doctor():
+    return User(full_name="Врач", phone="+998900000000", role=Role.ADMIN, telegram_user_id=555555, ID=42)
+
+
+def _clinic_admin(telegram_user_id, admin_id):
+    return User(
+        full_name="Админ клиники", phone="+998900000001", role=Role.ADMIN,
+        telegram_user_id=telegram_user_id, ID=admin_id,
+    )
+
+
+def _make_callback_query():
+    callback_query = MagicMock()
+    callback_query.from_user.id = 555
+    callback_query.message.edit_text = AsyncMock()
+    callback_query.answer = AsyncMock()
+    return callback_query
+
+
+def _make_state(staff_user_id=42, appointment_datetime="2026-08-01 10:00", complaint="Консультация"):
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={
+        "staff_user_id": staff_user_id,
+        "appointment_datetime": appointment_datetime,
+        "complaint": complaint,
+    })
+    state.clear = AsyncMock()
+    return state
+
+
+def _build_router(appointment_management_service, notification_service, appointment_scheduler=None):
+    return create_client_booking_router(
+        appointment_management_service, notification_service, appointment_scheduler or AsyncMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_booking_notifies_sole_doctor_recipient_and_persists_message_id():
+    """Regression/backward-compat case: a single resolved recipient (the treating
+    doctor) gets notified and their message_id is persisted via
+    update_admin_notification_message_id -- matches the pre-refactor
+    single-recipient behavior."""
+    created_appointment = _created_appointment()
+    doctor = _doctor()
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.create_self_booking = AsyncMock(return_value=created_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(return_value=[doctor])
+    appointment_management_service.update_admin_notification_message_id = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_staff_new_booking_request = AsyncMock(return_value=4242)
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.schedule_pending_expiry = AsyncMock()
+
+    router = _build_router(appointment_management_service, notification_service, appointment_scheduler)
+    submit_booking = _get_handler_by_name(router, "submit_booking")
+
+    await submit_booking(_make_callback_query(), _make_state(), _current_user())
+
+    notification_service.notify_staff_new_booking_request.assert_awaited_once_with(
+        doctor.telegram_user_id, created_appointment, "Иванов Иван",
+    )
+    appointment_management_service.update_admin_notification_message_id.assert_awaited_once_with(
+        created_appointment.id, 4242,
+    )
+    appointment_scheduler.schedule_pending_expiry.assert_awaited_once_with(created_appointment)
+
+
+@pytest.mark.asyncio
+async def test_submit_booking_persists_only_the_first_successful_recipients_message_id():
+    """With two resolved recipients, both are notified, but
+    admin_notification_message_id (a single column that can only reply-thread to
+    one recipient chat) is only ever set from the FIRST successful send -- the
+    second recipient message_id must never overwrite it."""
+    created_appointment = _created_appointment()
+    doctor = _doctor()
+    clinic_admin = _clinic_admin(999, 100)
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.create_self_booking = AsyncMock(return_value=created_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        return_value=[doctor, clinic_admin]
+    )
+    appointment_management_service.update_admin_notification_message_id = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_staff_new_booking_request = AsyncMock(side_effect=[100, 200])
+
+    router = _build_router(appointment_management_service, notification_service)
+    submit_booking = _get_handler_by_name(router, "submit_booking")
+
+    await submit_booking(_make_callback_query(), _make_state(), _current_user())
+
+    assert notification_service.notify_staff_new_booking_request.await_count == 2
+    appointment_management_service.update_admin_notification_message_id.assert_awaited_once_with(
+        created_appointment.id, 100,
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_booking_attempts_second_recipient_after_first_fails_and_persists_its_message_id():
+    """Per-recipient failure isolation: the first recipient send raising must
+    not stop the loop -- the second recipient is still attempted, and since the
+    first recipient never produced a message_id, the second message_id is what
+    gets persisted."""
+    created_appointment = _created_appointment()
+    doctor = _doctor()
+    clinic_admin = _clinic_admin(999, 100)
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.create_self_booking = AsyncMock(return_value=created_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        return_value=[doctor, clinic_admin]
+    )
+    appointment_management_service.update_admin_notification_message_id = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_staff_new_booking_request = AsyncMock(
+        side_effect=[Exception("boom"), 300]
+    )
+
+    router = _build_router(appointment_management_service, notification_service)
+    submit_booking = _get_handler_by_name(router, "submit_booking")
+
+    # Should not raise, despite the first recipient send failing.
+    await submit_booking(_make_callback_query(), _make_state(), _current_user())
+
+    assert notification_service.notify_staff_new_booking_request.await_count == 2
+    appointment_management_service.update_admin_notification_message_id.assert_awaited_once_with(
+        created_appointment.id, 300,
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_booking_does_not_notify_when_notification_service_missing():
+    created_appointment = _created_appointment()
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.create_self_booking = AsyncMock(return_value=created_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(return_value=[_doctor()])
+
+    router = create_client_booking_router(appointment_management_service, None, AsyncMock())
+    submit_booking = _get_handler_by_name(router, "submit_booking")
+
+    await submit_booking(_make_callback_query(), _make_state(), _current_user())
+
+    appointment_management_service.resolve_notification_recipients.assert_not_awaited()

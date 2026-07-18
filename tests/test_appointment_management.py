@@ -2310,3 +2310,166 @@ async def test_cancellation_cutoff_stays_1h_independent_of_2h30_booking_threshol
     assert reschedule_repo.proposed_datetime_updates == []
 
 
+# resolve_notification_recipients: the treating doctor plus every clinic-scope
+# admin of the appointment's clinic, deduplicated by telegram_user_id. Every
+# admin/staff-facing notification call site (12 across appointment_jobs.py and
+# the client handlers) now fans out through this single method instead of
+# targeting appointment.created_by_telegram_id alone.
+
+
+class FakeRecipientUserRepo:
+    def __init__(self, users_by_id=None, users_by_telegram_id=None):
+        self.users_by_id = users_by_id or {}
+        self.users_by_telegram_id = users_by_telegram_id or {}
+
+    async def get_user_by_id(self, user_id):
+        return self.users_by_id.get(user_id)
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        return self.users_by_telegram_id.get(telegram_user_id)
+
+
+def _recipient_appointment(doctor_id=None, clinic_id=1):
+    return Appointment(
+        clinic_id=clinic_id,
+        client_id=7,
+        doctor_id=doctor_id,
+        datetime="2026-08-01 10:00",
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.PENDING,
+        id=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_returns_doctor_only_when_no_clinic_scope_staff():
+    doctor = User(full_name="Доктор", phone="+998900000001", role=Role.ADMIN, ID=42, telegram_user_id=555)
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(users_by_id={42: doctor}),
+        FakeStaffRepo(None),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=42))
+
+    assert [r.telegram_user_id for r in recipients] == [555]
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_returns_clinic_scope_staff_when_no_doctor():
+    admin = User(full_name="Админ", phone="+998900000002", role=Role.ADMIN, ID=10, telegram_user_id=999)
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(users_by_telegram_id={999: admin}),
+        FakeStaffRepo({999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic")}),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=None))
+
+    assert [r.telegram_user_id for r in recipients] == [999]
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_excludes_own_scope_and_unset_scope_staff():
+    """Only visibility_scope == 'clinic' staff are fanned out to -- 'own'-scoped
+    and unset-scope staff (which the rest of the codebase treats as own-only
+    visibility) must not receive admin-facing notifications for someone else's
+    appointment."""
+    own_scope = User(full_name="Свой", phone="+998900000003", role=Role.ADMIN, ID=11, telegram_user_id=111)
+    unset_scope = User(full_name="Без scope", phone="+998900000004", role=Role.ADMIN, ID=12, telegram_user_id=222)
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(users_by_telegram_id={111: own_scope, 222: unset_scope}),
+        FakeStaffRepo({
+            111: Staff(telegram_user_id=111, clinic_id=1, visibility_scope="own"),
+            222: Staff(telegram_user_id=222, clinic_id=1, visibility_scope=None),
+        }),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=None))
+
+    assert recipients == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_combines_doctor_and_distinct_clinic_staff():
+    doctor = User(full_name="Доктор", phone="+998900000005", role=Role.ADMIN, ID=42, telegram_user_id=555)
+    admin1 = User(full_name="Админ1", phone="+998900000006", role=Role.ADMIN, ID=10, telegram_user_id=999)
+    admin2 = User(full_name="Админ2", phone="+998900000007", role=Role.ADMIN, ID=11, telegram_user_id=1000)
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(
+            users_by_id={42: doctor},
+            users_by_telegram_id={999: admin1, 1000: admin2},
+        ),
+        FakeStaffRepo({
+            999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic"),
+            1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="clinic"),
+        }),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=42))
+
+    assert {r.telegram_user_id for r in recipients} == {555, 999, 1000}
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_dedupes_doctor_who_is_also_clinic_scope_admin():
+    """The treating doctor is ALSO a clinic-scope admin for the same clinic (a
+    common real-world setup: a solo doctor who administers their own clinic-scope
+    account) -- must resolve to exactly one recipient, not two duplicate sends."""
+    doctor_and_admin = User(
+        full_name="Доктор-Админ", phone="+998900000008", role=Role.ADMIN, ID=42, telegram_user_id=555,
+    )
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(
+            users_by_id={42: doctor_and_admin},
+            users_by_telegram_id={555: doctor_and_admin},
+        ),
+        FakeStaffRepo({555: Staff(telegram_user_id=555, clinic_id=1, visibility_scope="clinic")}),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=42))
+
+    assert len(recipients) == 1
+    assert recipients[0].telegram_user_id == 555
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_returns_empty_when_no_doctor_and_no_clinic_staff():
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(),
+        FakeStaffRepo(None),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=None))
+
+    assert recipients == []
+
+
+@pytest.mark.asyncio
+async def test_resolve_notification_recipients_skips_doctor_id_that_does_not_resolve_to_a_user():
+    """A stale/dangling doctor_id (e.g. the doctor account was deleted) must not
+    crash resolution -- it's simply excluded, falling back to whatever
+    clinic-scope staff exist."""
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeRecipientUserRepo(),
+        FakeStaffRepo(None),
+        _clinic_repo(),
+    )
+
+    recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=999))
+
+    assert recipients == []
+
+

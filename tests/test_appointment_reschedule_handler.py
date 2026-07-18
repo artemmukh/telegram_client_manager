@@ -65,6 +65,9 @@ async def test_submit_reschedule_direct_edit_branch_notifies_and_reschedules_pen
 
     appointment_management_service = MagicMock()
     appointment_management_service.request_reschedule_by_client = AsyncMock(return_value=resulting_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        return_value=[User(full_name="Врач", phone="+998900000000", role=Role.ADMIN, telegram_user_id=999, ID=42)]
+    )
 
     notification_service = MagicMock()
     notification_service.notify_admin_client_changed_time = AsyncMock()
@@ -105,6 +108,9 @@ async def test_submit_reschedule_negotiation_branch_notifies_staff_and_resyncs_j
 
     appointment_management_service = MagicMock()
     appointment_management_service.request_reschedule_by_client = AsyncMock(return_value=resulting_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        return_value=[User(full_name="Врач", phone="+998900000000", role=Role.ADMIN, telegram_user_id=999, ID=42)]
+    )
 
     notification_service = MagicMock()
     notification_service.notify_admin_client_changed_time = AsyncMock()
