@@ -13,7 +13,6 @@ from bot.exceptions.appointment_exceptions import (
     SlotUnavailableError,
 )
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
-from bot.services.utils.slot_helpers import generate_available_slots
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
 from bot.models.user import User
@@ -23,11 +22,12 @@ from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import get_current_tashkent_time, get_current_tashkent_datetime
+from bot.services.utils.slot_helpers import generate_available_slots
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, \
-    validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
+    validate_phone, SEARCH_NAME_PATTERN
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)

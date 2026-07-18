@@ -52,6 +52,7 @@ def parse_ru_datetime(text: str) -> Optional[datetime]:
     return dateparser.parse(
         normalized,
         languages=['ru'],
+        date_formats=['%d.%m.%y %H:%M', '%d.%m.%y %H.%M', '%d.%m.%Y %H:%M', '%d.%m.%Y %H.%M'],
         settings={
             'PREFER_DATES_FROM': 'future',
             'TIMEZONE': 'Asia/Tashkent',

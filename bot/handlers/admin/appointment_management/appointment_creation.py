@@ -284,7 +284,7 @@ def create_admin_appointment_creation_router(
             notification_text += "\n⏰ Напоминания запланированы (24ч и 2ч перед приемом)"
 
             await scheduler.schedule_appointment_completion(appointment)
-            notification_text += "\n✅ Автозавершение: через 1ч после приема"
+            notification_text += "\n✅ Автозавершение: через 2ч после приема"
 
         if scheduler:
             await scheduler.schedule_pending_expiry(appointment)

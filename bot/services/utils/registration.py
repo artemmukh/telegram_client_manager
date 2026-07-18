@@ -9,7 +9,7 @@ from bot.utils.tools import normalize_phone
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
-from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN
+from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
 
 @dataclass
@@ -45,7 +45,7 @@ class RegistrationService:
 
     async def apply_name_conflict_resolution(self, existing_user_id: int, new_full_name: str) -> User:
         new_full_name = new_full_name.strip()
-        validate_full_name(new_full_name, FULL_NAME_PATTERN)
+        validate_full_name(new_full_name, SEARCH_NAME_PATTERN)
 
         user = await self.user_repository.get_client_by_id(existing_user_id)
 
@@ -69,7 +69,7 @@ class RegistrationService:
 
         full_name = full_name.strip()
         phone = normalize_phone(phone.strip())
-        validate_full_name(full_name, FULL_NAME_PATTERN)
+        validate_full_name(full_name, SEARCH_NAME_PATTERN)
         validate_phone(phone)
 
         if existing_user_id is not None:
