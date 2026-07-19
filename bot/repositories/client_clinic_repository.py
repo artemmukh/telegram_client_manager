@@ -17,6 +17,11 @@ class ClientClinicRepository:
             )
         """)
 
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_client_clinics_clinic_id
+            ON client_clinics(clinic_id)
+        """)
+
         # Backfill: for every existing client (role='client') with a clinic_id,
         # ensure a corresponding link row exists (their "home" clinic).
         await self.connection.execute("""

@@ -74,7 +74,9 @@ async def main():
     dp.callback_query.middleware(UserContextMiddleware(user_repo))
 
     # Create services
-    client_management_service = ClientManagement(user_repo, staff_repo, clinic_repo)
+    client_management_service = ClientManagement(
+        user_repo, staff_repo, clinic_repo, client_clinic_repository=client_clinic_repo,
+    )
     appointment_management_service = AppointmentManagement(
         appointment_repo, user_repo, staff_repo, clinic_repo,
         client_clinic_repository=client_clinic_repo,
@@ -100,7 +102,9 @@ async def main():
     # Routers
 
     #registration
-    dp.include_router(create_reg_router(user_repo, clinic_repo, staff_repo, client_notification_service))
+    dp.include_router(create_reg_router(
+        user_repo, clinic_repo, staff_repo, client_notification_service, client_clinic_repo,
+    ))
 
     #common handlers
     dp.include_router(create_start_router())
@@ -115,7 +119,7 @@ async def main():
     dp.include_router(create_admin_client_menu_router())
 
     #create
-    dp.include_router(create_admin_client_creation_router(user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, client_clinic_repo))
 
     #browse (view/edit/delete)
     dp.include_router(create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appointment_repo))

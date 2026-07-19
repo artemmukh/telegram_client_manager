@@ -23,11 +23,11 @@ from bot.validators.validators import SEARCH_NAME_PATTERN
 from bot.validators.validators import validate_fields_filled
 
 
-def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo):
+def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, client_clinic_repo=None):
 
     router = Router()
 
-    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo)
+    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo, client_clinic_repository=client_clinic_repo)
 
     async def validate_phone_available(phone: str):
         if await cl_mng.is_phone_taken(phone):

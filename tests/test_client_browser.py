@@ -12,6 +12,7 @@ from bot.keyboards.admin.client_management_kb.client_browser_cb import (
 )
 from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
 from bot.models.user import User
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.client.client_management import ClientManagement
@@ -111,15 +112,18 @@ async def test_search_paginate_update_delete_flow_composes():
     try:
         await ClinicRepository(connection).init()
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
         clinic_id = 1
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=clinic_id)
-        )
-        await user_repo.create_user(
-            User(full_name="Иванов Пётр", phone="+998902222222", role=Role.CLIENT, clinic_id=clinic_id)
-        )
+        first = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=clinic_id)
+        await user_repo.create_user(first)
+        await client_clinic_repo.link_client_to_clinic(first.ID, clinic_id)
+
+        second = User(full_name="Иванов Пётр", phone="+998902222222", role=Role.CLIENT, clinic_id=clinic_id)
+        await user_repo.create_user(second)
+        await client_clinic_repo.link_client_to_clinic(second.ID, clinic_id)
 
         cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
         pagination = ClientPaginationService(user_repo)
@@ -165,14 +169,17 @@ async def test_search_client_by_name_excludes_clients_from_other_clinics():
     try:
         await ClinicRepository(connection).init()
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
-        )
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998902222222", role=Role.CLIENT, clinic_id=2)
-        )
+        client_in_clinic_1 = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_in_clinic_1)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_1.ID, 1)
+
+        client_in_clinic_2 = User(full_name="Иванов Иван", phone="+998902222222", role=Role.CLIENT, clinic_id=2)
+        await user_repo.create_user(client_in_clinic_2)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_2.ID, 2)
 
         cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
 
@@ -192,11 +199,13 @@ async def test_search_client_by_phone_excludes_clients_from_other_clinics():
     try:
         await ClinicRepository(connection).init()
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
-        )
+        client = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client)
+        await client_clinic_repo.link_client_to_clinic(client.ID, 1)
 
         cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
 
@@ -215,14 +224,17 @@ async def test_paginate_clients_list_mode_excludes_other_clinics():
     try:
         await ClinicRepository(connection).init()
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
-        )
-        await user_repo.create_user(
-            User(full_name="Петров Петр", phone="+998902222222", role=Role.CLIENT, clinic_id=2)
-        )
+        client_in_clinic_1 = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_in_clinic_1)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_1.ID, 1)
+
+        client_in_clinic_2 = User(full_name="Петров Петр", phone="+998902222222", role=Role.CLIENT, clinic_id=2)
+        await user_repo.create_user(client_in_clinic_2)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_2.ID, 2)
 
         pagination = ClientPaginationService(user_repo)
 

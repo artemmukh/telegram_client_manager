@@ -4,6 +4,7 @@ from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
@@ -20,11 +21,13 @@ class ClientManagement:
         staff_repository: StaffRepository,
         clinic_repository: ClinicRepository,
         appointment_repository: AppointmentRepository | None = None,
+        client_clinic_repository: ClientClinicRepository | None = None,
     ):
         self.user_repository = user_repository
         self.staff_repository = staff_repository
         self.clinic_repository = clinic_repository
         self.appointment_repository = appointment_repository
+        self.client_clinic_repository = client_clinic_repository
 
     async def create_client(self, admin_telegram_id: int, data: dict) -> User:
 
@@ -53,6 +56,9 @@ class ClientManagement:
         )
 
         await self.user_repository.create_user(user)
+
+        if self.client_clinic_repository is not None:
+            await self.client_clinic_repository.link_client_to_clinic(user.ID, clinic.clinic_id)
 
         return user
 

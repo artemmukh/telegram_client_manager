@@ -4,6 +4,7 @@ import pytest_asyncio
 
 from bot.exceptions.user_exceptions import UserAlreadyExistsError
 from bot.models.user import User
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
@@ -118,23 +119,30 @@ async def test_get_clients_by_exact_name_matches_exact_name_within_clinic():
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-        )
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=1)
-        )
+        client_1 = User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_1)
+        await client_clinic_repo.link_client_to_clinic(client_1.ID, 1)
+
+        client_2 = User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_2)
+        await client_clinic_repo.link_client_to_clinic(client_2.ID, 1)
+
         # Same name, different clinic - must not be returned.
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234569", role=Role.CLIENT, clinic_id=2)
-        )
+        client_other_clinic = User(full_name=full_name, phone="+998901234569", role=Role.CLIENT, clinic_id=2)
+        await user_repo.create_user(client_other_clinic)
+        await client_clinic_repo.link_client_to_clinic(client_other_clinic.ID, 2)
+
         # Partial match (LIKE-style substring) must not be returned by exact match.
-        await user_repo.create_user(
-            User(full_name="Иванов Иван Иванович", phone="+998901234570", role=Role.CLIENT, clinic_id=1)
+        client_partial = User(
+            full_name="Иванов Иван Иванович", phone="+998901234570", role=Role.CLIENT, clinic_id=1
         )
+        await user_repo.create_user(client_partial)
+        await client_clinic_repo.link_client_to_clinic(client_partial.ID, 1)
 
         matches = await user_repo.get_clients_by_exact_name(full_name, 1)
 
@@ -155,20 +163,50 @@ async def test_get_clients_by_name_in_clinic_excludes_other_clinics():
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-        )
+        client_in_clinic_1 = User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_in_clinic_1)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_1.ID, 1)
+
         # Same name, different clinic - must not be returned.
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=2)
-        )
+        client_in_clinic_2 = User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=2)
+        await user_repo.create_user(client_in_clinic_2)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_2.ID, 2)
 
         matches = await user_repo.get_clients_by_name_in_clinic(full_name, 1)
 
         assert [user.phone for user in matches] == ["+998901234567"]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_clients_by_name_in_clinic_finds_client_linked_to_multiple_clinics():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
+        await user_repo.init()
+        await client_clinic_repo.init()
+
+        full_name = "Иванов Иван"
+        client = User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client)
+        await client_clinic_repo.link_client_to_clinic(client.ID, 1)
+        await client_clinic_repo.link_client_to_clinic(client.ID, 2)
+
+        matches_clinic_1 = await user_repo.get_clients_by_name_in_clinic(full_name, 1)
+        matches_clinic_2 = await user_repo.get_clients_by_name_in_clinic(full_name, 2)
+
+        assert [user.phone for user in matches_clinic_1] == ["+998901234567"]
+        assert [user.phone for user in matches_clinic_2] == ["+998901234567"]
     finally:
         await connection.close()
 
@@ -181,15 +219,18 @@ async def test_get_clients_by_name_page_in_clinic_and_count_exclude_other_clinic
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-        )
-        await user_repo.create_user(
-            User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=2)
-        )
+        client_in_clinic_1 = User(full_name=full_name, phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_in_clinic_1)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_1.ID, 1)
+
+        client_in_clinic_2 = User(full_name=full_name, phone="+998901234568", role=Role.CLIENT, clinic_id=2)
+        await user_repo.create_user(client_in_clinic_2)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_2.ID, 2)
 
         page = await user_repo.get_clients_by_name_page_in_clinic(full_name, 1, page=1, per_page=10)
         count = await user_repo.count_clients_by_name_in_clinic(full_name, 1)
@@ -208,11 +249,13 @@ async def test_get_client_by_phone_in_clinic_excludes_other_clinics():
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-        )
+        client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client)
+        await client_clinic_repo.link_client_to_clinic(client.ID, 1)
 
         assert await user_repo.get_client_by_phone_in_clinic("+998901234567", 1) is not None
         assert await user_repo.get_client_by_phone_in_clinic("+998901234567", 2) is None
@@ -228,20 +271,53 @@ async def test_get_clients_page_in_clinic_and_count_exclude_other_clinics():
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
         user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await client_clinic_repo.init()
 
-        await user_repo.create_user(
-            User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-        )
-        await user_repo.create_user(
-            User(full_name="Петров Петр", phone="+998901234568", role=Role.CLIENT, clinic_id=2)
-        )
+        client_in_clinic_1 = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client_in_clinic_1)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_1.ID, 1)
+
+        client_in_clinic_2 = User(full_name="Петров Петр", phone="+998901234568", role=Role.CLIENT, clinic_id=2)
+        await user_repo.create_user(client_in_clinic_2)
+        await client_clinic_repo.link_client_to_clinic(client_in_clinic_2.ID, 2)
 
         page = await user_repo.get_clients_page_in_clinic(1, page=1, per_page=10)
         count = await user_repo.count_clients_in_clinic(1)
 
         assert [user.phone for user in page] == ["+998901234567"]
         assert count == 1
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_clients_page_in_clinic_and_count_include_client_linked_to_multiple_clinics():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        client_clinic_repo = ClientClinicRepository(connection)
+        await user_repo.init()
+        await client_clinic_repo.init()
+
+        client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+        await user_repo.create_user(client)
+        await client_clinic_repo.link_client_to_clinic(client.ID, 1)
+        await client_clinic_repo.link_client_to_clinic(client.ID, 2)
+
+        page_clinic_1 = await user_repo.get_clients_page_in_clinic(1, page=1, per_page=10)
+        page_clinic_2 = await user_repo.get_clients_page_in_clinic(2, page=1, per_page=10)
+        count_clinic_1 = await user_repo.count_clients_in_clinic(1)
+        count_clinic_2 = await user_repo.count_clients_in_clinic(2)
+
+        assert [user.phone for user in page_clinic_1] == ["+998901234567"]
+        assert [user.phone for user in page_clinic_2] == ["+998901234567"]
+        assert count_clinic_1 == 1
+        assert count_clinic_2 == 1
     finally:
         await connection.close()
 

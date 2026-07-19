@@ -32,6 +32,7 @@ from bot.exceptions.appointment_exceptions import PendingRequestLimitExceededErr
 from bot.exceptions.user_exceptions import UserAlreadyExistsError
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
@@ -83,11 +84,13 @@ async def e2e(tmp_path):
     user_repo = UserRepository(connection)
     staff_repo = StaffRepository(connection)
     appointment_repo = AppointmentRepository(connection)
+    client_clinic_repo = ClientClinicRepository(connection)
 
     await clinic_repo.init()
     await user_repo.init()
     await staff_repo.init()
     await appointment_repo.init()
+    await client_clinic_repo.init()
 
     await user_repo.create_user(
         User(
@@ -103,7 +106,9 @@ async def e2e(tmp_path):
     fake_bot = FakeBot()
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
 
-    client_management = ClientManagement(user_repo, staff_repo, clinic_repo)
+    client_management = ClientManagement(
+        user_repo, staff_repo, clinic_repo, client_clinic_repository=client_clinic_repo,
+    )
     notification_service = AppointmentNotificationService(fake_bot, user_repo, appointment_repo)
     appointment_management = AppointmentManagement(
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management=client_management,
@@ -223,6 +228,36 @@ async def test_client_registration_binds_to_existing_unclaimed_patient_by_phone(
     stored = await e2e.user_repo.get_client_by_phone(phone)
     assert stored.telegram_user_id == telegram_id
     assert await e2e.user_repo.count_all_clients() == 1
+
+
+@pytest.mark.asyncio
+async def test_self_registered_client_appears_in_clinic_scoped_search(e2e):
+    client_clinic_repo = ClientClinicRepository(e2e.connection)
+    await client_clinic_repo.init()
+    registration_service = RegistrationService(
+        e2e.user_repo, e2e.clinic_repo, client_clinic_repository=client_clinic_repo,
+    )
+
+    telegram_id = 555000333
+    phone = "+998911119999"
+    full_name = "Ахмедов Шерзод Даврон угли"
+
+    registered = await registration_service.register(
+        telegram_user_id=telegram_id,
+        full_name=full_name,
+        phone=phone,
+        role=Role.CLIENT,
+        clinic_id=1,
+    )
+
+    name_matches = await e2e.user_repo.get_clients_by_name_in_clinic(full_name, 1)
+    assert [match.ID for match in name_matches] == [registered.ID]
+
+    exact_matches = await e2e.user_repo.get_clients_by_exact_name(full_name, 1)
+    assert [match.ID for match in exact_matches] == [registered.ID]
+
+    phone_match = await e2e.user_repo.get_client_by_phone_in_clinic(phone, 1)
+    assert phone_match.ID == registered.ID
 
 
 # --------------------------------------------------------------------------

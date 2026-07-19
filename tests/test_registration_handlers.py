@@ -60,6 +60,17 @@ class FakeClinicRepository:
         return self.clinics_by_token.get(token)
 
 
+class FakeClientClinicRepository:
+    def __init__(self):
+        self.links = set()
+
+    async def link_client_to_clinic(self, client_id, clinic_id):
+        self.links.add((client_id, clinic_id))
+
+    async def client_linked_to_clinic(self, client_id, clinic_id):
+        return (client_id, clinic_id) in self.links
+
+
 class FakeClientNotificationService:
     def __init__(self):
         self.registration_name_changes = []
@@ -102,11 +113,11 @@ def notification_service():
     return FakeClientNotificationService()
 
 
-def _build_router(existing_clients, notification_service, clinic_repo=None):
+def _build_router(existing_clients, notification_service, clinic_repo=None, client_clinic_repo=None):
     user_repo = FakeUserRepository(existing_clients=existing_clients)
     router = create_reg_router(
         user_repo, clinic_repo=clinic_repo, staff_repo=FakeStaffRepository(),
-        client_notification_service=notification_service,
+        client_notification_service=notification_service, client_clinic_repo=client_clinic_repo,
     )
     return router, user_repo
 
@@ -290,6 +301,30 @@ async def test_final_reg_new_user_creates_client(fsm_context, notification_servi
     created = next(u for u in user_repo.users_by_id.values() if u.full_name == "Иван Иванов")
     assert created.telegram_user_id == 999
     assert notification_service.registration_name_changes == []
+
+
+@pytest.mark.asyncio
+async def test_final_reg_new_user_links_client_to_clinic(fsm_context, notification_service):
+    client_clinic_repo = FakeClientClinicRepository()
+    router, user_repo = _build_router(
+        existing_clients=[], notification_service=notification_service,
+        client_clinic_repo=client_clinic_repo,
+    )
+    final_reg = _get_handler(router.callback_query, "final_reg")
+
+    await fsm_context.set_state(RegisterStates.confirm_register)
+    await fsm_context.update_data(
+        clinic_id=1,
+        phone="+998901234567",
+        full_name="Иван Иванов",
+    )
+
+    callback = _callback(data="reg_confirm")
+
+    await final_reg(callback, fsm_context)
+
+    created = next(u for u in user_repo.users_by_id.values() if u.full_name == "Иван Иванов")
+    assert await client_clinic_repo.client_linked_to_clinic(created.ID, 1) is True
 
 
 @pytest.mark.asyncio

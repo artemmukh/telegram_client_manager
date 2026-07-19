@@ -32,9 +32,10 @@ from bot.validators.validators import FULL_NAME_PATTERN
 
 def create_reg_router(
         user_repo, clinic_repo, staff_repo, client_notification_service: ClientNotificationService,
+        client_clinic_repo=None,
 ) -> Router:
     router = Router()
-    reg = RegistrationService(user_repo, clinic_repo)
+    reg = RegistrationService(user_repo, clinic_repo, client_clinic_repository=client_clinic_repo)
 
     auth = AuthService(staff_repo)
 

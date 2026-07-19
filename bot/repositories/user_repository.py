@@ -144,7 +144,7 @@ class UserRepository:
         sql = USER_SELECT + f"""
         WHERE u.role = 'client'
         AND ({conditions})
-        AND u.clinic_id = ?
+        AND u.id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)
         ORDER BY u.full_name, u.id
         """
         params.append(clinic_id)
@@ -159,7 +159,7 @@ class UserRepository:
             USER_SELECT + """
             WHERE u.role = 'client'
             AND u.full_name = ?
-            AND u.clinic_id = ?
+            AND u.id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)
             ORDER BY u.full_name, u.id
             """,
             (full_name, clinic_id)
@@ -183,7 +183,7 @@ class UserRepository:
             USER_SELECT + """
             WHERE u.role = 'client'
             AND u.phone = ?
-            AND u.clinic_id = ?
+            AND u.id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)
             """,
             (phone, clinic_id)
         )
@@ -366,7 +366,7 @@ class UserRepository:
         cursor = await self.connection.execute(
             USER_SELECT + """
             WHERE u.role = 'client'
-            AND u.clinic_id = ?
+            AND u.id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)
             ORDER BY u.full_name, u.id
             LIMIT ? OFFSET ?
             """,
@@ -378,7 +378,11 @@ class UserRepository:
     async def count_clients_in_clinic(self, clinic_id: int) -> int:
         """Получить общее количество клиентов клиники"""
         cursor = await self.connection.execute(
-            "SELECT COUNT(*) FROM users WHERE role = 'client' AND clinic_id = ?",
+            """
+            SELECT COUNT(*) FROM users
+            WHERE role = 'client'
+            AND id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)
+            """,
             (clinic_id,)
         )
         row = await cursor.fetchone()
@@ -439,7 +443,7 @@ class UserRepository:
         sql = USER_SELECT + f"""
         WHERE u.role = 'client'
         AND ({conditions})
-        AND u.clinic_id = ?
+        AND u.id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)
         ORDER BY u.full_name, u.id
         LIMIT ? OFFSET ?
         """
@@ -459,7 +463,8 @@ class UserRepository:
         conditions = " OR ".join(["full_name LIKE ?"] * len(parts))
         params = [f"%{part}%" for part in parts]
 
-        sql = f"SELECT COUNT(*) FROM users WHERE role = 'client' AND ({conditions}) AND clinic_id = ?"
+        sql = f"""SELECT COUNT(*) FROM users WHERE role = 'client' AND ({conditions})
+        AND id IN (SELECT client_id FROM client_clinics WHERE clinic_id = ?)"""
         params.append(clinic_id)
         cursor = await self.connection.execute(sql, params)
         row = await cursor.fetchone()

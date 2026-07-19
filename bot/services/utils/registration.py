@@ -6,6 +6,7 @@ from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
+from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
@@ -19,9 +20,15 @@ class PhoneLookupResult:
 
 
 class RegistrationService:
-    def __init__(self, user_repository: UserRepository, clinic_repository: ClinicRepository):
+    def __init__(
+            self,
+            user_repository: UserRepository,
+            clinic_repository: ClinicRepository,
+            client_clinic_repository: ClientClinicRepository | None = None,
+    ):
         self.user_repository = user_repository
         self.clinic_repository = clinic_repository
+        self.client_clinic_repository = client_clinic_repository
 
     async def get_clinic_by_token(self, token: str) -> Clinic | None:
         return await self.clinic_repository.get_clinic_by_token(token)
@@ -108,5 +115,8 @@ class RegistrationService:
         )
 
         await self.user_repository.create_user(user)
+
+        if self.client_clinic_repository is not None:
+            await self.client_clinic_repository.link_client_to_clinic(user.ID, clinic_id)
 
         return user
