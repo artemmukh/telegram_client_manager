@@ -107,6 +107,11 @@ def client_card_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup
     builder = InlineKeyboardBuilder()
 
     builder.button(
+        text="➕Записать на приём",
+        callback_data=ClientActionCB(action="new_appointment", client_id=client_id, mode=mode, page=page).pack(),
+    )
+
+    builder.button(
         text="✏️ Изменить ФИ",
         callback_data=ClientActionCB(action="edit_name", client_id=client_id, mode=mode, page=page).pack(),
     )

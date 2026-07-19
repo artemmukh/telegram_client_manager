@@ -14,10 +14,11 @@ from bot.exceptions.user_exceptions import (
     UserNotFoundError,
     ValidationError,
 )
+from bot.handlers.utils.admin_utils import appointment_helpers as ah
 from bot.handlers.utils.admin_utils.client_browser_helpers import (
-    build_client_card_text,
     edit_tracked_message,
     remember_tracked_message,
+    render_client_card,
 )
 from bot.handlers.utils.admin_utils.confirmations import build_client_text, show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
@@ -39,12 +40,12 @@ from bot.keyboards.admin.client_management_kb.client_browser_kb import (
     client_browser_confirm_name_kb,
     client_browser_confirm_phone_kb,
     client_browser_search_kb,
-    client_card_kb,
     client_confirm_new_name_kb,
     client_confirm_new_phone_kb,
     client_delete_confirm_kb,
     client_list_kb,
 )
+from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.states.admin.client_management.client_browser_states import ClientBrowserStates
@@ -59,6 +60,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
 
     cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo, appointment_repo)
     pagination_service = ClientPaginationService(user_repo)
+    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
@@ -210,6 +212,20 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         )
 
     # --- Card actions ---
+    @router.callback_query(ClientActionCB.filter(F.action == "new_appointment"))
+    async def new_appointment(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
+        client = await cl_mng.get_client_by_id(callback_data.client_id)
+        if client is None:
+            await callback_query.answer("Клиент не найден.", show_alert=True)
+            return
+
+        data = await state.get_data()
+        await ah.begin_appointment_creation(
+            appt_mng, callback_query, state,
+            full_name=client.full_name, phone=client.phone,
+            origin_client_id=callback_data.client_id, origin_mode=callback_data.mode, origin_page=callback_data.page,
+            origin_search_data=data.get("search_data"),
+        )
 
     @router.callback_query(ClientActionCB.filter(F.action == "edit_name"))
     async def start_edit_name(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
@@ -450,16 +466,6 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
     async def render_card(
         callback_query: CallbackQuery, state: FSMContext, *, client_id: int, mode: str, page: int,
     ) -> None:
-        user = await cl_mng.get_client_by_id(client_id)
-        if user is None:
-            await callback_query.answer("Клиент не найден.", show_alert=True)
-            return
-
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            build_client_card_text(user),
-            reply_markup=client_card_kb(client_id, mode, page),
-        )
-        await remember_tracked_message(state, callback_query.message)
+        await render_client_card(cl_mng, callback_query, state, client_id, mode, page)
 
     return router

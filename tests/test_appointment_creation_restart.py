@@ -32,6 +32,7 @@ from aiogram.types import Chat, User as TelegramUser
 from bot.handlers.admin.appointment_management.appointment_creation import (
     create_admin_appointment_creation_router,
 )
+from bot.handlers.utils.admin_utils.appointment_helpers import DATETIME_INPUT_PROMPT
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -242,3 +243,89 @@ async def test_restart_clears_stale_data_and_goes_to_full_name_when_no_doctors()
     data = await state.get_data()
     assert data == {"clinic_name": "Zub Mudrosti"}
     assert await state.get_state() == AppointmentCreationStates.client_full_name
+
+
+# --- restart_create with client_preselected: booking-from-card flow re-enters without asking FIO ---
+
+def _stale_preselected_own_scope_data():
+    return {
+        "clinic_name": "Old Clinic",
+        "client_preselected": True,
+        "full_name": "Иванов Иван",
+        "phone": "+998901234567",
+        "origin_client_id": 5,
+        "origin_mode": "list",
+        "origin_page": 2,
+        "appointment_datetime": "2026-01-01 10:00:00",
+        "purpose": "Старая цель визита",
+    }
+
+
+@pytest.mark.asyncio
+async def test_restart_with_client_preselected_and_own_scope_restores_preselect_data_and_skips_full_name():
+    router = _own_scope_router()
+    restart_create = _find_callback_handler(router, "restart_create")
+
+    storage = MemoryStorage()
+    key = (Chat(id=100, type="private").id, TelegramUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="Admin").id)
+    state = FSMContext(storage=storage, key=key)
+    await state.set_state(AppointmentCreationStates.confirm)
+    await state.update_data(**_stale_preselected_own_scope_data())
+
+    callback_query = _callback_query()
+    await restart_create(callback_query, state)
+
+    data = await state.get_data()
+    assert data == {
+        "clinic_name": "Zub Mudrosti",
+        "client_preselected": True,
+        "full_name": "Иванов Иван",
+        "phone": "+998901234567",
+        "origin_client_id": 5,
+        "origin_mode": "list",
+        "origin_page": 2,
+    }
+    assert await state.get_state() == AppointmentCreationStates.appointment_datetime
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == DATETIME_INPUT_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_restart_with_client_preselected_and_clinic_scope_shows_doctor_picker_with_preselect_data():
+    router = _clinic_scope_router()
+    restart_create = _find_callback_handler(router, "restart_create")
+
+    storage = MemoryStorage()
+    key = (Chat(id=100, type="private").id, TelegramUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="Admin").id)
+    state = FSMContext(storage=storage, key=key)
+    await state.set_state(AppointmentCreationStates.confirm)
+    await state.update_data(
+        clinic_name="Old Clinic",
+        client_preselected=True,
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        origin_client_id=5,
+        origin_mode="search",
+        origin_page=1,
+        origin_search_data={"full_name": "Иванов"},
+        appointment_datetime="2026-01-01 10:00:00",
+        purpose="Старая цель визита",
+    )
+
+    callback_query = _callback_query()
+    await restart_create(callback_query, state)
+
+    data = await state.get_data()
+    assert data == {
+        "clinic_name": "Zub Mudrosti",
+        "client_preselected": True,
+        "full_name": "Иванов Иван",
+        "phone": "+998901234567",
+        "origin_client_id": 5,
+        "origin_mode": "search",
+        "origin_page": 1,
+        "origin_search_data": {"full_name": "Иванов"},
+        "staff_options": {"42": "Artem Upravlyayuschiy", "99": "Petrov Petr"},
+    }
+    assert await state.get_state() == AppointmentCreationStates.choose_doctor

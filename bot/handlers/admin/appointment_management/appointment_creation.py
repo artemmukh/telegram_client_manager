@@ -4,7 +4,9 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError, PhoneAlreadyExistsError
+from bot.handlers.utils.admin_utils import appointment_helpers as ah
 from bot.handlers.utils.admin_utils.appointment_helpers import (
+    DATETIME_INPUT_PROMPT,
     build_appointment_confirmation,
     build_appointment_card,
     datetime_processing,
@@ -25,7 +27,6 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
     back_to_records_kb,
 )
 from bot.keyboards.client.booking_cb import ClientBookDoctorCB
-from bot.keyboards.client.booking_kb import booking_doctor_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
@@ -49,28 +50,7 @@ def create_admin_appointment_creation_router(
     router.callback_query.filter(RoleFilter("admin"))
 
     async def begin_appointment_creation(callback_query: CallbackQuery, state: FSMContext):
-        await state.clear()
-
-        try:
-            clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
-        except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
-            return
-
-        await state.update_data(clinic_name=clinic.name)
-
-        doctors = await appt_mng.list_clinic_doctors_for_creation(callback_query.from_user.id)
-        if doctors:
-            await state.update_data(staff_options={str(d.ID): d.full_name for d in doctors})
-            await state.set_state(AppointmentCreationStates.choose_doctor)
-            await callback_query.answer('')
-            await callback_query.message.edit_text(
-                "Выберите врача:",
-                reply_markup=booking_doctor_kb(doctors, cancel_callback_data="back_to_main_records"),
-            )
-            return
-
-        await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
+        await ah.begin_appointment_creation(appt_mng, callback_query, state)
 
     @router.callback_query(F.data == "create_record")
     async def start_create(callback_query: CallbackQuery, state: FSMContext):
@@ -83,10 +63,26 @@ def create_admin_appointment_creation_router(
         staff_name = staff_options.get(str(callback_data.staff_user_id), "Врач")
 
         await state.update_data(staff_user_id=callback_data.staff_user_id, staff_name=staff_name)
+
+        if data.get("client_preselected"):
+            await state.set_state(AppointmentCreationStates.appointment_datetime)
+            await callback_query.answer('')
+            await callback_query.message.edit_text(DATETIME_INPUT_PROMPT, reply_markup=back_to_records_kb())
+            return
+
         await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
 
     @router.callback_query(F.data == "restart_appointment_create")
     async def restart_create(callback_query: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        if data.get("client_preselected"):
+            await ah.begin_appointment_creation(
+                appt_mng, callback_query, state,
+                full_name=data.get("full_name"), phone=data.get("phone"),
+                origin_client_id=data.get("origin_client_id"), origin_mode=data.get("origin_mode"),
+                origin_page=data.get("origin_page"), origin_search_data=data.get("origin_search_data"),
+            )
+            return
         await begin_appointment_creation(callback_query, state)
 
     @router.message(AppointmentCreationStates.client_full_name, F.text)
@@ -110,21 +106,7 @@ def create_admin_appointment_creation_router(
         if client:
             await state.set_state(AppointmentCreationStates.appointment_datetime)
             await message.answer(
-                "Введите дату и время на русском языке:\n\n"
-                "✅ Примеры правильного ввода:\n"
-                "• завтра в 3 часа (→ 15:00)\n"
-                "• завтра в 2 часа (→ 14:00, днём)\n"
-                "• среда в 14:00\n"
-                "• в пятницу в 2 часа дня (→ 14:00)\n"
-                "• 13 сентября 15:30\n"
-                "• через 2 часа\n"
-                "• в 10 часов утра\n"
-                "• в 8 часов вечера\n"
-                "• в 2 часа ночи\n\n"
-                "❌ Что не работает:\n"
-                "• просто время без даты (нужна дата)\n"
-                "• английский язык\n"
-                "• 'через 2 часов' (правильно 'через 2 часа')",
+                DATETIME_INPUT_PROMPT,
                 reply_markup=back_to_records_kb(),
             )
         else:
@@ -153,22 +135,7 @@ def create_admin_appointment_creation_router(
         await state.set_state(AppointmentCreationStates.appointment_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            f"✅ Клиент создан: {data['full_name']}\n\n"
-            "Введите дату и время на русском языке:\n\n"
-            "✅ Примеры правильного ввода:\n"
-            "• завтра в 3 часа (→ 15:00)\n"
-            "• завтра в 2 часа (→ 14:00, днём)\n"
-            "• среда в 14:00\n"
-            "• в пятницу в 2 часа дня (→ 14:00)\n"
-            "• 13 сентября 15:30\n"
-            "• через 2 часа\n"
-            "• в 10 часов утра\n"
-            "• в 8 часов вечера\n"
-            "• в 2 часа ночи\n\n"
-            "❌ Что не работает:\n"
-            "• просто время без даты (нужна дата)\n"
-            "• английский язык\n"
-            "• 'через 2 часов' (правильно 'через 2 часа')",
+            f"✅ Клиент создан: {data['full_name']}\n\n" + DATETIME_INPUT_PROMPT,
             reply_markup=back_to_records_kb(),
         )
 
@@ -233,21 +200,7 @@ def create_admin_appointment_creation_router(
         await state.set_state(AppointmentCreationStates.appointment_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            "Введите дату и время на русском языке:\n\n"
-            "✅ Примеры правильного ввода:\n"
-            "• завтра в 3 часа (→ 15:00)\n"
-            "• завтра в 2 часа (→ 14:00, днём)\n"
-            "• среда в 14:00\n"
-            "• в пятницу в 2 часа дня (→ 14:00)\n"
-            "• 13 сентября 15:30\n"
-            "• через 2 часа\n"
-            "• в 10 часов утра\n"
-            "• в 8 часов вечера\n"
-            "• в 2 часа ночи\n\n"
-            "❌ Что не работает:\n"
-            "• просто время без даты (нужна дата)\n"
-            "• английский язык\n"
-            "• 'через 2 часов' (правильно 'через 2 часа')",
+            DATETIME_INPUT_PROMPT,
             reply_markup=back_to_records_kb(),
         )
 

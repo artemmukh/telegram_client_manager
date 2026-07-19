@@ -1,6 +1,6 @@
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from bot.models.user import User
 from bot.utils.tools import format_phone_short
@@ -50,3 +50,22 @@ async def edit_tracked_message(
         text=text,
         reply_markup=reply_markup,
     )
+
+
+async def render_client_card(
+    cl_mng, callback_query: CallbackQuery, state: FSMContext, client_id: int, mode: str, page: int,
+) -> bool:
+    from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
+
+    user = await cl_mng.get_client_by_id(client_id)
+    if user is None:
+        await callback_query.answer("Клиент не найден.", show_alert=True)
+        return False
+
+    await callback_query.answer('')
+    await callback_query.message.edit_text(
+        build_client_card_text(user),
+        reply_markup=client_card_kb(client_id, mode, page),
+    )
+    await remember_tracked_message(state, callback_query.message)
+    return True

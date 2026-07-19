@@ -3,20 +3,30 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import Chat, User as TelegramUser
+
 from bot.exceptions.user_exceptions import UserNotFoundError
 from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
+from bot.handlers.utils.admin_utils.appointment_helpers import DATETIME_INPUT_PROMPT
 from bot.keyboards.admin.client_management_kb.client_browser_cb import (
     ClientActionCB,
     ClientCardCB,
     ClientPageCB,
 )
 from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
+from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
+from bot.keyboards.client.booking_kb import booking_doctor_kb
+from bot.models.clinic import Clinic
+from bot.models.staff import Staff
 from bot.models.user import User
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
+from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.role import Role
 from bot.utils.tools import format_phone_short
 
@@ -256,11 +266,11 @@ def test_client_card_kb_has_no_delete_button():
     assert not any("Удалить" in button.text for button in all_buttons)
 
 
-def test_client_card_kb_adjust_layout_has_two_rows_of_buttons():
+def test_client_card_kb_adjust_layout_has_three_rows_of_buttons():
     markup = client_card_kb(client_id=1, mode="list", page=1)
 
     row_lengths = [len(row) for row in markup.inline_keyboard]
-    assert row_lengths == [2, 1]
+    assert row_lengths == [2, 1, 1]
 
 
 # --- start_delete: appointment-count warning ---
@@ -326,3 +336,172 @@ async def test_start_delete_warning_includes_count_when_appointments_exist():
 
     assert "записи на приём" in text
     assert "3" in text
+
+
+# --- new_appointment: book directly from a client's card, skipping FIO/phone entry ---
+
+class FakeUserRepoForNewAppointment:
+    def __init__(self, clients_by_id=None, staff_by_clinic=None):
+        self.clients_by_id = dict(clients_by_id or {})
+        self.staff_by_clinic = staff_by_clinic or {}
+
+    async def get_client_by_id(self, user_id):
+        return self.clients_by_id.get(user_id)
+
+    async def get_staff_users_by_clinic_id(self, clinic_id):
+        return self.staff_by_clinic.get(clinic_id, [])
+
+
+class FakeStaffRepoForNewAppointment:
+    def __init__(self, staff_by_telegram_id):
+        self.staff_by_telegram_id = staff_by_telegram_id
+
+    async def get_staff(self, telegram_user_id):
+        return self.staff_by_telegram_id.get(telegram_user_id)
+
+    async def get_staff_by_clinic_id(self, clinic_id):
+        return [s for s in self.staff_by_telegram_id.values() if s.clinic_id == clinic_id]
+
+
+class FakeClinicRepoForNewAppointment:
+    def __init__(self, clinic):
+        self.clinic = clinic
+
+    async def get_clinic_by_id(self, clinic_id):
+        return self.clinic
+
+
+def _new_appointment_client():
+    return User(ID=5, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
+
+
+def _new_appointment_fsm_context():
+    storage = MemoryStorage()
+    key = (
+        Chat(id=100, type="private").id,
+        TelegramUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="Admin").id,
+    )
+    return FSMContext(storage=storage, key=key)
+
+
+def _build_new_appointment_router(client, staff_by_telegram_id, staff_by_clinic=None):
+    user_repo = FakeUserRepoForNewAppointment(
+        clients_by_id={client.ID: client} if client else {},
+        staff_by_clinic=staff_by_clinic or {},
+    )
+    staff_repo = FakeStaffRepoForNewAppointment(staff_by_telegram_id)
+    clinic_repo = FakeClinicRepoForNewAppointment(Clinic(clinic_id=1, name="Клиника Тест", token="t"))
+    return create_admin_client_browser_router(user_repo, staff_repo, clinic_repo)
+
+
+@pytest.mark.asyncio
+async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_preselect_and_origin_data():
+    client = _new_appointment_client()
+    staff_by_telegram_id = {
+        ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
+    }
+    router = _build_new_appointment_router(client, staff_by_telegram_id)
+    new_appointment = _find_handler(router, "new_appointment")
+
+    callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="list", page=2)
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+
+    await new_appointment(callback_query, callback_data, state)
+
+    assert await state.get_state() == AppointmentCreationStates.appointment_datetime
+    data = await state.get_data()
+    assert data["client_preselected"] is True
+    assert data["full_name"] == client.full_name
+    assert data["phone"] == client.phone
+    assert data["origin_client_id"] == 5
+    assert data["origin_mode"] == "list"
+    assert data["origin_page"] == 2
+    assert "origin_search_data" not in data
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == DATETIME_INPUT_PROMPT
+    assert kwargs["reply_markup"] == back_to_records_kb()
+
+
+@pytest.mark.asyncio
+async def test_new_appointment_clinic_wide_admin_shows_doctor_picker_with_preselect_and_origin_data():
+    client = _new_appointment_client()
+    admin = User(
+        ID=42, full_name="Управляющий", phone="+998900000000", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1,
+    )
+    doctor = User(
+        ID=99, full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN,
+        telegram_user_id=1000, clinic_id=1,
+    )
+    staff_by_telegram_id = {
+        ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="own"),
+    }
+    router = _build_new_appointment_router(client, staff_by_telegram_id, staff_by_clinic={1: [admin, doctor]})
+    new_appointment = _find_handler(router, "new_appointment")
+
+    callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="search", page=1)
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+
+    await new_appointment(callback_query, callback_data, state)
+
+    assert await state.get_state() == AppointmentCreationStates.choose_doctor
+    data = await state.get_data()
+    assert data["client_preselected"] is True
+    assert data["full_name"] == client.full_name
+    assert data["phone"] == client.phone
+    assert data["origin_client_id"] == 5
+    assert data["origin_mode"] == "search"
+    assert data["origin_page"] == 1
+    assert data["staff_options"] == {"42": "Управляющий", "99": "Петров Петр"}
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == "Выберите врача:"
+    assert kwargs["reply_markup"] == booking_doctor_kb([admin, doctor], cancel_callback_data="back_to_main_records")
+
+
+@pytest.mark.asyncio
+async def test_new_appointment_from_search_result_threads_search_data_into_origin_search_data():
+    client = _new_appointment_client()
+    staff_by_telegram_id = {
+        ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
+    }
+    router = _build_new_appointment_router(client, staff_by_telegram_id)
+    new_appointment = _find_handler(router, "new_appointment")
+
+    callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="search", page=1)
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+    await state.update_data(search_data={"full_name": "Иванов"})
+
+    await new_appointment(callback_query, callback_data, state)
+
+    data = await state.get_data()
+    assert data["origin_search_data"] == {"full_name": "Иванов"}
+    assert data["client_preselected"] is True
+    assert await state.get_state() == AppointmentCreationStates.appointment_datetime
+
+
+@pytest.mark.asyncio
+async def test_new_appointment_client_not_found_shows_alert_and_does_not_touch_fsm():
+    staff_by_telegram_id = {
+        ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
+    }
+    router = _build_new_appointment_router(None, staff_by_telegram_id)
+    new_appointment = _find_handler(router, "new_appointment")
+
+    callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="list", page=1)
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+
+    await new_appointment(callback_query, callback_data, state)
+
+    callback_query.answer.assert_awaited_once_with("Клиент не найден.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    assert await state.get_state() is None
+    assert await state.get_data() == {}

@@ -20,6 +20,8 @@ from unittest.mock import AsyncMock, MagicMock
 from bot.handlers.admin.appointment_management.appointment_creation import (
     create_admin_appointment_creation_router,
 )
+from bot.handlers.utils.admin_utils.appointment_helpers import DATETIME_INPUT_PROMPT
+from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.keyboards.client.booking_cb import ClientBookDoctorCB
 from bot.keyboards.client.booking_kb import booking_doctor_kb
 from bot.models.clinic import Clinic
@@ -240,3 +242,37 @@ async def test_pick_doctor_falls_back_to_generic_label_when_id_not_in_options():
 
     state.update_data.assert_awaited_once_with(staff_user_id=404, staff_name="Врач")
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.client_full_name)
+
+
+# --- pick_doctor: client_preselected (booking from a client's card) skips FIO entry ---
+
+@pytest.mark.asyncio
+async def test_pick_doctor_with_client_preselected_skips_full_name_goes_straight_to_datetime():
+    admin = _admin()
+    user_repo = FakeUserRepo(admin=admin)
+    staff_repo = FakeStaffRepo({
+        ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+    })
+    router = _build_router(user_repo, staff_repo)
+    pick_doctor = _find_callback_handler(router, "pick_doctor")
+
+    callback_query = _callback_query()
+    state = _state(
+        staff_options={"99": "Petrov Petr"},
+        client_preselected=True,
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        origin_client_id=5,
+        origin_mode="list",
+        origin_page=1,
+    )
+    callback_data = ClientBookDoctorCB(staff_user_id=99)
+
+    await pick_doctor(callback_query, callback_data, state)
+
+    state.update_data.assert_awaited_once_with(staff_user_id=99, staff_name="Petrov Petr")
+    state.set_state.assert_awaited_once_with(AppointmentCreationStates.appointment_datetime)
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == DATETIME_INPUT_PROMPT
+    assert kwargs["reply_markup"] == back_to_records_kb()
