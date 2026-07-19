@@ -50,7 +50,7 @@ from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.states.admin.client_management.client_browser_states import ClientBrowserStates
 from bot.utils.role import RoleFilter
-from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
+from bot.validators.validators import SEARCH_NAME_PATTERN
 
 logger = logging.getLogger(__name__)
 

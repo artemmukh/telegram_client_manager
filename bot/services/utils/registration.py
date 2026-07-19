@@ -10,7 +10,7 @@ from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
-from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
+from bot.validators.validators import validate_full_name, validate_phone, SEARCH_NAME_PATTERN
 
 
 @dataclass
