@@ -46,13 +46,13 @@ def create_admin_completion_router(
             return
 
         try:
-            await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
+            appointment = await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_appointment_autocomplete(callback_data.appointment_id)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
         await callback_query.answer('')
         await callback_query.message.edit_text("Приём завершён.", reply_markup=None)

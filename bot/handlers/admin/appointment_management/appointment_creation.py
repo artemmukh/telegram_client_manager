@@ -32,7 +32,7 @@ from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
-from bot.validators.validators import FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
+from bot.validators.validators import SEARCH_NAME_PATTERN
 
 
 def create_admin_appointment_creation_router(
@@ -240,16 +240,11 @@ def create_admin_appointment_creation_router(
                 notification_text += "\n⚠️ Не удалось отправить уведомление клиенту (нет Telegram ID)"
 
         if scheduler and appointment.status == AppointmentStatus.CONFIRMED:
-            await scheduler.schedule_appointment_reminders(appointment)
             notification_text += "\n⏰ Напоминания запланированы (24ч и 2ч перед приемом)"
-
-            await scheduler.schedule_appointment_completion(appointment)
             notification_text += "\n✅ Автозавершение: через 2ч после приема"
 
-            await scheduler.schedule_appointment_autocomplete(appointment)
-
         if scheduler:
-            await scheduler.schedule_pending_expiry(appointment)
+            await scheduler.resync_appointment_jobs(appointment)
 
         await callback_query.message.edit_text(
             notification_text,

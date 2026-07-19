@@ -163,10 +163,10 @@ async def test_skip_edit_finalizes_status_as_completed():
 
 
 @pytest.mark.asyncio
-async def test_skip_edit_cancels_autocomplete_job_when_scheduler_provided():
+async def test_skip_edit_resyncs_jobs_when_scheduler_provided():
     appointment_repo = FakeAppointmentRepository(_appointment())
     appointment_scheduler = MagicMock()
-    appointment_scheduler.cancel_appointment_autocomplete = AsyncMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
     router = _router(appointment_repo, appointment_scheduler)
     skip_edit = _find_handler(router, "skip_edit")
 
@@ -175,7 +175,9 @@ async def test_skip_edit_cancels_autocomplete_job_when_scheduler_provided():
 
     await skip_edit(callback_query, callback_data)
 
-    appointment_scheduler.cancel_appointment_autocomplete.assert_awaited_once_with(1)
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
+    resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
+    assert resynced_appointment.status is AppointmentStatus.COMPLETED
 
 
 @pytest.mark.asyncio
