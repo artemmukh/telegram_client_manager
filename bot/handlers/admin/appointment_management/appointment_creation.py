@@ -48,8 +48,9 @@ def create_admin_appointment_creation_router(
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
-    @router.callback_query(F.data == "create_record")
-    async def start_create(callback_query: CallbackQuery, state: FSMContext):
+    async def begin_appointment_creation(callback_query: CallbackQuery, state: FSMContext):
+        await state.clear()
+
         try:
             clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
@@ -71,6 +72,10 @@ def create_admin_appointment_creation_router(
 
         await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
 
+    @router.callback_query(F.data == "create_record")
+    async def start_create(callback_query: CallbackQuery, state: FSMContext):
+        await begin_appointment_creation(callback_query, state)
+
     @router.callback_query(AppointmentCreationStates.choose_doctor, ClientBookDoctorCB.filter())
     async def pick_doctor(callback_query: CallbackQuery, callback_data: ClientBookDoctorCB, state: FSMContext):
         data = await state.get_data()
@@ -80,11 +85,9 @@ def create_admin_appointment_creation_router(
         await state.update_data(staff_user_id=callback_data.staff_user_id, staff_name=staff_name)
         await ask_full_name(callback_query, state, AppointmentCreationStates.client_full_name, reply_markup=back_to_records_kb())
 
-    @router.callback_query(AppointmentCreationStates.confirm_create, F.data == "restart_appointment_create")
+    @router.callback_query(F.data == "restart_appointment_create")
     async def restart_create(callback_query: CallbackQuery, state: FSMContext):
-        await state.set_state(AppointmentCreationStates.client_full_name)
-        await callback_query.answer('')
-        await callback_query.message.answer("Введите имя клиента:", reply_markup=back_to_records_kb())
+        await begin_appointment_creation(callback_query, state)
 
     @router.message(AppointmentCreationStates.client_full_name, F.text)
     async def get_name(message: Message, state: FSMContext):
