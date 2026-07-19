@@ -543,11 +543,28 @@ class AppointmentManagement:
 
         return appointment
 
+    async def complete_confirmed_appointment(self, appointment_id: int) -> Appointment | None:
+        appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            return None
+        if appointment.status != AppointmentStatus.CONFIRMED or appointment.proposed_datetime is not None:
+            return None
+
+        return await self.update_status(appointment_id, AppointmentStatus.COMPLETED)
+
     async def expire_reschedule_request(self, appointment_id: int) -> Appointment | None:
         appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
         if appointment is None:
             return None
         if appointment.proposed_datetime is None:
+            return None
+        # This method previously ran status-independently on purpose (to also cover
+        # the PENDING+ADMIN counter-offer negotiation branch), but per product
+        # decision the "your reschedule request expired" notification should not
+        # fire once the appointment itself has been finalized/cancelled by either
+        # side -- CONFIRMED and PENDING are the only statuses where an outstanding
+        # reschedule negotiation is still meaningful.
+        if appointment.status not in (AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING):
             return None
 
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)

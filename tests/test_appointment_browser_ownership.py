@@ -160,7 +160,7 @@ def _other_clinic_appointment(status=AppointmentStatus.CONFIRMED):
     )
 
 
-def _build_router(appointment_repo, admins=None):
+def _build_router(appointment_repo, admins=None, appointment_scheduler=None, notification_service=None):
     admins = admins or {OWN_ADMIN_TELEGRAM_ID: _own_admin(), CLINIC_ADMIN_TELEGRAM_ID: _clinic_admin()}
     user_repo = FakeUserRepo(admins)
     staff_repo = FakeStaffRepo({
@@ -168,7 +168,10 @@ def _build_router(appointment_repo, admins=None):
         CLINIC_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=CLINIC_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
     })
     clinic_repo = FakeClinicRepo({1: Clinic(clinic_id=1, name="Zub Mudrosti", token="t")})
-    return create_admin_appointment_browser_router(appointment_repo, user_repo, staff_repo, clinic_repo)
+    return create_admin_appointment_browser_router(
+        appointment_repo, user_repo, staff_repo, clinic_repo,
+        appointment_scheduler=appointment_scheduler, notification_service=notification_service,
+    )
 
 
 def _find_handler(router, name):
@@ -400,3 +403,57 @@ async def test_finish_appointment_denies_own_scope_admin_for_other_doctor_appoin
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.status_updates == []
+
+
+# --- scheduler job migration: finish_delete and finish_appointment must resync/
+# cancel through the scheduler's single-source-of-truth methods, not the old
+# ad-hoc per-handler cancel_* sequences (leaked reschedule_expiry/proposal_reminder
+# jobs otherwise). ---
+
+@pytest.mark.asyncio
+async def test_finish_delete_cancels_all_jobs_and_nothing_else():
+    appt_repo = FakeAppointmentRepository([_foreign_appointment()])
+    appointment_scheduler = AsyncMock()
+    router = _build_router(appt_repo, appointment_scheduler=appointment_scheduler)
+    confirm_delete_silent = _find_handler(router, "confirm_delete_silent")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    callback_data = ApptActionCB(
+        action="confirm_delete_silent", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
+    )
+
+    await confirm_delete_silent(callback_query, callback_data, _state())
+
+    assert appt_repo.deleted == [FOREIGN_APPOINTMENT_ID]
+    appointment_scheduler.cancel_all_jobs.assert_awaited_once_with(FOREIGN_APPOINTMENT_ID)
+    appointment_scheduler.resync_appointment_jobs.assert_not_called()
+    appointment_scheduler.cancel_appointment_reminders.assert_not_called()
+    appointment_scheduler.cancel_appointment_completions.assert_not_called()
+    appointment_scheduler.cancel_appointment_autocomplete.assert_not_called()
+    appointment_scheduler.cancel_auto_confirm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finish_appointment_resyncs_jobs_and_nothing_else():
+    appt_repo = FakeAppointmentRepository([_foreign_appointment()])
+    appointment_scheduler = AsyncMock()
+    router = _build_router(appt_repo, appointment_scheduler=appointment_scheduler)
+    finish_appointment = _find_handler(router, "finish_appointment")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    callback_data = ApptActionCB(
+        action="finish_appointment", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
+    )
+
+    await finish_appointment(callback_query, callback_data, _state())
+
+    assert appt_repo.status_updates == [(FOREIGN_APPOINTMENT_ID, AppointmentStatus.COMPLETED)]
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
+    resynced_appointment = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
+    assert resynced_appointment.status == AppointmentStatus.COMPLETED
+
+    appointment_scheduler.cancel_all_jobs.assert_not_called()
+    appointment_scheduler.cancel_appointment_reminders.assert_not_called()
+    appointment_scheduler.cancel_appointment_completions.assert_not_called()
+    appointment_scheduler.cancel_appointment_autocomplete.assert_not_called()
+    appointment_scheduler.cancel_auto_confirm.assert_not_called()

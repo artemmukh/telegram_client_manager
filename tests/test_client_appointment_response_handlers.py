@@ -282,12 +282,7 @@ async def test_handle_cancel_confirmation_yes_notifies_sole_doctor_recipient():
     notification_service = MagicMock()
     notification_service.notify_admin_cancellation = AsyncMock()
 
-    appointment_scheduler = MagicMock()
-    for method_name in (
-        "cancel_appointment_reminders", "cancel_appointment_completions", "cancel_pending_expiry",
-        "cancel_proposal_reminder", "cancel_reschedule_expiry", "cancel_auto_confirm",
-    ):
-        setattr(appointment_scheduler, method_name, AsyncMock())
+    appointment_scheduler = AsyncMock()
 
     router = create_client_appointment_router(
         MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
@@ -302,6 +297,7 @@ async def test_handle_cancel_confirmation_yes_notifies_sole_doctor_recipient():
     notification_service.notify_admin_cancellation.assert_awaited_once_with(
         doctor.telegram_user_id, cancelled_appointment, client.full_name,
     )
+    appointment_scheduler.cancel_all_jobs.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio
@@ -331,12 +327,7 @@ async def test_handle_cancel_confirmation_yes_notifies_remaining_recipients_afte
         side_effect=[Exception("boom"), None]
     )
 
-    appointment_scheduler = MagicMock()
-    for method_name in (
-        "cancel_appointment_reminders", "cancel_appointment_completions", "cancel_pending_expiry",
-        "cancel_proposal_reminder", "cancel_reschedule_expiry", "cancel_auto_confirm",
-    ):
-        setattr(appointment_scheduler, method_name, AsyncMock())
+    appointment_scheduler = AsyncMock()
 
     router = create_client_appointment_router(
         MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
@@ -356,6 +347,7 @@ async def test_handle_cancel_confirmation_yes_notifies_remaining_recipients_afte
     notification_service.notify_admin_cancellation.assert_any_await(
         clinic_admin.telegram_user_id, cancelled_appointment, client.full_name,
     )
+    appointment_scheduler.cancel_all_jobs.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio

@@ -20,12 +20,15 @@ from bot.services.appointment.appointment_jobs import (
     expire_pending_request_job,
     expire_reschedule_request_job,
     auto_confirm_pending_job,
+    auto_complete_appointment_job,
     send_proposal_reminder_job,
 )
 from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 logger = logging.getLogger(__name__)
+
+AUTO_COMPLETE_DELAY_HOURS = 2
 
 
 class AppointmentScheduler:
@@ -179,6 +182,56 @@ class AppointmentScheduler:
                 f"Failed to schedule completion for appointment {appointment.id}: {e}"
             )
 
+    async def schedule_appointment_autocomplete(self, appointment: Appointment) -> None:
+        """Schedule the auto-complete job for an appointment.
+
+        Creates a scheduled job that runs 2 hours after appointment datetime
+        to silently mark the appointment as COMPLETED, provided it is still
+        CONFIRMED with no active reschedule negotiation at execution time
+        (re-checked live by auto_complete_appointment_job).
+
+        Job ID: appt_{appointment_id}_autocomplete
+        """
+        if not appointment.id:
+            logger.warning("Cannot schedule autocomplete for appointment without ID")
+            return
+
+        try:
+            appointment_dt = datetime.fromisoformat(appointment.datetime)
+            autocomplete_time = appointment_dt + timedelta(hours=AUTO_COMPLETE_DELAY_HOURS)
+
+            if autocomplete_time <= _current_tashkent_time():
+                logger.info(
+                    f"Skipping past-due autocomplete for appointment {appointment.id} "
+                    f"(would have run at {autocomplete_time.isoformat()})"
+                )
+                return
+
+            job_id = f"appt_{appointment.id}_autocomplete"
+
+            try:
+                self.scheduler.add_job(
+                    auto_complete_appointment_job,
+                    "date",
+                    run_date=autocomplete_time,
+                    args=(appointment.id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule autocomplete job {job_id}: {exc}"
+                ) from exc
+
+            logger.info(
+                f"Scheduled autocomplete for appointment {appointment.id} "
+                f"at {autocomplete_time.isoformat()}"
+            )
+        except JobSchedulingError as e:
+            logger.error(
+                f"Failed to schedule autocomplete for appointment {appointment.id}: {e}"
+            )
+
     async def schedule_auto_confirm(self, appointment: Appointment) -> None:
         """[LEGACY] Schedule auto-confirm job for a PENDING appointment.
 
@@ -264,6 +317,30 @@ class AppointmentScheduler:
         except JobCancellationError as e:
             logger.error(
                 f"Failed to cancel completion for appointment {appointment_id}: {e}"
+            )
+
+    async def cancel_appointment_autocomplete(self, appointment_id: int) -> None:
+        """Cancel the auto-complete job for an appointment.
+
+        Removes job with ID: appt_{appointment_id}_autocomplete
+        """
+        from apscheduler.jobstores.base import JobLookupError
+
+        try:
+            job_id = f"appt_{appointment_id}_autocomplete"
+
+            try:
+                self.scheduler.remove_job(job_id)
+                logger.info(f"Cancelled autocomplete job: {job_id}")
+            except JobLookupError:
+                logger.debug(f"Autocomplete job {job_id} does not exist (already ran or cancelled)")
+            except Exception as exc:
+                raise JobCancellationError(
+                    f"Failed to remove autocomplete job {job_id}: {exc}"
+                ) from exc
+        except JobCancellationError as e:
+            logger.error(
+                f"Failed to cancel autocomplete for appointment {appointment_id}: {e}"
             )
 
     async def cancel_auto_confirm(self, appointment_id: int) -> None:
@@ -541,6 +618,21 @@ class AppointmentScheduler:
             appointment_id,
         )
 
+    async def cancel_all_jobs(self, appointment_id: int) -> None:
+        """Cancel every kind of job this scheduler can create for an appointment.
+
+        Used by resync_appointment_jobs' terminal-status branch, and directly by
+        callers (e.g. deletion) that need every job gone without a valid
+        Appointment object carrying a live status.
+        """
+        await self.cancel_pending_expiry(appointment_id)
+        await self.cancel_proposal_reminder(appointment_id)
+        await self.cancel_auto_confirm(appointment_id)
+        await self.cancel_reschedule_expiry(appointment_id)
+        await self.cancel_appointment_reminders(appointment_id)
+        await self.cancel_appointment_completions(appointment_id)
+        await self.cancel_appointment_autocomplete(appointment_id)
+
     async def resync_appointment_jobs(self, appointment: Appointment) -> None:
         """Recompute the full set of scheduler jobs for an appointment from its current state.
 
@@ -559,18 +651,14 @@ class AppointmentScheduler:
             AppointmentStatus.NO_SHOW,
             AppointmentStatus.EXPIRED,
         ):
-            await self.cancel_pending_expiry(appointment_id)
-            await self.cancel_proposal_reminder(appointment_id)
-            await self.cancel_auto_confirm(appointment_id)
-            await self.cancel_reschedule_expiry(appointment_id)
-            await self.cancel_appointment_reminders(appointment_id)
-            await self.cancel_appointment_completions(appointment_id)
+            await self.cancel_all_jobs(appointment_id)
             return
 
         if appointment.status == AppointmentStatus.CONFIRMED:
             await self.cancel_pending_expiry(appointment_id)
             await self.cancel_proposal_reminder(appointment_id)
             await self.cancel_auto_confirm(appointment_id)
+            await self.cancel_appointment_autocomplete(appointment_id)
 
             if appointment.proposed_datetime is not None:
                 proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
@@ -578,6 +666,7 @@ class AppointmentScheduler:
                 await self.schedule_proposal_reminder(proposal_target)
             else:
                 await self.cancel_reschedule_expiry(appointment_id)
+                await self.schedule_appointment_autocomplete(appointment)
 
             await self.cancel_appointment_reminders(appointment_id)
             await self.schedule_appointment_reminders(appointment)
@@ -589,6 +678,7 @@ class AppointmentScheduler:
             await self.cancel_reschedule_expiry(appointment_id)
             await self.cancel_appointment_reminders(appointment_id)
             await self.cancel_appointment_completions(appointment_id)
+            await self.cancel_appointment_autocomplete(appointment_id)
 
             if appointment.created_by == CreatedBy.CLIENT:
                 await self.cancel_auto_confirm(appointment_id)

@@ -493,6 +493,51 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
             await connection.close()
 
 
+async def auto_complete_appointment_job(appointment_id: int) -> None:
+    """Silently complete a CONFIRMED appointment 2 hours after its datetime.
+
+    This job is called by APScheduler 2 hours after the appointment datetime.
+    Re-checks the appointment's live status before acting: only completes it if
+    it is still CONFIRMED with no active reschedule negotiation
+    (proposed_datetime is None). No notification is sent - this mirrors the
+    effect of the admin pressing "skip" on the T+1h completion-followup prompt.
+
+    Args:
+        appointment_id: The ID of the appointment to auto-complete
+    """
+    connection = None
+    try:
+        config = load_config()
+
+        db = Database(config.database_path)
+        connection = await db.connect()
+
+        appointment_repo = AppointmentRepository(connection)
+        user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+
+        appointment = await appointment_management.complete_confirmed_appointment(appointment_id)
+
+        if appointment is None:
+            logger.info(
+                f"Auto-complete job: appointment {appointment_id} not eligible "
+                f"(not found / not CONFIRMED / negotiation in progress)"
+            )
+            return
+
+        logger.info(f"Appointment {appointment_id} auto-completed (2h after appointment)")
+
+    except AppointmentNotFoundError:
+        logger.warning(f"Auto-complete job: appointment {appointment_id} not found")
+    except Exception as e:
+        logger.exception(f"Error in auto_complete_appointment_job({appointment_id}): {e}")
+    finally:
+        if connection is not None:
+            await connection.close()
+
+
 async def auto_confirm_pending_job(appointment_id: int) -> None:
     """[LEGACY] Auto-confirm PENDING appointment 2 hours before it starts.
 

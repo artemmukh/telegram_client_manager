@@ -12,7 +12,9 @@ from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
 
-def create_admin_completion_router(appointment_repo, user_repo, staff_repo, clinic_repo) -> Router:
+def create_admin_completion_router(
+    appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None,
+) -> Router:
     router = Router()
     router.callback_query.filter(RoleFilter("admin"))
 
@@ -48,6 +50,9 @@ def create_admin_completion_router(appointment_repo, user_repo, staff_repo, clin
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
+
+        if appointment_scheduler:
+            await appointment_scheduler.cancel_appointment_autocomplete(callback_data.appointment_id)
 
         await callback_query.answer('')
         await callback_query.message.edit_text("Приём завершён.", reply_markup=None)

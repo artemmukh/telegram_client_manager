@@ -142,7 +142,9 @@ async def main():
     dp.include_router(create_admin_reschedule_requests_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
     ))
-    dp.include_router(create_admin_completion_router(appointment_repo, user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_completion_router(
+        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler,
+    ))
 
     #client handlers
     dp.include_router(create_client_appointment_router(

@@ -290,20 +290,11 @@ def create_admin_appointment_browser_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
-            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
-
-            if new_status in (
-                AppointmentStatus.CANCELLED,
-                AppointmentStatus.NO_SHOW,
-                AppointmentStatus.COMPLETED,
-            ):
-                await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
-            elif new_status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
-                await appointment_scheduler.schedule_appointment_completion(appointment)
-
-                if new_status == AppointmentStatus.PENDING:
-                    await appointment_scheduler.schedule_pending_expiry(appointment)
+            # Forcing status via this handler now also (re)schedules reminders when
+            # confirmed and no longer schedules a completion-followup job when
+            # forced to PENDING -- both intentional alignment with the
+            # system-wide resync_appointment_jobs rules, not regressions.
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
         if notification_service and new_status == AppointmentStatus.CANCELLED and not callback_data.post_appt:
             try:
@@ -385,9 +376,7 @@ def create_admin_appointment_browser_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
-            await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
-            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
+            await appointment_scheduler.cancel_all_jobs(callback_data.appointment_id)
 
         if notify and notification_service and appointment:
             try:
@@ -680,9 +669,7 @@ def create_admin_appointment_browser_router(
             return
 
         if appointment_scheduler:
-            await appointment_scheduler.cancel_appointment_reminders(callback_data.appointment_id)
-            await appointment_scheduler.cancel_appointment_completions(callback_data.appointment_id)
-            await appointment_scheduler.cancel_auto_confirm(callback_data.appointment_id)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
         await callback_query.answer("Приём завершён")
         await callback_query.message.edit_text(

@@ -18,8 +18,10 @@ from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_jobs import (
     auto_confirm_pending_job,
+    auto_complete_appointment_job,
     expire_pending_request_job,
     expire_reschedule_request_job,
+    mark_appointment_completed_job,
     send_proposal_reminder_job,
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
@@ -1531,6 +1533,255 @@ async def test_multiple_appointments_independent_completions(
     scheduler.shutdown(wait=False)
 
 
+# Phase 4b: Auto-Complete (T+2h) Tests
+#
+# Independent of the T+1h "appt_{id}_complete" completion-prompt job above.
+# At execution time this job re-checks the appointment's live status and
+# silently completes it - only if it is still CONFIRMED with no active
+# reschedule negotiation (proposed_datetime is None). No notification is sent.
+
+
+@pytest.mark.asyncio
+async def test_schedule_appointment_autocomplete_creates_job_at_plus_2h(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Autocomplete job is created with id appt_{id}_autocomplete at
+    appointment_dt + 2h."""
+    scheduler.start()
+
+    appointment_dt = datetime.fromisoformat(sample_appointment.datetime)
+    expected_autocomplete_time = appointment_dt + timedelta(hours=2)
+
+    await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+    jobs = scheduler.get_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].id == f"appt_{sample_appointment.id}_autocomplete"
+
+    actual_autocomplete_time = jobs[0].next_run_time
+    if actual_autocomplete_time.tzinfo:
+        expected_autocomplete_time = expected_autocomplete_time.replace(tzinfo=actual_autocomplete_time.tzinfo)
+    assert abs((actual_autocomplete_time - expected_autocomplete_time).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_autocomplete_removes_job(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """Cancelling autocomplete removes the scheduled job."""
+    scheduler.start()
+
+    await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+    assert len(scheduler.get_jobs()) == 1
+
+    await appointment_scheduler.cancel_appointment_autocomplete(sample_appointment.id)
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_cancel_appointment_autocomplete_idempotent_no_error(
+    appointment_scheduler, scheduler,
+):
+    """Cancelling a non-existent autocomplete job doesn't raise an error."""
+    scheduler.start()
+
+    await appointment_scheduler.cancel_appointment_autocomplete(999)
+
+    assert len(scheduler.get_jobs()) == 0
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_complete_confirmed_appointment_completes_when_confirmed_no_proposal(
+    mock_appointment_management, mock_appointment_repo, sample_appointment
+):
+    """Live-eligible case: CONFIRMED with no outstanding proposal -> COMPLETED."""
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    result = await mock_appointment_management.complete_confirmed_appointment(sample_appointment.id)
+
+    assert result is not None
+    assert result.status == AppointmentStatus.COMPLETED
+    mock_appointment_repo.update_appointment_status.assert_called_once_with(
+        sample_appointment.id, AppointmentStatus.COMPLETED, ANY,
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_confirmed_appointment_skips_when_negotiation_in_progress(
+    mock_appointment_management, mock_appointment_repo, sample_appointment
+):
+    """CONFIRMED but with an active reschedule proposal -> no-op."""
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = (_current_tashkent_time() + timedelta(days=1)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    result = await mock_appointment_management.complete_confirmed_appointment(sample_appointment.id)
+
+    assert result is None
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_complete_confirmed_appointment_skips_when_missing(
+    mock_appointment_management, mock_appointment_repo,
+):
+    """Appointment not found -> no-op, no error."""
+    mock_appointment_repo.get_appointment_by_id.return_value = None
+
+    result = await mock_appointment_management.complete_confirmed_appointment(999)
+
+    assert result is None
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.COMPLETED,
+        AppointmentStatus.NO_SHOW,
+        AppointmentStatus.EXPIRED,
+        AppointmentStatus.PENDING,
+    ],
+)
+async def test_complete_confirmed_appointment_skips_if_not_confirmed(
+    mock_appointment_management, mock_appointment_repo, sample_appointment, status,
+):
+    """Any status other than CONFIRMED (already resolved another way) -> no-op."""
+    sample_appointment.status = status
+    sample_appointment.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    result = await mock_appointment_management.complete_confirmed_appointment(sample_appointment.id)
+
+    assert result is None
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_complete_appointment_job_completes_eligible_confirmed_appointment(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """The standalone module-level job function completes a live-eligible
+    CONFIRMED appointment with no active negotiation."""
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_complete_appointment_job(sample_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                sample_appointment.id, AppointmentStatus.COMPLETED, ANY,
+            )
+
+
+@pytest.mark.asyncio
+async def test_auto_complete_appointment_job_skips_negotiation_in_progress(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """The job function is a no-op when a reschedule negotiation is active."""
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = (_current_tashkent_time() + timedelta(days=1)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_complete_appointment_job(sample_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dod_status_changed_after_scheduling_both_jobs_no_op_on_both(
+    appointment_scheduler, scheduler, mock_appointment_repo, mock_notification_service, sample_appointment
+):
+    """DoD sequence: a CONFIRMED appointment gets both the T+1h completion-prompt
+    job and the T+2h autocomplete job scheduled. The admin then resolves it some
+    other way (here: CANCELLED) before either job fires. Invoking the T+1h job
+    function must not send a notification (existing behavior); invoking the
+    T+2h job function must not change the status (this fix)."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+
+    await appointment_scheduler.schedule_appointment_completion(sample_appointment)
+    await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert job_ids == {
+        f"appt_{sample_appointment.id}_complete",
+        f"appt_{sample_appointment.id}_autocomplete",
+    }
+    scheduler.shutdown(wait=False)
+
+    sample_appointment.status = AppointmentStatus.CANCELLED
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await mark_appointment_completed_job(sample_appointment.id)
+
+            mock_notification_service.notify_admin_completion.assert_not_called()
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_complete_appointment_job(sample_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+
+
 # Phase 2a: Client Self-Booking Pending Expiry Tests
 
 
@@ -2708,15 +2959,16 @@ async def test_expire_reschedule_request_job_clears_proposal_if_confirmed_and_cl
 
 
 @pytest.mark.asyncio
-async def test_expire_reschedule_request_job_proceeds_regardless_of_status(
+async def test_expire_reschedule_request_job_skips_if_appointment_cancelled(
     mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment
 ):
-    """PR3: the guard was generalized from `status != CONFIRMED or proposed_datetime
-    is None or proposed_by != CLIENT` down to just `proposed_datetime is None` -- an
-    outstanding proposal now expires the same way no matter what status the
-    appointment is sitting in. This is a direct regression test for the removed
-    status check (formerly named test_..._skips_if_not_confirmed, which asserted
-    the opposite of current behavior)."""
+    """Product decision (not a bug fix): once an appointment has been finalized or
+    cancelled by either side, an unanswered reschedule proposal on it should no
+    longer be cleared or trigger the "your reschedule request expired"
+    notification -- that would just spam a stale/dead appointment. This
+    deliberately reverses the previous "status independent" behavior asserted by
+    this test's earlier version (see git history) -- CONFIRMED/PENDING are now the
+    only statuses where an outstanding negotiation still matters."""
     sample_reschedule_appointment.status = AppointmentStatus.CANCELLED
     mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
     mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(return_value=True)
@@ -2744,15 +2996,52 @@ async def test_expire_reschedule_request_job_proceeds_regardless_of_status(
             await expire_reschedule_request_job(sample_reschedule_appointment.id)
 
             mock_appointment_repo.update_appointment_status.assert_not_called()
-            mock_appointment_repo.update_proposed_datetime.assert_called_once_with(
-                sample_reschedule_appointment.id, None
-            )
-            mock_appointment_repo.update_proposed_by.assert_called_once_with(
-                sample_reschedule_appointment.id, None
-            )
-            mock_notification_service.notify_client_reschedule_request_expired.assert_called_once_with(
-                sample_reschedule_appointment
-            )
+            mock_appointment_repo.update_proposed_datetime.assert_not_called()
+            mock_appointment_repo.update_proposed_by.assert_not_called()
+            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal_status",
+    [AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW, AppointmentStatus.EXPIRED],
+)
+async def test_expire_reschedule_request_job_skips_if_appointment_terminal(
+    mock_appointment_repo, mock_user_repo, mock_notification_service, sample_reschedule_appointment,
+    terminal_status,
+):
+    """Same product decision as the CANCELLED case above, for the remaining
+    terminal statuses: COMPLETED, NO_SHOW, EXPIRED must all be a silent no-op."""
+    sample_reschedule_appointment.status = terminal_status
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_reschedule_appointment
+    mock_notification_service.notify_client_reschedule_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_reschedule_request_job(sample_reschedule_appointment.id)
+
+            mock_appointment_repo.update_appointment_status.assert_not_called()
+            mock_appointment_repo.update_proposed_datetime.assert_not_called()
+            mock_appointment_repo.update_proposed_by.assert_not_called()
+            mock_notification_service.notify_client_reschedule_request_expired.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -3401,6 +3690,46 @@ async def test_resync_appointment_jobs_terminal_status_cancels_everything(
 
 
 @pytest.mark.asyncio
+async def test_cancel_all_jobs_cancels_every_job_kind(appointment_scheduler):
+    """cancel_all_jobs must call every one of the 7 individual cancel_* methods
+    exactly once, in the same order resync_appointment_jobs' terminal branch
+    used to inline them."""
+    with patch.object(appointment_scheduler, "cancel_pending_expiry", new=AsyncMock()) as mock_pending_expiry, \
+         patch.object(appointment_scheduler, "cancel_proposal_reminder", new=AsyncMock()) as mock_proposal_reminder, \
+         patch.object(appointment_scheduler, "cancel_auto_confirm", new=AsyncMock()) as mock_auto_confirm, \
+         patch.object(appointment_scheduler, "cancel_reschedule_expiry", new=AsyncMock()) as mock_reschedule_expiry, \
+         patch.object(appointment_scheduler, "cancel_appointment_reminders", new=AsyncMock()) as mock_reminders, \
+         patch.object(appointment_scheduler, "cancel_appointment_completions", new=AsyncMock()) as mock_completions, \
+         patch.object(appointment_scheduler, "cancel_appointment_autocomplete", new=AsyncMock()) as mock_autocomplete:
+
+        await appointment_scheduler.cancel_all_jobs(1)
+
+        mock_pending_expiry.assert_awaited_once_with(1)
+        mock_proposal_reminder.assert_awaited_once_with(1)
+        mock_auto_confirm.assert_awaited_once_with(1)
+        mock_reschedule_expiry.assert_awaited_once_with(1)
+        mock_reminders.assert_awaited_once_with(1)
+        mock_completions.assert_awaited_once_with(1)
+        mock_autocomplete.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_resync_appointment_jobs_terminal_status_delegates_to_cancel_all_jobs(
+    appointment_scheduler, sample_appointment
+):
+    """resync_appointment_jobs' terminal-status branch must delegate to
+    cancel_all_jobs rather than inlining the 7 cancel calls itself (pure
+    refactor: same behavior, single source of truth for the cancel-everything
+    sequence)."""
+    sample_appointment.status = AppointmentStatus.CANCELLED
+
+    with patch.object(appointment_scheduler, "cancel_all_jobs", new=AsyncMock()) as mock_cancel_all:
+        await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+        mock_cancel_all.assert_awaited_once_with(sample_appointment.id)
+
+
+@pytest.mark.asyncio
 async def test_resync_appointment_jobs_confirmed_without_proposal_schedules_reminders_and_completion(
     appointment_scheduler, scheduler, sample_appointment
 ):
@@ -3418,6 +3747,7 @@ async def test_resync_appointment_jobs_confirmed_without_proposal_schedules_remi
         f"appt_{sample_appointment.id}_24h",
         f"appt_{sample_appointment.id}_2h",
         f"appt_{sample_appointment.id}_complete",
+        f"appt_{sample_appointment.id}_autocomplete",
     }
 
     scheduler.shutdown(wait=False)

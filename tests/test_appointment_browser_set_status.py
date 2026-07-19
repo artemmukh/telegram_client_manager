@@ -89,16 +89,16 @@ def _callback_query():
     return callback_query
 
 
-async def _run_set_status(post_appt: bool, notification_service):
+async def _run_set_status(post_appt: bool, notification_service, appointment_scheduler=None, value="cancelled"):
     appointment_repo = FakeAppointmentRepository(_appointment())
     router = create_admin_appointment_browser_router(
         appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
-        appointment_scheduler=None, notification_service=notification_service,
+        appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     set_status = _find_handler(router, "set_status")
 
     callback_data = ApptActionCB(
-        action="set_status", appointment_id=1, mode="list", page=1, value="cancelled", post_appt=post_appt,
+        action="set_status", appointment_id=1, mode="list", page=1, value=value, post_appt=post_appt,
     )
 
     await set_status(_callback_query(), callback_data, AsyncMock())
@@ -120,3 +120,53 @@ async def test_set_status_does_not_notify_client_on_post_appt_cancellation():
     await _run_set_status(post_appt=True, notification_service=notification_service)
 
     notification_service.notify_client_appointment_cancelled_by_admin.assert_not_called()
+
+
+# --- Scheduler jobs: set_status resyncs the full job set instead of managing
+# individual jobs by hand (see docs on the appointment_browser scheduler migration).
+
+
+@pytest.mark.asyncio
+async def test_set_status_resyncs_jobs_for_terminal_status():
+    notification_service = AsyncMock()
+    appointment_scheduler = AsyncMock()
+
+    await _run_set_status(
+        post_appt=False, notification_service=notification_service,
+        appointment_scheduler=appointment_scheduler, value="cancelled",
+    )
+
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
+    resynced_appointment = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
+    assert resynced_appointment.status == AppointmentStatus.CANCELLED
+
+    appointment_scheduler.cancel_appointment_reminders.assert_not_called()
+    appointment_scheduler.cancel_auto_confirm.assert_not_called()
+    appointment_scheduler.cancel_appointment_completions.assert_not_called()
+    appointment_scheduler.cancel_appointment_autocomplete.assert_not_called()
+    appointment_scheduler.schedule_appointment_completion.assert_not_called()
+    appointment_scheduler.schedule_pending_expiry.assert_not_called()
+    appointment_scheduler.schedule_appointment_autocomplete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_set_status_resyncs_jobs_for_confirmed_status():
+    notification_service = AsyncMock()
+    appointment_scheduler = AsyncMock()
+
+    await _run_set_status(
+        post_appt=False, notification_service=notification_service,
+        appointment_scheduler=appointment_scheduler, value="confirmed",
+    )
+
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
+    resynced_appointment = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
+    assert resynced_appointment.status == AppointmentStatus.CONFIRMED
+
+    appointment_scheduler.cancel_appointment_reminders.assert_not_called()
+    appointment_scheduler.cancel_auto_confirm.assert_not_called()
+    appointment_scheduler.cancel_appointment_completions.assert_not_called()
+    appointment_scheduler.cancel_appointment_autocomplete.assert_not_called()
+    appointment_scheduler.schedule_appointment_completion.assert_not_called()
+    appointment_scheduler.schedule_pending_expiry.assert_not_called()
+    appointment_scheduler.schedule_appointment_autocomplete.assert_not_called()

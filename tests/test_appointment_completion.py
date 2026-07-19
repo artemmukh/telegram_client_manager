@@ -105,8 +105,10 @@ def _callback_query(telegram_user_id=ADMIN_TELEGRAM_ID):
     return callback_query
 
 
-def _router(appointment_repo):
-    return create_admin_completion_router(appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo())
+def _router(appointment_repo, appointment_scheduler=None):
+    return create_admin_completion_router(
+        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), appointment_scheduler,
+    )
 
 
 @pytest.mark.asyncio
@@ -158,6 +160,22 @@ async def test_skip_edit_finalizes_status_as_completed():
     assert appointment_repo.appointment.status is AppointmentStatus.COMPLETED
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
     callback_query.message.edit_text.assert_called_once_with("Приём завершён.", reply_markup=None)
+
+
+@pytest.mark.asyncio
+async def test_skip_edit_cancels_autocomplete_job_when_scheduler_provided():
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.cancel_appointment_autocomplete = AsyncMock()
+    router = _router(appointment_repo, appointment_scheduler)
+    skip_edit = _find_handler(router, "skip_edit")
+
+    callback_query = _callback_query()
+    callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
+
+    await skip_edit(callback_query, callback_data)
+
+    appointment_scheduler.cancel_appointment_autocomplete.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio
