@@ -133,3 +133,63 @@ def test_build_history_card_text_omits_doctor_when_name_absent():
 
     assert "Врач:" not in text
     assert "Телефон врача:" not in text
+
+
+def test_build_history_card_text_shows_own_proposal_when_proposed_by_client():
+    appointment = _appointment(AppointmentStatus.CONFIRMED)
+    appointment.proposed_datetime = "2026-08-15T15:00:00"
+    appointment.proposed_by = CreatedBy.CLIENT
+
+    text = build_history_card_text(appointment)
+
+    assert "Вы предложили перенос на: 15 августа 2026, 15:00" in text
+
+
+def test_build_history_card_text_shows_clinic_proposal_when_proposed_by_admin():
+    appointment = _appointment(AppointmentStatus.CONFIRMED)
+    appointment.proposed_datetime = "2026-08-15T15:00:00"
+    appointment.proposed_by = CreatedBy.ADMIN
+
+    text = build_history_card_text(appointment)
+
+    assert "Клиника предложила перенос на: 15 августа 2026, 15:00" in text
+
+
+def test_build_history_card_text_omits_proposal_line_when_no_proposal():
+    appointment = _appointment(AppointmentStatus.CONFIRMED)
+
+    text = build_history_card_text(appointment)
+
+    assert "предложил" not in text
+
+
+def test_build_history_button_text_shows_marker_when_negotiating():
+    appointment = _appointment(AppointmentStatus.CONFIRMED)
+    appointment.proposed_datetime = "2026-08-15T15:00:00"
+    appointment.proposed_by = CreatedBy.ADMIN
+
+    text = build_history_button_text(appointment)
+
+    assert text.startswith("🔁")
+    expected_emoji = HISTORY_STATUS_LABELS[AppointmentStatus.CONFIRMED].split()[0]
+    assert expected_emoji in text
+
+
+def test_build_history_button_text_no_marker_when_confirmed_without_proposal():
+    appointment = _appointment(AppointmentStatus.CONFIRMED)
+
+    text = build_history_button_text(appointment)
+
+    assert "🔁" not in text
+
+
+def test_build_history_button_text_no_marker_when_pending_with_proposal():
+    """Marker is only for CONFIRMED + proposed_datetime negotiation; PENDING
+    appointments with a proposed_datetime use their own PENDING wording."""
+    appointment = _appointment(AppointmentStatus.PENDING)
+    appointment.proposed_datetime = "2026-08-15T15:00:00"
+    appointment.proposed_by = CreatedBy.ADMIN
+
+    text = build_history_button_text(appointment)
+
+    assert "🔁" not in text

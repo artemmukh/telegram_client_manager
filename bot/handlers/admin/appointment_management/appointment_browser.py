@@ -1,4 +1,5 @@
 ﻿import logging
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -55,7 +56,11 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
-from bot.services.utils.date_parser import format_datetime_for_db, get_current_tashkent_datetime
+from bot.services.utils.date_parser import (
+    format_datetime_for_db,
+    format_datetime_for_display,
+    get_current_tashkent_datetime,
+)
 from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
@@ -490,9 +495,11 @@ def create_admin_appointment_browser_router(
                     f"Failed to notify client about proposed time for appointment {callback_data.appointment_id}: {e}"
                 )
 
+        old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime))
+
         await callback_query.answer("Предложение отправлено клиенту")
         await callback_query.message.edit_text(
-            f"🔁 Клиенту предложено новое время: {data.get('appointment_datetime_display')}\n"
+            f"🔁 Текущее время: {old_display} → Предложено: {data.get('appointment_datetime_display')}\n"
             "Ожидаем ответа клиента."
         )
         await state.clear()

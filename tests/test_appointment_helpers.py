@@ -1,5 +1,6 @@
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.models.appointment import Appointment
+from bot.services.utils.date_parser import RESCHEDULE_NEGOTIATION_NOTE
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 
@@ -59,3 +60,36 @@ def test_build_appointment_card_omits_doctor_lines_when_not_flagged_as_doctor():
 
     assert "Врач:" not in card
     assert "Телефон врача:" not in card
+
+
+def test_build_appointment_card_shows_proposal_line_and_note_when_negotiating():
+    card = build_appointment_card(
+        _appointment(
+            status=AppointmentStatus.CONFIRMED,
+            proposed_datetime="2026-08-15T15:00:00",
+            proposed_by=CreatedBy.CLIENT,
+        )
+    )
+
+    assert "Клиент предложил перенос на: 15 августа 2026, 15:00" in card
+    assert RESCHEDULE_NEGOTIATION_NOTE in card
+
+
+def test_build_appointment_card_shows_own_proposal_when_admin_proposed():
+    card = build_appointment_card(
+        _appointment(
+            status=AppointmentStatus.CONFIRMED,
+            proposed_datetime="2026-08-15T15:00:00",
+            proposed_by=CreatedBy.ADMIN,
+        )
+    )
+
+    assert "Вы предложили перенос на: 15 августа 2026, 15:00" in card
+    assert RESCHEDULE_NEGOTIATION_NOTE in card
+
+
+def test_build_appointment_card_omits_proposal_line_and_note_when_no_proposal():
+    card = build_appointment_card(_appointment(status=AppointmentStatus.CONFIRMED))
+
+    assert "предложил" not in card
+    assert RESCHEDULE_NEGOTIATION_NOTE not in card

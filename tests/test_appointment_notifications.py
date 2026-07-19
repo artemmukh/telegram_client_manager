@@ -768,6 +768,26 @@ async def test_notify_client_appointment_reschedule_proposed_formats_proposed_da
 
 
 @pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_proposed_shows_current_and_proposed_time():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    await service.notify_client_appointment_reschedule_proposed(appointment)
+
+    msg = bot.sent_messages[0]
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "15 августа 2026, 15:00" in msg['text']
+    assert "2026-07-10 14:30" not in msg['text']
+    assert "2026-08-15 15:00" not in msg['text']
+
+
+@pytest.mark.asyncio
 async def test_notify_client_appointment_reschedule_proposed_returns_none_when_client_missing():
     bot = FakeBot()
     user_repo = FakeUserRepo(None)
@@ -1158,6 +1178,87 @@ async def test_notify_client_reschedule_request_expired_returns_false_when_teleg
 
 
 @pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_reminder_shows_current_and_proposed_time():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_appointment_reschedule_reminder(appointment)
+
+    assert result is True
+    msg = bot.sent_messages[0]
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "15 августа 2026, 15:00" in msg['text']
+    assert "2026-07-10 14:30" not in msg['text']
+    assert "2026-08-15 15:00" not in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_reminder_replies_to_proposal_message():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposal_message_id = 555
+
+    await service.notify_client_appointment_reschedule_reminder(appointment)
+
+    msg = bot.sent_messages[0]
+    assert msg['reply_parameters'] == ReplyParameters(
+        message_id=555,
+        allow_sending_without_reply=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_reschedule_reminder_returns_false_when_telegram_id_missing():
+    bot = FakeBot()
+    client = _client()
+    client.telegram_user_id = None
+    user_repo = FakeUserRepo(client)
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    result = await service.notify_client_appointment_reschedule_reminder(appointment)
+
+    assert result is False
+    assert len(bot.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_reschedule_requested_shows_both_times_regression():
+    """Regression test only -- notify_staff_reschedule_requested already showed
+    both current and proposed time before this task; this task must not change it."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.client_phone = "+998901234567"
+
+    await service.notify_staff_reschedule_requested(67890, appointment, "Иванов Иван")
+
+    msg = bot.sent_messages[0]
+    assert "Текущее время: 10 июля 2026, 14:30" in msg['text']
+    assert "Предложенное время: 15 августа 2026, 15:00" in msg['text']
+
+
+@pytest.mark.asyncio
 async def test_close_reschedule_proposal_message_edits_message():
     bot = FakeEditBot()
     user_repo = FakeUserRepo(_client())
@@ -1363,6 +1464,45 @@ async def test_build_appointment_message_confirmed_shows_status_label_instead_of
     expected_label = APPOINTMENT_STATUS_LABELS[AppointmentStatus.CONFIRMED]
     assert text.splitlines()[-1] == f"Статус: {expected_label}"
     assert CONFIRM_CTA not in text
+
+
+@pytest.mark.asyncio
+async def test_build_appointment_message_confirmed_with_proposal_shows_line_and_note():
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposed_by = CreatedBy.ADMIN
+
+    text = service._build_appointment_message(appointment)
+
+    assert "Клиника предложила перенос на: 15 августа 2026, 15:00" in text
+    assert "ℹ️ Ответить на предложение можно в уведомлении о переносе." in text
+
+
+@pytest.mark.asyncio
+async def test_build_appointment_message_pending_with_proposal_omits_negotiation_note():
+    """The PENDING branch already has its own correct wording (CONFIRM_CTA) --
+    the negotiation line/note is only for CONFIRMED+proposed."""
+    bot = FakeBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+    appointment = _appointment()
+    assert appointment.status == AppointmentStatus.PENDING
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposed_by = CreatedBy.ADMIN
+
+    text = service._build_appointment_message(appointment)
+
+    assert text.splitlines()[-1] == CONFIRM_CTA
+    assert "предложила перенос" not in text
+    assert "ℹ️ Ответить на предложение можно в уведомлении о переносе." not in text
 
 
 @pytest.mark.asyncio

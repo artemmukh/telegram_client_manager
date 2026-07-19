@@ -78,16 +78,18 @@ class FakeAppointmentRepository:
         self.appointment.status = status
         self.status_updates.append((appointment_id, status))
 
-    async def count_appointments_by_date_and_status(self, date_str, status, clinic_id, doctor_id=None):
-        self.count_calls.append((date_str, status, clinic_id, doctor_id))
+    async def count_appointments_by_date_and_status(
+        self, date_str, status, clinic_id, doctor_id=None, tab_bucket=False,
+    ):
+        self.count_calls.append((date_str, status, clinic_id, doctor_id, tab_bucket))
         if self.appointment and self.appointment.status == status:
             return 1
         return 0
 
     async def get_appointments_by_date_and_status_page(
-        self, date_str, status, page, clinic_id, doctor_id=None, per_page=10,
+        self, date_str, status, page, clinic_id, doctor_id=None, per_page=10, tab_bucket=False,
     ):
-        self.page_calls.append((date_str, status, page, clinic_id, doctor_id))
+        self.page_calls.append((date_str, status, page, clinic_id, doctor_id, tab_bucket))
         if self.appointment and self.appointment.status == status:
             return [self.appointment]
         return []
@@ -260,8 +262,8 @@ async def test_pick_calendar_day_sets_calendar_day_state_and_renders_tab_menu():
     assert state.states[0] == AppointmentBrowserStates.calendar_day
 
     # own-scope admin -> query is scoped to clinic_id=1, doctor_id=1 (their own ID)
-    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1)]
-    assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, 1)]
+    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, True)]
+    assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, 1, True)]
 
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
@@ -288,8 +290,8 @@ async def test_pick_calendar_day_scopes_to_clinic_only_for_clinic_scope_admin():
     await pick_calendar_day(callback_query, callback_data, state)
 
     # clinic-scope admin -> doctor_id is not restricted (None)
-    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, None)]
-    assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, None)]
+    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, None, True)]
+    assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, None, True)]
 
 
 @pytest.mark.asyncio
@@ -338,8 +340,8 @@ async def test_paginate_handler_calendar_mode_reads_calendar_date_from_fsm():
 
     await paginate(callback_query, callback_data, state)
 
-    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.PENDING, 1, 1)]
-    assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.PENDING, 1, 1, 1)]
+    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.PENDING, 1, 1, True)]
+    assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.PENDING, 1, 1, 1, True)]
 
     args, kwargs = callback_query.message.edit_text.await_args
     back_target = ApptCalendarMonthCB(year=2026, month=7).pack()

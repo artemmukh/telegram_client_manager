@@ -466,13 +466,15 @@ class AppointmentRepository:
         clinic_id: int,
         doctor_id: int | None = None,
         per_page: int = 10,
+        tab_bucket: bool = False,
     ) -> list[Appointment]:
         """Получить страницу записей с определённым статусом (для вкладок админского списка)"""
         offset = (page - 1) * per_page
         order_by = self._status_order_by(status)
 
-        conditions = ["a.status = ?", "a.clinic_id = ?"]
-        params = [status.value, clinic_id]
+        status_condition, status_params = self._status_bucket_condition("a.", status, tab_bucket)
+        conditions = [status_condition, "a.clinic_id = ?"]
+        params = [*status_params, clinic_id]
 
         if doctor_id is not None:
             conditions.append("a.admin_id = ?")
@@ -490,11 +492,12 @@ class AppointmentRepository:
         return [self._row_to_appointment(row) for row in rows]
 
     async def count_appointments_by_status(
-        self, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+        self, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None, tab_bucket: bool = False
     ) -> int:
         """Получить количество записей с определённым статусом"""
-        conditions = ["status = ?", "clinic_id = ?"]
-        params = [status.value, clinic_id]
+        status_condition, status_params = self._status_bucket_condition("", status, tab_bucket)
+        conditions = [status_condition, "clinic_id = ?"]
+        params = [*status_params, clinic_id]
 
         if doctor_id is not None:
             conditions.append("admin_id = ?")
@@ -506,11 +509,17 @@ class AppointmentRepository:
         return row[0] if row else 0
 
     async def count_appointments_by_date_and_status(
-        self, date_str: str, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+        self,
+        date_str: str,
+        status: AppointmentStatus,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        tab_bucket: bool = False,
     ) -> int:
         """Получить количество записей на конкретную дату с определённым статусом (для календаря)"""
-        conditions = ["date(datetime) = ?", "status = ?", "clinic_id = ?"]
-        params = [date_str, status.value, clinic_id]
+        status_condition, status_params = self._status_bucket_condition("", status, tab_bucket)
+        conditions = ["date(datetime) = ?", status_condition, "clinic_id = ?"]
+        params = [date_str, *status_params, clinic_id]
 
         if doctor_id is not None:
             conditions.append("admin_id = ?")
@@ -529,13 +538,15 @@ class AppointmentRepository:
         clinic_id: int,
         doctor_id: int | None = None,
         per_page: int = 10,
+        tab_bucket: bool = False,
     ) -> list[Appointment]:
         """Получить страницу записей на конкретную дату с определённым статусом,
         отсортированную по времени приёма (для календаря)"""
         offset = (page - 1) * per_page
 
-        conditions = ["date(a.datetime) = ?", "a.status = ?", "a.clinic_id = ?"]
-        params = [date_str, status.value, clinic_id]
+        status_condition, status_params = self._status_bucket_condition("a.", status, tab_bucket)
+        conditions = ["date(a.datetime) = ?", status_condition, "a.clinic_id = ?"]
+        params = [date_str, *status_params, clinic_id]
 
         if doctor_id is not None:
             conditions.append("a.admin_id = ?")
@@ -551,6 +562,31 @@ class AppointmentRepository:
         cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
+
+    @staticmethod
+    def _status_bucket_condition(
+        prefix: str, status: AppointmentStatus, tab_bucket: bool
+    ) -> tuple[str, list]:
+        """Build the status WHERE-condition for tab-bucketed pagination.
+
+        When tab_bucket is False, behaves exactly like a plain `status = ?`.
+        When True, a CONFIRMED+proposed_datetime appointment is reclassified
+        into the PENDING bucket and excluded from the CONFIRMED bucket, while
+        `status` itself stays untouched in the database.
+        """
+        if not tab_bucket:
+            return f"{prefix}status = ?", [status.value]
+
+        if status == AppointmentStatus.CONFIRMED:
+            return f"{prefix}status = ? AND {prefix}proposed_datetime IS NULL", [status.value]
+
+        if status == AppointmentStatus.PENDING:
+            return (
+                f"({prefix}status = ? OR ({prefix}status = 'confirmed' AND {prefix}proposed_datetime IS NOT NULL))",
+                [status.value],
+            )
+
+        return f"{prefix}status = ?", [status.value]
 
     @staticmethod
     def _status_order_by(status: AppointmentStatus) -> str:

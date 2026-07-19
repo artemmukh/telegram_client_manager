@@ -4,6 +4,8 @@ import pytz
 
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
+    RESCHEDULE_NEGOTIATION_NOTE,
+    build_reschedule_proposal_line,
     format_appointment_card_datetime,
     get_current_tashkent_datetime,
     is_appointment_upcoming,
@@ -92,3 +94,56 @@ def test_is_appointment_upcoming_false_on_unparseable_datetime():
     appointment = _appointment(datetime="not-a-real-datetime")
 
     assert is_appointment_upcoming(appointment, now) is False
+
+
+# --- build_reschedule_proposal_line ---
+
+def test_build_reschedule_proposal_line_returns_none_when_no_proposal():
+    appointment = _appointment(proposed_datetime=None)
+
+    assert build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT) is None
+    assert build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN) is None
+
+
+def test_build_reschedule_proposal_line_client_viewer_own_proposal():
+    appointment = _appointment(proposed_datetime="2026-08-15 15:00", proposed_by=CreatedBy.CLIENT)
+
+    line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
+
+    assert line == "Вы предложили перенос на: 15 августа 2026, 15:00"
+
+
+def test_build_reschedule_proposal_line_client_viewer_admin_proposal():
+    appointment = _appointment(proposed_datetime="2026-08-15 15:00", proposed_by=CreatedBy.ADMIN)
+
+    line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
+
+    assert line == "Клиника предложила перенос на: 15 августа 2026, 15:00"
+
+
+def test_build_reschedule_proposal_line_admin_viewer_own_proposal():
+    appointment = _appointment(proposed_datetime="2026-08-15 15:00", proposed_by=CreatedBy.ADMIN)
+
+    line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN)
+
+    assert line == "Вы предложили перенос на: 15 августа 2026, 15:00"
+
+
+def test_build_reschedule_proposal_line_admin_viewer_client_proposal():
+    appointment = _appointment(proposed_datetime="2026-08-15 15:00", proposed_by=CreatedBy.CLIENT)
+
+    line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN)
+
+    assert line == "Клиент предложил перенос на: 15 августа 2026, 15:00"
+
+
+def test_build_reschedule_proposal_line_falls_back_to_raw_string_on_malformed_proposed_datetime():
+    appointment = _appointment(proposed_datetime="not-a-real-datetime", proposed_by=CreatedBy.CLIENT)
+
+    line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
+
+    assert line == "Вы предложили перенос на: not-a-real-datetime"
+
+
+def test_reschedule_negotiation_note_text():
+    assert RESCHEDULE_NEGOTIATION_NOTE == "ℹ️ Ответить на предложение можно в уведомлении о переносе."

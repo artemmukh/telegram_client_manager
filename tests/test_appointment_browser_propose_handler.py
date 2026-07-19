@@ -135,9 +135,10 @@ async def test_approve_new_datetime_proposes_instead_of_forcing_and_resyncs_jobs
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     approve_new_datetime = _get_approve_new_datetime_handler(router)
+    callback_query = _make_callback_query()
 
     await approve_new_datetime(
-        _make_callback_query(), ApptActionCB(action="approve_new_datetime", appointment_id=1, mode="all", page=1),
+        callback_query, ApptActionCB(action="approve_new_datetime", appointment_id=1, mode="all", page=1),
         _make_state(),
     )
 
@@ -157,3 +158,9 @@ async def test_approve_new_datetime_proposes_instead_of_forcing_and_resyncs_jobs
 
     notification_service.notify_client_appointment_reschedule_proposed.assert_awaited_once_with(appointment)
     assert appt_repo.proposal_message_id_updates == [(1, 321)]
+
+    # Toast shows both the pre-proposal (original confirmed) time and the newly
+    # proposed time, not just the new time.
+    toast_text = callback_query.message.edit_text.call_args.args[0]
+    assert "1 августа 2026, 10:00" in toast_text
+    assert "05.08.2026 12:00" in toast_text

@@ -78,3 +78,34 @@ def test_format_appointment_button_falls_back_to_raw_value_when_datetime_unparse
     text = format_appointment_button("Силкина Наталья", "+998901234567", "not-a-real-datetime")
 
     assert text == "not-a-real-datetime • Наталья • 901234567"
+
+
+def test_build_appointment_button_text_shows_marker_when_negotiating():
+    appointment = _appointment("Иванов Иван")
+    appointment.status = AppointmentStatus.CONFIRMED
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposed_by = CreatedBy.CLIENT
+
+    text = build_appointment_button_text(appointment)
+
+    assert text.startswith("🔁 ")
+
+
+def test_build_appointment_button_text_no_marker_when_confirmed_without_proposal():
+    appointment = _appointment("Иванов Иван")
+    appointment.status = AppointmentStatus.CONFIRMED
+
+    text = build_appointment_button_text(appointment)
+
+    assert "🔁" not in text
+
+
+def test_build_appointment_button_text_no_marker_when_pending_with_proposal():
+    appointment = _appointment("Иванов Иван")
+    appointment.status = AppointmentStatus.PENDING
+    appointment.proposed_datetime = "2026-08-15 15:00"
+    appointment.proposed_by = CreatedBy.CLIENT
+
+    text = build_appointment_button_text(appointment)
+
+    assert "🔁" not in text

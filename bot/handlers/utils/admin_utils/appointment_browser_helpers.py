@@ -6,6 +6,7 @@ from bot.handlers.utils.admin_utils.client_browser_helpers import (
     remember_tracked_message,
 )
 from bot.models.appointment import Appointment
+from bot.utils.appointment_enums import AppointmentStatus
 
 __all__ = [
     "build_appointment_button_text",
@@ -34,4 +35,9 @@ def format_appointment_button(full_name: str, phone: str, appointment_time: str)
 def build_appointment_button_text(appointment: Appointment) -> str:
     client_name = appointment.client_full_name or "Безымянный"
     phone = appointment.client_phone or "—"
-    return format_appointment_button(client_name, phone, appointment.datetime)
+    text = format_appointment_button(client_name, phone, appointment.datetime)
+
+    if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is not None:
+        return f"🔁 {text}"
+
+    return text

@@ -18,7 +18,11 @@ from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
-from bot.services.utils.date_parser import format_datetime_for_display
+from bot.services.utils.date_parser import (
+    RESCHEDULE_NEGOTIATION_NOTE,
+    build_reschedule_proposal_line,
+    format_datetime_for_display,
+)
 from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 
 REMINDER_TEXT = "Напоминаем вам о записи."
@@ -441,6 +445,7 @@ class AppointmentNotificationService:
 
         message_text = (
             "🔁 Клиника предлагает перенести вашу запись на другое время\n\n"
+            f"Текущее время: {_format_datetime_value(appointment.datetime)}\n"
             f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
             "Согласны на новое время?"
         )
@@ -505,6 +510,7 @@ class AppointmentNotificationService:
 
         message_text = (
             "⏰ Напоминаем: клиника предлагает перенести вашу запись на другое время\n\n"
+            f"Текущее время: {_format_datetime_value(appointment.datetime)}\n"
             f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
             "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
             "иначе предложение скоро автоматически аннулируется."
@@ -694,7 +700,7 @@ class AppointmentNotificationService:
         else:
             last_line = f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}"
 
-        return (
+        message = (
             "Вам назначена запись на прием\n\n"
             f"{admin_info}"
             f"Дата и время: {appointment.datetime}\n"
@@ -702,3 +708,9 @@ class AppointmentNotificationService:
             f"Клиника: {appointment.clinic_name or 'Информация не доступна'}\n\n"
             f"{last_line}"
         )
+
+        if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is not None:
+            proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
+            message += f"\n\n{proposal_line}\n{RESCHEDULE_NEGOTIATION_NOTE}"
+
+        return message

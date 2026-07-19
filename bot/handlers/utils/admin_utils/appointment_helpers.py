@@ -5,11 +5,13 @@ from aiogram.types import Message
 from bot.exceptions.user_exceptions import ValidationError
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
+    RESCHEDULE_NEGOTIATION_NOTE,
+    build_reschedule_proposal_line,
     format_appointment_card_datetime,
     format_datetime_for_display,
     parse_ru_datetime,
 )
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 from bot.validators.validators import (
     validate_price,
     validate_purpose,
@@ -51,6 +53,11 @@ def build_appointment_card(appointment: Appointment) -> str:
         f"Услуга: {appointment.purpose}",
         f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}",
     ]
+
+    proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN)
+    if proposal_line is not None:
+        lines.append(proposal_line)
+        lines.append(RESCHEDULE_NEGOTIATION_NOTE)
 
     if appointment.price is not None:
         lines.append(f"Цена: {appointment.price}")

@@ -124,9 +124,10 @@ async def test_submit_reschedule_negotiation_branch_notifies_staff_and_resyncs_j
         appointment_management_service, notification_service, appointment_scheduler,
     )
     submit_reschedule = _get_submit_reschedule_handler(router)
+    callback_query = _make_callback_query()
 
     await submit_reschedule(
-        _make_callback_query(), ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user(),
+        callback_query, ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user(),
     )
 
     notification_service.notify_staff_reschedule_requested.assert_awaited_once()
@@ -134,3 +135,8 @@ async def test_submit_reschedule_negotiation_branch_notifies_staff_and_resyncs_j
 
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(resulting_appointment)
     appointment_scheduler.schedule_reschedule_expiry.assert_not_awaited()
+
+    # Toast shows both the original confirmed time and the newly proposed time.
+    toast_text = callback_query.message.edit_text.call_args.args[0]
+    assert "1 августа 2026, 10:00" in toast_text
+    assert "2 августа 2026, 10:00" in toast_text

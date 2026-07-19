@@ -212,11 +212,16 @@ def create_client_reschedule_router(
         else:
             success_kb = appointment_manage_empty_kb()
 
-        message_text = (
-            "✅ Время заявки изменено."
-            if is_direct_edit
-            else "✅ Заявка на перенос отправлена. Ожидайте решения клиники."
-        )
+        if is_direct_edit:
+            message_text = "✅ Время заявки изменено."
+        else:
+            old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime))
+            new_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
+            message_text = (
+                "✅ Заявка на перенос отправлена. Ожидайте решения клиники.\n\n"
+                f"Текущее время: {old_display}\n"
+                f"Предложенное время: {new_display}"
+            )
         await callback_query.message.edit_text(message_text, reply_markup=success_kb)
         await callback_query.answer()
 

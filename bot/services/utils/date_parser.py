@@ -6,6 +6,9 @@ import dateparser
 import re
 
 from bot.models.appointment import Appointment
+from bot.utils.appointment_enums import CreatedBy
+
+RESCHEDULE_NEGOTIATION_NOTE = "ℹ️ Ответить на предложение можно в уведомлении о переносе."
 
 # 'в 4 часов' по умолчанию трактуется dateparser'ом либо как 4 утра,
 # либо вообще как "4-е число месяца". Нормализуем вручную под контекст
@@ -135,3 +138,22 @@ def is_appointment_upcoming(appointment: Appointment, now: datetime) -> bool:
         return False
 
     return appointment_dt >= now
+
+
+def build_reschedule_proposal_line(appointment: Appointment, viewer: CreatedBy) -> str | None:
+    """Build the "X predlozhil perenos na: ..." line shown to `viewer` when a
+    reschedule negotiation is in progress, or None if there is no proposal.
+    """
+    if appointment.proposed_datetime is None:
+        return None
+
+    try:
+        proposed_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
+    except ValueError:
+        proposed_display = appointment.proposed_datetime
+
+    if appointment.proposed_by == viewer:
+        return f"Вы предложили перенос на: {proposed_display}"
+    if viewer == CreatedBy.CLIENT:
+        return f"Клиника предложила перенос на: {proposed_display}"
+    return f"Клиент предложил перенос на: {proposed_display}"

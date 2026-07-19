@@ -110,12 +110,21 @@ class AppointmentPaginationService:
             return self._sort_by_created_at(appointments, reverse=True)
         return self._sort_by_status_updated_at(appointments, reverse=True)
 
+    def _matches_tab(self, appointment: Appointment, status: AppointmentStatus) -> bool:
+        if status == AppointmentStatus.CONFIRMED:
+            return appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None
+        if status == AppointmentStatus.PENDING:
+            return appointment.status == AppointmentStatus.PENDING or (
+                appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is not None
+            )
+        return appointment.status == status
+
     def _filter_by_tab(self, appointments: list[Appointment], tab: str) -> list[Appointment]:
         if tab not in self._STATUS_TABS:
             raise PaginationError(f"Неизвестная вкладка: {tab}")
 
         status = self._STATUS_TABS[tab]
-        bucket = [appointment for appointment in appointments if appointment.status == status]
+        bucket = [appointment for appointment in appointments if self._matches_tab(appointment, status)]
         return self._sort_bucket_by_status(bucket, status)
 
     async def paginate_appointments(
@@ -241,11 +250,13 @@ class AppointmentPaginationService:
         per_page = per_page or APPOINTMENTS_PER_PAGE
         status = self._STATUS_TABS[tab]
 
-        total_count = await self.appointment_repo.count_appointments_by_status(status, clinic_id, doctor_id)
+        total_count = await self.appointment_repo.count_appointments_by_status(
+            status, clinic_id, doctor_id, tab_bucket=True
+        )
         page, total_pages = self._paginate_math(total_count, page, per_page)
 
         items = await self.appointment_repo.get_appointments_by_status_page(
-            status, page, clinic_id, doctor_id, per_page
+            status, page, clinic_id, doctor_id, per_page, tab_bucket=True
         )
 
         return AppointmentPaginationResult(
@@ -286,12 +297,12 @@ class AppointmentPaginationService:
         status = self._STATUS_TABS[tab]
 
         total_count = await self.appointment_repo.count_appointments_by_date_and_status(
-            date_str, status, clinic_id, doctor_id
+            date_str, status, clinic_id, doctor_id, tab_bucket=True
         )
         page, total_pages = self._paginate_math(total_count, page, per_page)
 
         items = await self.appointment_repo.get_appointments_by_date_and_status_page(
-            date_str, status, page, clinic_id, doctor_id, per_page
+            date_str, status, page, clinic_id, doctor_id, per_page, tab_bucket=True
         )
 
         return AppointmentPaginationResult(

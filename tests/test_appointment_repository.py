@@ -417,6 +417,140 @@ async def test_count_appointments_by_status_returns_zero_when_no_matches():
         await connection.close()
 
 
+# --- tab_bucket: CONFIRMED+proposed_datetime reclassified into the pending bucket ---
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_status_page_tab_bucket_false_keeps_negotiating_appointment_under_confirmed():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        negotiating = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_proposed_datetime(negotiating.id, "2026-08-01 10:00:00")
+
+        confirmed_page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10
+        )
+        pending_page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        )
+        confirmed_count = await appointment_repo.count_appointments_by_status(AppointmentStatus.CONFIRMED, clinic_id=1)
+        pending_count = await appointment_repo.count_appointments_by_status(AppointmentStatus.PENDING, clinic_id=1)
+
+        assert [a.id for a in confirmed_page] == [negotiating.id]
+        assert pending_page == []
+        assert confirmed_count == 1
+        assert pending_count == 0
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_status_page_tab_bucket_true_moves_negotiating_appointment_to_pending():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        negotiating = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_proposed_datetime(negotiating.id, "2026-08-01 10:00:00")
+        plain_confirmed = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-11 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00")
+        )
+        plain_pending = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-12 10:00:00", AppointmentStatus.PENDING, "2026-07-03 10:00:00")
+        )
+
+        confirmed_page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10, tab_bucket=True
+        )
+        pending_page = await appointment_repo.get_appointments_by_status_page(
+            AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10, tab_bucket=True
+        )
+        confirmed_count = await appointment_repo.count_appointments_by_status(
+            AppointmentStatus.CONFIRMED, clinic_id=1, tab_bucket=True
+        )
+        pending_count = await appointment_repo.count_appointments_by_status(
+            AppointmentStatus.PENDING, clinic_id=1, tab_bucket=True
+        )
+
+        assert [a.id for a in confirmed_page] == [plain_confirmed.id]
+        assert {a.id for a in pending_page} == {negotiating.id, plain_pending.id}
+        assert confirmed_count == 1
+        assert pending_count == 2
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_date_and_status_page_tab_bucket_true_moves_negotiating_appointment_to_pending():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        negotiating = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_proposed_datetime(negotiating.id, "2026-08-01 10:00:00")
+        plain_confirmed = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 11:00:00", AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00")
+        )
+        plain_pending = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 12:00:00", AppointmentStatus.PENDING, "2026-07-03 10:00:00")
+        )
+
+        confirmed_page = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10, tab_bucket=True
+        )
+        pending_page = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10, tab_bucket=True
+        )
+        confirmed_count = await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1, tab_bucket=True
+        )
+        pending_count = await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.PENDING, clinic_id=1, tab_bucket=True
+        )
+
+        assert [a.id for a in confirmed_page] == [plain_confirmed.id]
+        assert {a.id for a in pending_page} == {negotiating.id, plain_pending.id}
+        assert confirmed_count == 1
+        assert pending_count == 2
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_date_and_status_page_tab_bucket_false_keeps_negotiating_appointment_under_confirmed():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        negotiating = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_proposed_datetime(negotiating.id, "2026-08-01 10:00:00")
+
+        confirmed_page = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10
+        )
+        pending_page = await appointment_repo.get_appointments_by_date_and_status_page(
+            "2026-07-10", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        )
+        confirmed_count = await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1
+        )
+        pending_count = await appointment_repo.count_appointments_by_date_and_status(
+            "2026-07-10", AppointmentStatus.PENDING, clinic_id=1
+        )
+
+        assert [a.id for a in confirmed_page] == [negotiating.id]
+        assert pending_page == []
+        assert confirmed_count == 1
+        assert pending_count == 0
+    finally:
+        await connection.close()
+
+
 # --- Calendar: date + status filtering (appt_search_calendar feature) ---
 
 @pytest.mark.asyncio

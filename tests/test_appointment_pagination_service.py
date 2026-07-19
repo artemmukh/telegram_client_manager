@@ -56,15 +56,23 @@ class FakeAppointmentRepository:
         return self.page_items
 
     async def get_appointments_by_status_page(
-        self, status: AppointmentStatus, page: int, clinic_id: int, doctor_id: int | None, per_page: int
+        self,
+        status: AppointmentStatus,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None,
+        per_page: int,
+        tab_bucket: bool = False,
     ) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_status_page", status, page, clinic_id, doctor_id, per_page))
+        self.calls.append(
+            ("get_appointments_by_status_page", status, page, clinic_id, doctor_id, per_page, tab_bucket)
+        )
         return self.page_items
 
     async def count_appointments_by_status(
-        self, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+        self, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None, tab_bucket: bool = False
     ) -> int:
-        self.calls.append(("count_appointments_by_status", status, clinic_id, doctor_id))
+        self.calls.append(("count_appointments_by_status", status, clinic_id, doctor_id, tab_bucket))
         return self.total_count
 
     async def get_appointments_by_date_and_status_page(
@@ -75,16 +83,25 @@ class FakeAppointmentRepository:
         clinic_id: int,
         doctor_id: int | None,
         per_page: int,
+        tab_bucket: bool = False,
     ) -> list[Appointment]:
         self.calls.append(
-            ("get_appointments_by_date_and_status_page", date_str, status, page, clinic_id, doctor_id, per_page)
+            (
+                "get_appointments_by_date_and_status_page",
+                date_str, status, page, clinic_id, doctor_id, per_page, tab_bucket,
+            )
         )
         return self.page_items
 
     async def count_appointments_by_date_and_status(
-        self, date_str: str, status: AppointmentStatus, clinic_id: int, doctor_id: int | None = None
+        self,
+        date_str: str,
+        status: AppointmentStatus,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        tab_bucket: bool = False,
     ) -> int:
-        self.calls.append(("count_appointments_by_date_and_status", date_str, status, clinic_id, doctor_id))
+        self.calls.append(("count_appointments_by_date_and_status", date_str, status, clinic_id, doctor_id, tab_bucket))
         return self.total_count
 
 
@@ -177,6 +194,39 @@ async def test_paginate_search_mode_filters_by_status_tab():
 
 
 @pytest.mark.asyncio
+async def test_paginate_search_mode_confirmed_tab_excludes_negotiating_appointment():
+    plain_confirmed = _appointment(1)
+    plain_confirmed.status = AppointmentStatus.CONFIRMED
+    negotiating = _appointment(2)
+    negotiating.status = AppointmentStatus.CONFIRMED
+    negotiating.proposed_datetime = "2026-08-01 10:00"
+    repo = FakeAppointmentRepository(page_items=[plain_confirmed, negotiating])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments(
+        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="confirmed"
+    )
+
+    assert [a.id for a in result.items] == [1]
+
+
+@pytest.mark.asyncio
+async def test_paginate_search_mode_pending_tab_includes_negotiating_confirmed_appointment():
+    plain_pending = _appointment(1)
+    negotiating = _appointment(2)
+    negotiating.status = AppointmentStatus.CONFIRMED
+    negotiating.proposed_datetime = "2026-08-01 10:00"
+    repo = FakeAppointmentRepository(page_items=[plain_pending, negotiating])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments(
+        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="pending"
+    )
+
+    assert {a.id for a in result.items} == {1, 2}
+
+
+@pytest.mark.asyncio
 async def test_paginate_search_mode_forwards_concrete_doctor_id_to_repository():
     repo = FakeAppointmentRepository(page_items=[])
     service = AppointmentPaginationService(repo)
@@ -225,6 +275,39 @@ async def test_paginate_phone_mode_filters_by_status_tab():
     result = await service.paginate_appointments("phone", 1, clinic_id=1, search_data={"client_id": 7}, tab="pending")
 
     assert [a.id for a in result.items] == [1]
+
+
+@pytest.mark.asyncio
+async def test_paginate_phone_mode_confirmed_tab_excludes_negotiating_appointment():
+    plain_confirmed = _appointment(1)
+    plain_confirmed.status = AppointmentStatus.CONFIRMED
+    negotiating = _appointment(2)
+    negotiating.status = AppointmentStatus.CONFIRMED
+    negotiating.proposed_datetime = "2026-08-01 10:00"
+    repo = FakeAppointmentRepository(page_items=[plain_confirmed, negotiating])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments(
+        "phone", 1, clinic_id=1, search_data={"client_id": 7}, tab="confirmed"
+    )
+
+    assert [a.id for a in result.items] == [1]
+
+
+@pytest.mark.asyncio
+async def test_paginate_phone_mode_pending_tab_includes_negotiating_confirmed_appointment():
+    plain_pending = _appointment(1)
+    negotiating = _appointment(2)
+    negotiating.status = AppointmentStatus.CONFIRMED
+    negotiating.proposed_datetime = "2026-08-01 10:00"
+    repo = FakeAppointmentRepository(page_items=[plain_pending, negotiating])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_appointments(
+        "phone", 1, clinic_id=1, search_data={"client_id": 7}, tab="pending"
+    )
+
+    assert {a.id for a in result.items} == {1, 2}
 
 
 @pytest.mark.asyncio
@@ -317,6 +400,36 @@ def _appointment_at(
         created_at=created_at.isoformat() if created_at is not None else None,
         status_updated_at=status_updated_at.isoformat() if status_updated_at is not None else None,
     )
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_confirmed_tab_excludes_negotiating_appointment():
+    now = get_current_tashkent_datetime()
+    plain_confirmed = _appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)
+    negotiating = _appointment_at(2, now + timedelta(days=2), status=AppointmentStatus.CONFIRMED)
+    negotiating.proposed_datetime = (now + timedelta(days=5)).isoformat()
+    repo = FakeAppointmentRepository(page_items=[plain_confirmed, negotiating])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "confirmed", 1)
+
+    assert [a.id for a in result.items] == [1]
+    assert result.total_count == 1
+
+
+@pytest.mark.asyncio
+async def test_paginate_client_appointments_pending_tab_includes_negotiating_confirmed_appointment():
+    now = get_current_tashkent_datetime()
+    plain_pending = _appointment_at(1, now, status=AppointmentStatus.PENDING, created_at=now - timedelta(days=1))
+    negotiating = _appointment_at(2, now, status=AppointmentStatus.CONFIRMED, created_at=now)
+    negotiating.proposed_datetime = (now + timedelta(days=5)).isoformat()
+    repo = FakeAppointmentRepository(page_items=[plain_pending, negotiating])
+    service = AppointmentPaginationService(repo)
+
+    result = await service.paginate_client_appointments(123, "pending", 1)
+
+    assert {a.id for a in result.items} == {1, 2}
+    assert result.total_count == 2
 
 
 @pytest.mark.asyncio
@@ -522,7 +635,7 @@ async def test_paginate_all_appointments_by_tab_routes_resolved_status_to_reposi
 
     assert result.items == items
     assert result.total_count == 2
-    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED, 1, None) in repo.calls
+    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED, 1, None, True) in repo.calls
     assert (
         "get_appointments_by_status_page",
         AppointmentStatus.CONFIRMED,
@@ -530,6 +643,7 @@ async def test_paginate_all_appointments_by_tab_routes_resolved_status_to_reposi
         1,
         None,
         APPOINTMENTS_PER_PAGE,
+        True,
     ) in repo.calls
 
 
@@ -540,7 +654,7 @@ async def test_paginate_all_appointments_by_tab_forwards_concrete_doctor_id_to_r
 
     await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1, doctor_id=5)
 
-    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED, 1, 5) in repo.calls
+    assert ("count_appointments_by_status", AppointmentStatus.CONFIRMED, 1, 5, True) in repo.calls
     assert (
         "get_appointments_by_status_page",
         AppointmentStatus.CONFIRMED,
@@ -548,7 +662,23 @@ async def test_paginate_all_appointments_by_tab_forwards_concrete_doctor_id_to_r
         1,
         5,
         APPOINTMENTS_PER_PAGE,
+        True,
     ) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_all_appointments_by_tab_forwards_tab_bucket_true_to_repository():
+    """Only AppointmentPaginationService's tab-based methods pass tab_bucket=True --
+    the safe default (False) is preserved for any other/future caller."""
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_all_appointments_by_tab("confirmed", 1, clinic_id=1)
+
+    status_calls = [call for call in repo.calls if call[0] == "count_appointments_by_status"]
+    page_calls = [call for call in repo.calls if call[0] == "get_appointments_by_status_page"]
+    assert status_calls and all(call[-1] is True for call in status_calls)
+    assert page_calls and all(call[-1] is True for call in page_calls)
 
 
 @pytest.mark.asyncio
@@ -559,7 +689,7 @@ async def test_paginate_all_appointments_by_tab_resolves_each_tab_to_its_status(
     for tab, status in AppointmentPaginationService._STATUS_TABS.items():
         repo.calls.clear()
         await service.paginate_all_appointments_by_tab(tab, 1, clinic_id=1)
-        assert ("count_appointments_by_status", status, 1, None) in repo.calls
+        assert ("count_appointments_by_status", status, 1, None, True) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -608,6 +738,7 @@ async def test_paginate_all_appointments_by_tab_clamps_page_before_querying_repo
         1,
         None,
         APPOINTMENTS_PER_PAGE,
+        True,
     ) in repo.calls
 
 
@@ -638,7 +769,9 @@ async def test_paginate_appointments_by_date_and_tab_routes_date_and_resolved_st
 
     assert result.items == items
     assert result.total_count == 2
-    assert ("count_appointments_by_date_and_status", "2026-07-10", AppointmentStatus.CONFIRMED, 1, None) in repo.calls
+    assert (
+        "count_appointments_by_date_and_status", "2026-07-10", AppointmentStatus.CONFIRMED, 1, None, True
+    ) in repo.calls
     assert (
         "get_appointments_by_date_and_status_page",
         "2026-07-10",
@@ -647,6 +780,7 @@ async def test_paginate_appointments_by_date_and_tab_routes_date_and_resolved_st
         1,
         None,
         APPOINTMENTS_PER_PAGE,
+        True,
     ) in repo.calls
 
 
@@ -657,7 +791,9 @@ async def test_paginate_appointments_by_date_and_tab_forwards_concrete_doctor_id
 
     await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 1, clinic_id=1, doctor_id=5)
 
-    assert ("count_appointments_by_date_and_status", "2026-07-10", AppointmentStatus.CONFIRMED, 1, 5) in repo.calls
+    assert (
+        "count_appointments_by_date_and_status", "2026-07-10", AppointmentStatus.CONFIRMED, 1, 5, True
+    ) in repo.calls
     assert (
         "get_appointments_by_date_and_status_page",
         "2026-07-10",
@@ -666,7 +802,23 @@ async def test_paginate_appointments_by_date_and_tab_forwards_concrete_doctor_id
         1,
         5,
         APPOINTMENTS_PER_PAGE,
+        True,
     ) in repo.calls
+
+
+@pytest.mark.asyncio
+async def test_paginate_appointments_by_date_and_tab_forwards_tab_bucket_true_to_repository():
+    """Only AppointmentPaginationService's tab-based methods pass tab_bucket=True --
+    the safe default (False) is preserved for any other/future caller."""
+    repo = FakeAppointmentRepository(total_count=0, page_items=[])
+    service = AppointmentPaginationService(repo)
+
+    await service.paginate_appointments_by_date_and_tab("2026-07-10", "confirmed", 1, clinic_id=1)
+
+    status_calls = [call for call in repo.calls if call[0] == "count_appointments_by_date_and_status"]
+    page_calls = [call for call in repo.calls if call[0] == "get_appointments_by_date_and_status_page"]
+    assert status_calls and all(call[-1] is True for call in status_calls)
+    assert page_calls and all(call[-1] is True for call in page_calls)
 
 
 @pytest.mark.asyncio
@@ -677,7 +829,7 @@ async def test_paginate_appointments_by_date_and_tab_resolves_each_tab_to_its_st
     for tab, status in AppointmentPaginationService._STATUS_TABS.items():
         repo.calls.clear()
         await service.paginate_appointments_by_date_and_tab("2026-07-10", tab, 1, clinic_id=1)
-        assert ("count_appointments_by_date_and_status", "2026-07-10", status, 1, None) in repo.calls
+        assert ("count_appointments_by_date_and_status", "2026-07-10", status, 1, None, True) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -727,6 +879,7 @@ async def test_paginate_appointments_by_date_and_tab_clamps_page_before_querying
         1,
         None,
         APPOINTMENTS_PER_PAGE,
+        True,
     ) in repo.calls
 
 

@@ -1,8 +1,8 @@
 from datetime import datetime
 
 from bot.models.appointment import Appointment
-from bot.services.utils.date_parser import format_datetime_for_display
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, CreatedBy
+from bot.services.utils.date_parser import build_reschedule_proposal_line, format_datetime_for_display
+from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 
 HISTORY_STATUS_LABELS = APPOINTMENT_STATUS_LABELS
 
@@ -14,11 +14,16 @@ def _format_appointment_datetime(appointment: Appointment) -> str:
         return appointment.datetime
 
 
+def _is_negotiating(appointment: Appointment) -> bool:
+    return appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is not None
+
+
 def build_history_button_text(appointment: Appointment) -> str:
     status_label = HISTORY_STATUS_LABELS.get(appointment.status, appointment.status.value)
     status_emoji = status_label.split()[0]
     display_datetime = _format_appointment_datetime(appointment)
-    return f"{status_emoji} {display_datetime}"
+    marker = "🔁" if _is_negotiating(appointment) else ""
+    return f"{marker}{status_emoji} {display_datetime}"
 
 
 def build_history_card_text(appointment: Appointment) -> str:
@@ -29,16 +34,9 @@ def build_history_card_text(appointment: Appointment) -> str:
     if appointment.purpose:
         lines.append(f"Услуга: {appointment.purpose}")
 
-    if appointment.proposed_datetime:
-        try:
-            proposed_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
-        except ValueError:
-            proposed_display = appointment.proposed_datetime
-
-        if appointment.proposed_by == CreatedBy.CLIENT:
-            lines.append(f"Вы предложили перенос на: {proposed_display}")
-        else:
-            lines.append(f"Клиника предложила перенос на: {proposed_display}")
+    proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
+    if proposal_line is not None:
+        lines.append(proposal_line)
 
     lines.append(f"Статус: {HISTORY_STATUS_LABELS.get(appointment.status, appointment.status.value)}")
 
