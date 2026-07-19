@@ -23,6 +23,10 @@ from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import get_current_tashkent_time, get_current_tashkent_datetime
+from bot.services.utils.booking_day_helpers import (
+    find_first_available_week_offset as _find_first_available_week_offset,
+    generate_working_days,
+)
 from bot.services.utils.slot_helpers import generate_available_slots
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
@@ -694,6 +698,12 @@ class AppointmentManagement:
         booked_times = {appointment.datetime.split(" ")[1] for appointment in confirmed}
 
         return [slot for slot in slots if slot not in booked_times]
+
+    async def get_working_days(self, reference_date: date, week_offset: int) -> list[date]:
+        return generate_working_days(reference_date, week_offset)
+
+    async def find_first_available_week_offset(self, reference_date: date, max_offset: int = 3) -> int:
+        return _find_first_available_week_offset(reference_date, max_offset)
 
     async def resolve_notification_recipients(self, appointment: Appointment) -> list[User]:
         """Resolve who should receive admin/staff-facing notifications for an appointment:

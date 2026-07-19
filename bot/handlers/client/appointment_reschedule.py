@@ -6,10 +6,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from bot.exceptions.exceptions import BotException
-from bot.handlers.utils.client_utils.booking_helpers import (
-    find_first_available_week_offset,
-    generate_working_days,
-)
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
 from bot.keyboards.client.appointment_history_kb import appointment_history_card_kb
 from bot.keyboards.client.appointment_manage_kb import appointment_manage_card_kb, appointment_manage_empty_kb
@@ -56,12 +52,12 @@ def create_client_reschedule_router(
         callback_query: CallbackQuery, state: FSMContext, appointment_id: int, week_offset: int,
     ) -> None:
         reference = get_current_tashkent_datetime().date()
-        days = generate_working_days(reference, week_offset)
+        days = await appointment_management_service.get_working_days(reference, week_offset)
 
         data = await state.get_data()
         min_week_offset = data.get("min_week_offset", week_offset)
         can_go_back = week_offset > min_week_offset
-        can_go_forward = bool(generate_working_days(reference, week_offset + 1))
+        can_go_forward = bool(await appointment_management_service.get_working_days(reference, week_offset + 1))
 
         await state.update_data(week_offset=week_offset)
         await state.set_state(ClientRescheduleStates.choose_day)
@@ -131,7 +127,7 @@ def create_client_reschedule_router(
         )
 
         reference = get_current_tashkent_datetime().date()
-        start_offset = find_first_available_week_offset(reference)
+        start_offset = await appointment_management_service.find_first_available_week_offset(reference)
         await state.update_data(min_week_offset=start_offset)
         await render_day_selection(callback_query, state, appointment_id, start_offset)
 

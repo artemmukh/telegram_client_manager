@@ -6,11 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.exceptions.exceptions import BotException
-from bot.handlers.utils.client_utils.booking_helpers import (
-    build_booking_confirmation_text,
-    find_first_available_week_offset,
-    generate_working_days,
-)
+from bot.handlers.utils.client_utils.booking_helpers import build_booking_confirmation_text
 from bot.keyboards.client.booking_cb import (
     ClientBookDayCB,
     ClientBookDayPageCB,
@@ -81,18 +77,18 @@ def create_client_booking_router(
 
     async def render_day_selection_start(callback_query: CallbackQuery, state: FSMContext) -> None:
         reference = get_current_tashkent_datetime().date()
-        start_offset = find_first_available_week_offset(reference)
+        start_offset = await appointment_management_service.find_first_available_week_offset(reference)
         await state.update_data(min_week_offset=start_offset)
         await render_day_selection(callback_query, state, start_offset)
 
     async def render_day_selection(callback_query: CallbackQuery, state: FSMContext, week_offset: int) -> None:
         reference = get_current_tashkent_datetime().date()
-        days = generate_working_days(reference, week_offset)
+        days = await appointment_management_service.get_working_days(reference, week_offset)
 
         data = await state.get_data()
         min_week_offset = data.get("min_week_offset", week_offset)
         can_go_back = week_offset > min_week_offset
-        can_go_forward = bool(generate_working_days(reference, week_offset + 1))
+        can_go_forward = bool(await appointment_management_service.get_working_days(reference, week_offset + 1))
 
         await state.update_data(week_offset=week_offset)
         await state.set_state(ClientBookingStates.choose_day)
