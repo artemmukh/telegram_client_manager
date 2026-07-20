@@ -1,6 +1,6 @@
 ﻿import logging
 from datetime import datetime
-
+from bot.handlers.utils.admin_utils.calendar import show_calendar
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -13,6 +13,7 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     remember_tracked_message,
 )
 from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    clamp_calendar_date,
     clamp_month_to_range,
     format_calendar_date_display,
     format_month_label,
@@ -59,7 +60,6 @@ from bot.services.appointment.appointment_pagination_service import AppointmentP
 from bot.services.utils.date_parser import (
     format_datetime_for_db,
     format_datetime_for_display,
-    get_current_tashkent_datetime,
 )
 from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
 from bot.utils.appointment_enums import AppointmentStatus
@@ -174,25 +174,18 @@ def create_admin_appointment_browser_router(
     # --- Calendar search ---
 
     @router.callback_query(F.data == "appt_search_calendar")
-    async def open_calendar(callback_query: CallbackQuery, state: FSMContext):
-        await state.clear()
-        today = get_current_tashkent_datetime().date()
-        year, month = clamp_month_to_range(today.year, today.month)
+    async def open_calendar_callback(callback: CallbackQuery, state: FSMContext):
+        await show_calendar(callback, state)
 
-        await state.update_data(calendar_year=year, calendar_month=month)
-        await state.set_state(AppointmentBrowserStates.calendar_month)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            f"📅 {format_month_label(year, month)}",
-            reply_markup=appointment_calendar_kb(year, month),
-        )
-        await remember_tracked_message(state, callback_query.message)
+    @router.message(F.text == "📆 Календарь")
+    async def open_calendar_message(message: Message, state: FSMContext):
+        await show_calendar(message, state)
 
     @router.callback_query(ApptCalendarMonthCB.filter())
     async def change_calendar_month(
         callback_query: CallbackQuery, callback_data: ApptCalendarMonthCB, state: FSMContext,
     ):
-        year, month = callback_data.year, callback_data.month
+        year, month = clamp_month_to_range(callback_data.year, callback_data.month)
 
         await state.update_data(calendar_year=year, calendar_month=month)
         await state.set_state(AppointmentBrowserStates.calendar_month)
@@ -213,10 +206,11 @@ def create_admin_appointment_browser_router(
     async def pick_calendar_day(
         callback_query: CallbackQuery, callback_data: ApptCalendarDayCB, state: FSMContext,
     ):
-        calendar_date = f"{callback_data.year:04d}-{callback_data.month:02d}-{callback_data.day:02d}"
+        year, month, day = clamp_calendar_date(callback_data.year, callback_data.month, callback_data.day)
+        calendar_date = f"{year:04d}-{month:02d}-{day:02d}"
 
         await state.update_data(
-            calendar_date=calendar_date, calendar_year=callback_data.year, calendar_month=callback_data.month,
+            calendar_date=calendar_date, calendar_year=year, calendar_month=month,
         )
         await state.set_state(AppointmentBrowserStates.calendar_day)
 
