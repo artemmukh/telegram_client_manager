@@ -179,6 +179,79 @@ async def test_handle_appointment_confirm_handler_resyncs_jobs_and_edits_without
     callback_query.answer.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_handle_appointment_confirm_with_malformed_id_shows_alert_and_does_not_update():
+    """Defensive guard around int(callback_query.data.split(":")[1]): a forged/
+    malformed appt_confirm callback must short-circuit before any service call,
+    answering with a show_alert toast instead of crashing with ValueError."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.confirm_appointment_by_client = AsyncMock()
+    appointment_management_service.get_appointment_with_client_info = AsyncMock()
+
+    notification_service = MagicMock()
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management_service, notification_service, appointment_scheduler,
+    )
+    handle_appointment_confirm = _get_handler_by_name(router, "handle_appointment_confirm")
+
+    callback_query = _make_callback_query("appt_confirm:not-an-id")
+    await handle_appointment_confirm(callback_query)
+
+    callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
+    appointment_management_service.confirm_appointment_by_client.assert_not_awaited()
+    appointment_scheduler.resync_appointment_jobs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_appointment_details_with_malformed_id_shows_alert_and_does_not_notify():
+    """Defensive guard around int(callback_query.data.split(":")[1]) in the
+    appt_details handler -- same forged-callback shape as handle_appointment_confirm."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_appointment_for_client = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_client_appointment_details = AsyncMock()
+
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management_service, notification_service, MagicMock(),
+    )
+    handle_appointment_details = _get_handler_by_name(router, "handle_appointment_details")
+
+    callback_query = _make_callback_query("appt_details:not-an-id")
+    await handle_appointment_details(callback_query)
+
+    callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
+    appointment_management_service.get_appointment_for_client.assert_not_awaited()
+    notification_service.notify_client_appointment_details.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_appointment_cancel_with_malformed_id_shows_alert_and_does_not_touch_state():
+    """Defensive guard around int(callback_query.data.split(":")[1]) in the
+    appt_cancel handler -- the parse already ran before any state mutation in
+    the original code, so this only needed a ValueError catch, not a reorder."""
+    router = create_client_appointment_router(
+        MagicMock(), MagicMock(), MagicMock(), MagicMock(),
+    )
+    handle_appointment_cancel = _get_handler_by_name(router, "handle_appointment_cancel")
+
+    callback_query = _make_callback_query("appt_cancel:not-an-id")
+    state = MagicMock()
+    state.set_state = AsyncMock()
+    state.update_data = AsyncMock()
+
+    await handle_appointment_cancel(callback_query, state)
+
+    callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
+    state.set_state.assert_not_awaited()
+    state.update_data.assert_not_awaited()
+
+
 # Tests for cancellation flow
 @pytest.mark.asyncio
 async def test_handle_appointment_cancel_updates_status():

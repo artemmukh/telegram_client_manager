@@ -105,6 +105,34 @@ async def _run_set_status(post_appt: bool, notification_service, appointment_sch
 
 
 @pytest.mark.asyncio
+async def test_set_status_with_invalid_value_shows_alert_and_does_not_update_status():
+    """Defensive guard around AppointmentStatus(callback_data.value): a forged/
+    malformed status value must short-circuit before any repository/scheduler/
+    notification call, answering with a show_alert toast instead of crashing."""
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    notification_service = AsyncMock()
+    appointment_scheduler = AsyncMock()
+    router = create_admin_appointment_browser_router(
+        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        appointment_scheduler=appointment_scheduler, notification_service=notification_service,
+    )
+    set_status = _find_handler(router, "set_status")
+
+    callback_data = ApptActionCB(
+        action="set_status", appointment_id=1, mode="list", page=1, value="not-a-real-status", post_appt=False,
+    )
+    callback_query = _callback_query()
+
+    await set_status(callback_query, callback_data, AsyncMock())
+
+    callback_query.answer.assert_called_once_with("Некорректный статус.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    assert appointment_repo.status_updates == []
+    appointment_scheduler.resync_appointment_jobs.assert_not_called()
+    notification_service.notify_client_appointment_cancelled_by_admin.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_set_status_notifies_client_on_normal_cancellation():
     notification_service = AsyncMock()
 

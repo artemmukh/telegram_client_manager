@@ -122,7 +122,12 @@ def create_client_booking_router(
 
     @router.callback_query(ClientBookDayCB.filter())
     async def pick_day(callback_query: CallbackQuery, callback_data: ClientBookDayCB, state: FSMContext) -> None:
-        day = date.fromisoformat(callback_data.day_iso)
+        try:
+            day = date.fromisoformat(callback_data.day_iso)
+        except ValueError:
+            await callback_query.answer("Некорректная дата, попробуйте ещё раз.", show_alert=True)
+            return
+
         now = get_current_tashkent_datetime()
         data = await state.get_data()
         slots = await appointment_management_service.get_available_slots(data["staff_user_id"], day, now)

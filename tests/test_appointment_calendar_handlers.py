@@ -1,10 +1,15 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from aiogram.types import CallbackQuery
+
 from bot.handlers.admin.appointment_management.appointment_browser import (
     create_admin_appointment_browser_router,
 )
-from bot.handlers.utils.admin_utils.appointment_calendar_helpers import clamp_month_to_range
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    CALENDAR_MAX_YEAR,
+    clamp_month_to_range,
+)
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptActionCB,
     ApptCalendarDayCB,
@@ -192,9 +197,10 @@ def _appointment(**overrides):
 async def test_open_calendar_clears_state_and_opens_grid_at_clamped_current_month():
     appt_repo = FakeAppointmentRepository()
     router = _build_router(appt_repo)
-    open_calendar = _find_handler(router, "open_calendar")
+    open_calendar = _find_handler(router, "open_calendar_callback")
 
     callback_query = _callback_query()
+    callback_query.__class__ = CallbackQuery
     state = FakeState(stale_key="stale_value")
 
     await open_calendar(callback_query, state)
@@ -239,6 +245,75 @@ async def test_change_calendar_month_updates_fsm_and_rerenders_grid():
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
     assert kwargs["reply_markup"] == appointment_calendar_kb(2026, 1)
+
+
+@pytest.mark.asyncio
+async def test_change_calendar_month_clamps_forged_month_above_twelve():
+    """A forged/malformed ApptCalendarMonthCB (e.g. month=13, which can never
+    be produced by the keyboard's own shift_month/nav buttons) used to crash
+    the handler - format_month_label's _MONTH_NAMES_RU[13] raises KeyError,
+    and get_month_grid's datetime(year, 13, 1) raises ValueError. The handler
+    now runs the callback's (year, month) through clamp_month_to_range first,
+    so it must survive and settle on the nearest valid month instead."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo)
+    change_calendar_month = _find_handler(router, "change_calendar_month")
+
+    callback_query = _callback_query()
+    state = FakeState()
+    callback_data = ApptCalendarMonthCB(year=2026, month=13)
+
+    await change_calendar_month(callback_query, callback_data, state)
+
+    assert state.data["calendar_year"] == 2026
+    assert state.data["calendar_month"] == 12
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert kwargs["reply_markup"] == appointment_calendar_kb(2026, 12)
+
+
+@pytest.mark.asyncio
+async def test_change_calendar_month_clamps_forged_month_below_one():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo)
+    change_calendar_month = _find_handler(router, "change_calendar_month")
+
+    callback_query = _callback_query()
+    state = FakeState()
+    callback_data = ApptCalendarMonthCB(year=2026, month=0)
+
+    await change_calendar_month(callback_query, callback_data, state)
+
+    assert state.data["calendar_year"] == 2026
+    assert state.data["calendar_month"] == 1
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert kwargs["reply_markup"] == appointment_calendar_kb(2026, 1)
+
+
+@pytest.mark.asyncio
+async def test_change_calendar_month_clamps_forged_year_outside_range():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo)
+    change_calendar_month = _find_handler(router, "change_calendar_month")
+
+    callback_query = _callback_query()
+    state = FakeState()
+    callback_data = ApptCalendarMonthCB(year=2030, month=13)
+
+    await change_calendar_month(callback_query, callback_data, state)
+
+    assert state.data["calendar_year"] == CALENDAR_MAX_YEAR
+    assert state.data["calendar_month"] == 12
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert kwargs["reply_markup"] == appointment_calendar_kb(CALENDAR_MAX_YEAR, 12)
 
 
 # --- pick_calendar_day ---
@@ -319,6 +394,32 @@ async def test_pick_calendar_day_back_button_targets_the_days_own_month_not_stal
     args, kwargs = callback_query.message.edit_text.await_args
     back_target = ApptCalendarMonthCB(year=2026, month=8).pack()
     assert back_target in str(kwargs["reply_markup"])
+
+
+@pytest.mark.asyncio
+async def test_pick_calendar_day_clamps_forged_day_above_month_length():
+    """A forged/malformed ApptCalendarDayCB (e.g. day=31 for February, which
+    can never be produced by the keyboard's own generate_month_days) used to
+    produce an invalid ISO date string like '2026-02-31'. The handler now
+    runs the callback's (year, month, day) through clamp_calendar_date first,
+    so it must survive and settle on February's actual last day instead."""
+    appointment = _appointment()
+    appt_repo = FakeAppointmentRepository(appointment)
+    router = _build_router(appt_repo)
+    pick_calendar_day = _find_handler(router, "pick_calendar_day")
+
+    callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptCalendarDayCB(year=2026, month=2, day=31)
+
+    await pick_calendar_day(callback_query, callback_data, state)
+
+    assert state.data["calendar_date"] == "2026-02-28"
+    assert state.data["calendar_year"] == 2026
+    assert state.data["calendar_month"] == 2
+    assert state.states[0] == AppointmentBrowserStates.calendar_day
+
+    callback_query.message.edit_text.assert_awaited_once()
 
 
 # --- paginate (tab switch / page nav while inside calendar mode) ---

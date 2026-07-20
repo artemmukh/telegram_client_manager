@@ -390,6 +390,8 @@ def create_client_appointment_router(
                 await callback_query.message.edit_text("✅ Спасибо! Ваша запись подтверждена")
                 await callback_query.answer()
 
+            except ValueError:
+                await callback_query.answer("Некорректная запись.", show_alert=True)
             except AppointmentNotFoundError:
                 await callback_query.answer("Запись не найдена", show_alert=True)
             except BotException as e:
@@ -398,7 +400,11 @@ def create_client_appointment_router(
         @router.callback_query(F.data.startswith("appt_details:"))
         async def handle_appointment_details(callback_query: CallbackQuery):
             """Handle appointment details button (rebuild full card on the original message)."""
-            appointment_id = int(callback_query.data.split(":")[1])
+            try:
+                appointment_id = int(callback_query.data.split(":")[1])
+            except ValueError:
+                await callback_query.answer("Некорректная запись.", show_alert=True)
+                return
 
             appointment = await appointment_management_service.get_appointment_for_client(
                 appointment_id, callback_query.from_user.id,
@@ -428,6 +434,8 @@ def create_client_appointment_router(
                     ),
                 )
                 await callback_query.answer()
+            except ValueError:
+                await callback_query.answer("Некорректная запись.", show_alert=True)
             except BotException as e:
                 await callback_query.answer(str(e), show_alert=True)
 

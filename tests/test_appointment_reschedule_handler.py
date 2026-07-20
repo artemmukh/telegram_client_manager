@@ -10,18 +10,27 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
-from bot.keyboards.client.reschedule_cb import ClientRescheduleSubmitCB
+from bot.keyboards.client.reschedule_cb import (
+    ClientRescheduleDayCB,
+    ClientRescheduleSlotCB,
+    ClientRescheduleSubmitCB,
+)
 from bot.models.appointment import Appointment
 from bot.models.user import User
+from bot.states.client.reschedule_states import ClientRescheduleStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
 
-def _get_submit_reschedule_handler(router):
+def _get_handler_by_name(router, name):
     for handler in router.callback_query.handlers:
-        if handler.callback.__name__ == "submit_reschedule":
+        if handler.callback.__name__ == name:
             return handler.callback
-    raise AssertionError("submit_reschedule handler not found on router")
+    raise AssertionError(f"{name} handler not found on router")
+
+
+def _get_submit_reschedule_handler(router):
+    return _get_handler_by_name(router, "submit_reschedule")
 
 
 def _client_user():
@@ -140,3 +149,95 @@ async def test_submit_reschedule_negotiation_branch_notifies_staff_and_resyncs_j
     toast_text = callback_query.message.edit_text.call_args.args[0]
     assert "1 августа 2026, 10:00" in toast_text
     assert "2 августа 2026, 10:00" in toast_text
+
+
+@pytest.mark.asyncio
+async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_state_or_slots():
+    """Defensive guard around date.fromisoformat(callback_data.day_iso): a
+    malformed/forged day_iso must short-circuit before any slot lookup or
+    state mutation, and answer with a show_alert toast instead of crashing."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_available_slots = AsyncMock()
+
+    notification_service = MagicMock()
+    appointment_scheduler = MagicMock()
+
+    router = create_client_reschedule_router(
+        appointment_management_service, notification_service, appointment_scheduler,
+    )
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+
+    await pick_day(
+        callback_query,
+        ClientRescheduleDayCB(appointment_id=1, week_offset=0, day_iso="not-a-date"),
+        state,
+    )
+
+    callback_query.answer.assert_called_once_with("Некорректная дата, попробуйте ещё раз.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    state.update_data.assert_not_called()
+    appointment_management_service.get_available_slots.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_slot_with_malformed_slot_shows_alert_and_does_not_touch_state():
+    """Defensive guard around datetime.fromisoformat(new_datetime): a malformed
+    slot must short-circuit before any state mutation, and answer with a
+    show_alert toast instead of crashing."""
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+    appointment_scheduler = MagicMock()
+
+    router = create_client_reschedule_router(
+        appointment_management_service, notification_service, appointment_scheduler,
+    )
+    pick_slot = _get_handler_by_name(router, "pick_slot")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+    state.get_data = AsyncMock(return_value={"day_iso": "2026-08-01"})
+
+    await pick_slot(
+        callback_query,
+        ClientRescheduleSlotCB(appointment_id=1, slot="xx:yy"),
+        state,
+    )
+
+    callback_query.answer.assert_called_once_with("Некорректное время, попробуйте ещё раз.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    state.update_data.assert_not_called()
+    state.set_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_slot_with_valid_slot_updates_state_and_renders_confirm_screen():
+    """Regression guard for the fromisoformat reorder: a well-formed slot must
+    still update state and render the confirmation screen as before."""
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+    appointment_scheduler = MagicMock()
+
+    router = create_client_reschedule_router(
+        appointment_management_service, notification_service, appointment_scheduler,
+    )
+    pick_slot = _get_handler_by_name(router, "pick_slot")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+    state.get_data = AsyncMock(return_value={"day_iso": "2026-08-01"})
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    await pick_slot(
+        callback_query,
+        ClientRescheduleSlotCB(appointment_id=1, slot="10:00"),
+        state,
+    )
+
+    state.update_data.assert_awaited_once_with(slot="10:00", new_datetime="2026-08-01 10:00")
+    state.set_state.assert_awaited_once_with(ClientRescheduleStates.confirm)
+    callback_query.message.edit_text.assert_called_once()
+    callback_query.answer.assert_called_once_with()

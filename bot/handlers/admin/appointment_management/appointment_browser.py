@@ -273,7 +273,11 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptActionCB.filter(F.action == "set_status"))
     async def set_status(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
-        new_status = AppointmentStatus(callback_data.value)
+        try:
+            new_status = AppointmentStatus(callback_data.value)
+        except ValueError:
+            await callback_query.answer("Некорректный статус.", show_alert=True)
+            return
 
         owned_appointment = await appt_mng.get_appointment_for_admin(
             callback_data.appointment_id, callback_query.from_user.id

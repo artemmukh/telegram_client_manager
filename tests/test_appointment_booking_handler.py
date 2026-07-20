@@ -13,6 +13,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.client.appointment_booking import create_client_booking_router
+from bot.keyboards.client.booking_cb import ClientBookDayCB
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
@@ -192,3 +193,29 @@ async def test_submit_booking_does_not_notify_when_notification_service_missing(
     await submit_booking(_make_callback_query(), _make_state(), _current_user())
 
     appointment_management_service.resolve_notification_recipients.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_state_or_slots():
+    """Defensive guard around date.fromisoformat(callback_data.day_iso): a
+    malformed/forged day_iso must short-circuit before any slot lookup or
+    state mutation, and answer with a show_alert toast instead of crashing."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_available_slots = AsyncMock()
+
+    notification_service = MagicMock()
+
+    router = _build_router(appointment_management_service, notification_service)
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+
+    await pick_day(
+        callback_query, ClientBookDayCB(week_offset=0, day_iso="not-a-date"), state,
+    )
+
+    callback_query.answer.assert_called_once_with("Некорректная дата, попробуйте ещё раз.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    state.update_data.assert_not_called()
+    appointment_management_service.get_available_slots.assert_not_called()

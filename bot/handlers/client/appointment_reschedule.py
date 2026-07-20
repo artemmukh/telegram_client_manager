@@ -143,7 +143,12 @@ def create_client_reschedule_router(
     async def pick_day(
         callback_query: CallbackQuery, callback_data: ClientRescheduleDayCB, state: FSMContext,
     ) -> None:
-        day = date.fromisoformat(callback_data.day_iso)
+        try:
+            day = date.fromisoformat(callback_data.day_iso)
+        except ValueError:
+            await callback_query.answer("Некорректная дата, попробуйте ещё раз.", show_alert=True)
+            return
+
         now = get_current_tashkent_datetime()
         data = await state.get_data()
         slots = await appointment_management_service.get_available_slots(data["doctor_id"], day, now)
@@ -168,10 +173,16 @@ def create_client_reschedule_router(
         data = await state.get_data()
         new_datetime = f"{data['day_iso']} {callback_data.slot}"
 
+        try:
+            parsed_datetime = datetime.fromisoformat(new_datetime)
+        except ValueError:
+            await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
+            return
+
         await state.update_data(slot=callback_data.slot, new_datetime=new_datetime)
         await state.set_state(ClientRescheduleStates.confirm)
 
-        display_datetime = format_datetime_for_display(datetime.fromisoformat(new_datetime))
+        display_datetime = format_datetime_for_display(parsed_datetime)
         text = (
             "Проверьте новое время записи:\n\n"
             f"📅 Новое время: {display_datetime}\n\n"

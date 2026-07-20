@@ -3,8 +3,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import build_appointment_button_text
 from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    WEEKDAY_LABELS_RU,
+    clamp_month_to_range,
     format_month_label,
-    generate_month_days,
+    get_month_grid,
     shift_month,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
@@ -154,19 +156,21 @@ def appointment_list_kb(
 
 def appointment_calendar_kb(year: int, month: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    days = generate_month_days(year, month)
     rows = []
 
-    for day in days:
-        builder.button(
-            text=str(day),
-            callback_data=ApptCalendarDayCB(year=year, month=month, day=day).pack(),
-        )
+    for label in WEEKDAY_LABELS_RU:
+        builder.button(text=label, callback_data="noop")
+    rows.append(7)
 
-    remaining = len(days)
-    while remaining > 0:
-        rows.append(min(7, remaining))
-        remaining -= 7
+    grid = get_month_grid(year, month)
+    for day, cell_year, cell_month in grid:
+        in_range = clamp_month_to_range(cell_year, cell_month) == (cell_year, cell_month)
+        callback_data = (
+            ApptCalendarDayCB(year=cell_year, month=cell_month, day=day).pack() if in_range else "noop"
+        )
+        text = str(day) if cell_month == month else f"·{day}"
+        builder.button(text=text, callback_data=callback_data)
+    rows += [7] * (len(grid) // 7)
 
     builder.button(text=format_month_label(year, month), callback_data="noop")
     rows.append(1)
