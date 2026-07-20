@@ -34,12 +34,15 @@ async def show_calendar(
     await state.set_state(AppointmentBrowserStates.calendar_month)
 
     if isinstance(event, CallbackQuery):
+        await event.answer('')
+        message = event.message
         await message.edit_text(
             f"📅 {format_month_label(year, month)}",
             reply_markup=appointment_calendar_kb(year, month),
         )
         await remember_tracked_message(state, message)
     else:
+        message = event
         sent = await message.answer(
             f"📅 {format_month_label(year, month)}",
             reply_markup=appointment_calendar_kb(year, month),
