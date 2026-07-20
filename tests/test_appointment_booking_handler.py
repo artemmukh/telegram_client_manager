@@ -13,7 +13,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.client.appointment_booking import create_client_booking_router
-from bot.keyboards.client.booking_cb import ClientBookDayCB
+from bot.keyboards.client.booking_cb import ClientBookDayCB, ClientBookSlotCB
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
@@ -219,3 +219,56 @@ async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_st
     callback_query.message.edit_text.assert_not_called()
     state.update_data.assert_not_called()
     appointment_management_service.get_available_slots.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_slot_with_malformed_slot_shows_alert_and_does_not_touch_state():
+    """Defensive guard around datetime.strptime(callback_data.slot, "%H:%M"):
+    a malformed/forged slot must short-circuit before any state mutation --
+    previously pick_slot stored the raw slot unchecked and only crashed later,
+    inside process_complaint's build_booking_confirmation_text, after the FSM
+    had already advanced to ClientBookingStates.complaint."""
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+
+    router = _build_router(appointment_management_service, notification_service)
+    pick_slot = _get_handler_by_name(router, "pick_slot")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+
+    await pick_slot(callback_query, ClientBookSlotCB(slot="xx:yy"), state)
+
+    callback_query.answer.assert_called_once_with("Некорректное время, попробуйте ещё раз.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    state.get_data.assert_not_called()
+    state.update_data.assert_not_called()
+    state.set_state.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_slot_with_valid_slot_updates_state_and_renders_complaint_prompt():
+    """Regression coverage for the success path: a well-formed slot still
+    updates state and advances to ClientBookingStates.complaint as before."""
+    from bot.states.client.booking_states import ClientBookingStates
+
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+
+    router = _build_router(appointment_management_service, notification_service)
+    pick_slot = _get_handler_by_name(router, "pick_slot")
+
+    callback_query = _make_callback_query()
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={"day_iso": "2026-08-01"})
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    await pick_slot(callback_query, ClientBookSlotCB(slot="10:00"), state)
+
+    state.update_data.assert_awaited_once_with(
+        slot="10:00", appointment_datetime="2026-08-01 10:00",
+    )
+    state.set_state.assert_awaited_once_with(ClientBookingStates.complaint)
+    callback_query.message.edit_text.assert_called_once()
+    callback_query.answer.assert_called_once()

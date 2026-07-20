@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, datetime
 
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
@@ -147,6 +147,12 @@ def create_client_booking_router(
 
     @router.callback_query(ClientBookSlotCB.filter())
     async def pick_slot(callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext) -> None:
+        try:
+            datetime.strptime(callback_data.slot, "%H:%M")
+        except ValueError:
+            await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
+            return
+
         data = await state.get_data()
         appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
 
