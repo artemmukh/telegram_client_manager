@@ -1,7 +1,10 @@
+import dataclasses
+
 import aiosqlite
 import pytest
 import pytest_asyncio
 
+from bot.exceptions.appointment_exceptions import SlotUnavailableError
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
@@ -1029,5 +1032,216 @@ async def test_update_appointment_price_round_trips_via_get_by_id_and_by_telegra
 
         assert by_id_cleared.price is None
         assert by_telegram_cleared[0].price is None
+    finally:
+        await connection.close()
+
+
+# --- TOCTOU double-booking fix: idx_appointments_doctor_datetime_confirmed ---
+# Regression tests for the partial unique index on (admin_id, datetime) WHERE
+# status = 'confirmed', and the IntegrityError -> SlotUnavailableError translation
+# in create_appointment / update_appointment / update_appointment_status.
+
+def _slot_appointment(client_id: int, doctor_id: int, dt: str, status: AppointmentStatus) -> Appointment:
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        doctor_id=doctor_id,
+        datetime=dt,
+        purpose="Consultation",
+        created_by=CreatedBy.ADMIN,
+        status=status,
+    )
+
+
+@pytest.mark.asyncio
+async def test_init_creates_partial_unique_index_on_clean_db():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        cursor = await connection.execute("PRAGMA index_list('appointments')")
+        index_names = {row[1] for row in await cursor.fetchall()}
+
+        assert "idx_appointments_doctor_datetime_confirmed" in index_names
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_raises_slot_unavailable_for_second_confirmed_same_slot():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
+        doctor_id = 100
+        slot = "2026-07-10 10:00"
+
+        first = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.CONFIRMED)
+        )
+
+        with pytest.raises(SlotUnavailableError):
+            await appointment_repo.create_appointment(
+                _slot_appointment(petrov.ID, doctor_id, slot, AppointmentStatus.CONFIRMED)
+            )
+
+        untouched = await appointment_repo.get_appointment_by_id(first.id)
+        assert untouched == first
+        assert untouched.status is AppointmentStatus.CONFIRMED
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_allows_two_pending_appointments_for_same_slot():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
+        doctor_id = 100
+        slot = "2026-07-10 10:00"
+
+        first = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+        second = await appointment_repo.create_appointment(
+            _slot_appointment(petrov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+
+        assert first.id != second.id
+        assert (await appointment_repo.get_appointment_by_id(first.id)).status is AppointmentStatus.PENDING
+        assert (await appointment_repo.get_appointment_by_id(second.id)).status is AppointmentStatus.PENDING
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_update_appointment_status_raises_slot_unavailable_when_confirming_into_occupied_slot():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
+        doctor_id = 100
+        slot = "2026-07-10 10:00"
+
+        first = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+        second = await appointment_repo.create_appointment(
+            _slot_appointment(petrov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+
+        await appointment_repo.update_appointment_status(
+            first.id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+        )
+
+        with pytest.raises(SlotUnavailableError):
+            await appointment_repo.update_appointment_status(
+                second.id, AppointmentStatus.CONFIRMED, "2026-07-01 09:05:00"
+            )
+
+        still_pending = await appointment_repo.get_appointment_by_id(second.id)
+        assert still_pending.status is AppointmentStatus.PENDING
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_update_appointment_raises_slot_unavailable_when_confirming_into_occupied_slot():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
+        doctor_id = 100
+        slot = "2026-07-10 10:00"
+
+        first = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+        second = await appointment_repo.create_appointment(
+            _slot_appointment(petrov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+
+        await appointment_repo.update_appointment_status(
+            first.id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+        )
+
+        second_confirmed = dataclasses.replace(second, status=AppointmentStatus.CONFIRMED)
+
+        with pytest.raises(SlotUnavailableError):
+            await appointment_repo.update_appointment(second.id, second_confirmed)
+
+        still_pending = await appointment_repo.get_appointment_by_id(second.id)
+        assert still_pending.status is AppointmentStatus.PENDING
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_update_appointment_allows_in_place_edit_of_already_confirmed_row():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor_id = 100
+        slot = "2026-07-10 10:00"
+
+        confirmed = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.CONFIRMED)
+        )
+
+        edited = dataclasses.replace(confirmed, purpose="Follow-up")
+        await appointment_repo.update_appointment(confirmed.id, edited)
+
+        updated = await appointment_repo.get_appointment_by_id(confirmed.id)
+        assert updated.purpose == "Follow-up"
+        assert updated.status is AppointmentStatus.CONFIRMED
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_fk_violation_raises_integrity_error_not_slot_unavailable(appointment_setup):
+    appointment_repo, user = appointment_setup
+
+    nonexistent_doctor_id = 999999
+    appointment = _slot_appointment(
+        user.ID, nonexistent_doctor_id, "2026-07-10 10:00", AppointmentStatus.PENDING
+    )
+
+    with pytest.raises(aiosqlite.IntegrityError) as excinfo:
+        await appointment_repo.create_appointment(appointment)
+
+    assert not isinstance(excinfo.value, SlotUnavailableError)
+
+
+@pytest.mark.asyncio
+async def test_init_skips_index_creation_and_does_not_crash_when_duplicate_confirmed_rows_exist(caplog):
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor_id = 100
+        slot = "2026-07-15 10:00"
+
+        # The index already exists from the first init() call above (no duplicates
+        # yet), so it must be dropped before we can force duplicate CONFIRMED rows
+        # into the table via raw SQL, bypassing the repository entirely.
+        await connection.execute("DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed")
+        await connection.commit()
+
+        for _ in range(2):
+            await connection.execute(
+                """
+                INSERT INTO appointments (clinic_id, client_id, admin_id, datetime, purpose, created_by, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (1, client.ID, doctor_id, slot, "Consultation", CreatedBy.ADMIN.value, AppointmentStatus.CONFIRMED.value),
+            )
+        await connection.commit()
+
+        with caplog.at_level("WARNING"):
+            await appointment_repo.init()
+
+        cursor = await connection.execute("PRAGMA index_list('appointments')")
+        index_names = {row[1] for row in await cursor.fetchall()}
+        assert "idx_appointments_doctor_datetime_confirmed" not in index_names
+        assert "duplicate confirmed appointments" in caplog.text.lower()
     finally:
         await connection.close()

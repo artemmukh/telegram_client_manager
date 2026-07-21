@@ -1,7 +1,14 @@
+import logging
+
 import aiosqlite
 
+from bot.exceptions.appointment_exceptions import SlotUnavailableError
 from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+
+logger = logging.getLogger(__name__)
+
+SLOT_UNAVAILABLE_MESSAGE = "Это время уже занято другой подтверждённой записью, выберите другое."
 
 APPOINTMENT_SELECT = """
 SELECT
@@ -145,6 +152,30 @@ class AppointmentRepository:
             CREATE INDEX IF NOT EXISTS idx_appointments_client
             ON appointments(client_id)
         """)
+
+        cursor = await self.connection.execute("""
+            SELECT admin_id, datetime, COUNT(*)
+            FROM appointments
+            WHERE status = 'confirmed'
+            GROUP BY admin_id, datetime
+            HAVING COUNT(*) > 1
+        """)
+        duplicates = await cursor.fetchall()
+        if duplicates:
+            pairs = ", ".join(f"(admin_id={row[0]}, datetime={row[1]})" for row in duplicates)
+            logger.error(
+                "Found duplicate confirmed appointments for the same doctor/datetime, "
+                "skipping creation of idx_appointments_doctor_datetime_confirmed "
+                "(double-booking protection is NOT active until this is resolved): %s",
+                pairs,
+            )
+        else:
+            await self.connection.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_doctor_datetime_confirmed
+                ON appointments(admin_id, datetime)
+                WHERE status = 'confirmed'
+            """)
+
         await self.connection.commit()
 
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
@@ -204,64 +235,79 @@ class AppointmentRepository:
         return [self._row_to_appointment(row) for row in rows]
 
     async def create_appointment(self, appointment: Appointment) -> Appointment:
-        cursor = await self.connection.execute(
-            """
-            INSERT INTO appointments(
-                clinic_id, client_id, admin_id,
-                datetime, purpose, created_by, status, admin_tg_id, created_at,
-                status_updated_at, notification_message_id
+        try:
+            cursor = await self.connection.execute(
+                """
+                INSERT INTO appointments(
+                    clinic_id, client_id, admin_id,
+                    datetime, purpose, created_by, status, admin_tg_id, created_at,
+                    status_updated_at, notification_message_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    appointment.clinic_id,
+                    appointment.client_id,
+                    appointment.doctor_id,
+                    appointment.datetime,
+                    appointment.purpose,
+                    appointment.created_by.value,
+                    appointment.status.value,
+                    appointment.created_by_telegram_id,
+                    appointment.created_at,
+                    appointment.created_at,
+                    appointment.notification_message_id,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                appointment.clinic_id,
-                appointment.client_id,
-                appointment.doctor_id,
-                appointment.datetime,
-                appointment.purpose,
-                appointment.created_by.value,
-                appointment.status.value,
-                appointment.created_by_telegram_id,
-                appointment.created_at,
-                appointment.created_at,
-                appointment.notification_message_id,
-            ),
-        )
-        await self.connection.commit()
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
 
         appointment_id = cursor.lastrowid
         created_appointment = await self.get_appointment_by_id(appointment_id)
         return created_appointment
 
     async def update_appointment(self, appointment_id: int, appointment: Appointment) -> None:
-        await self.connection.execute(
-            """
-            UPDATE appointments
-            SET
-                admin_id = ?,
-                datetime = ?,
-                purpose = ?,
-                status = ?
-            WHERE id = ?
-            """,
-            (
-                appointment.doctor_id,
-                appointment.datetime,
-                appointment.purpose,
-                appointment.status.value,
-                appointment_id,
-            ),
-        )
-        await self.connection.commit()
+        try:
+            await self.connection.execute(
+                """
+                UPDATE appointments
+                SET
+                    admin_id = ?,
+                    datetime = ?,
+                    purpose = ?,
+                    status = ?
+                WHERE id = ?
+                """,
+                (
+                    appointment.doctor_id,
+                    appointment.datetime,
+                    appointment.purpose,
+                    appointment.status.value,
+                    appointment_id,
+                ),
+            )
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
 
     async def update_appointment_status(
         self, appointment_id: int, status: AppointmentStatus, status_updated_at: str
     ) -> None:
-        await self.connection.execute(
-            "UPDATE appointments SET status = ?, status_updated_at = ? WHERE id = ?",
-            (status.value, status_updated_at, appointment_id),
-        )
-        await self.connection.commit()
+        try:
+            await self.connection.execute(
+                "UPDATE appointments SET status = ?, status_updated_at = ? WHERE id = ?",
+                (status.value, status_updated_at, appointment_id),
+            )
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
 
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.connection.execute(
@@ -551,6 +597,21 @@ class AppointmentRepository:
         cursor = await self.connection.execute(sql, params)
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
+
+    @staticmethod
+    def _is_slot_unique_violation(error: aiosqlite.IntegrityError) -> bool:
+        message = str(error)
+        # Current SQLite (3.45.x) omits the index name from IntegrityError text and
+        # reports "UNIQUE constraint failed: appointments.admin_id, appointments.datetime"
+        # instead - the name check below is forward-defensive in case a future SQLite
+        # version includes it.
+        if "idx_appointments_doctor_datetime_confirmed" in message:
+            return True
+        return (
+            "UNIQUE constraint failed" in message
+            and "admin_id" in message
+            and "datetime" in message
+        )
 
     @staticmethod
     def _status_bucket_condition(
