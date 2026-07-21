@@ -1,6 +1,11 @@
 import pytest
 
-from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError, UserNotFoundError
+from bot.exceptions.user_exceptions import (
+    ContactOwnershipMismatchError,
+    PhoneAlreadyExistsError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
+)
 from bot.models.user import User
 from bot.services.utils.registration import PhoneLookupResult, RegistrationService
 from bot.utils.role import Role
@@ -24,7 +29,16 @@ async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo
 
 
 @pytest.mark.asyncio
-async def test_registration_links_existing_user_without_telegram(fake_user_repo_factory, fake_clinic_repo):
+async def test_registration_never_rebinds_via_phone_lookup_when_no_existing_user_id(
+        fake_user_repo_factory, fake_clinic_repo):
+    # A brand-new registration (existing_user_id=None) must never silently bind
+    # an unrelated, unclaimed record by phone. That rebinding is only ever
+    # allowed through the verified existing_user_id path, which requires
+    # check_phone() to have already confirmed contact ownership. Seed a
+    # phone-matching, telegram-unlinked record (ID 7) that the OLD, unsafe
+    # register() would have found via get_client_by_phone and silently bound
+    # to this new telegram_user_id. register() must instead ignore it
+    # entirely and create a fresh user.
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -43,22 +57,20 @@ async def test_registration_links_existing_user_without_telegram(fake_user_repo_
         clinic_id=1,
     )
 
-    assert user.ID == 7
+    assert user.ID != 7
     assert user.telegram_user_id == 1001
-    assert repo.created_users == []
-    assert repo.linked == [(7, 1001)]
+    assert repo.created_users == [user]
+    assert repo.linked == []
 
 
 @pytest.mark.asyncio
 async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_factory, fake_clinic_repo):
-    existing = User(
-        full_name="Иванов Иван",
-        phone="+998901234567",
-        role=Role.CLIENT,
-        telegram_user_id=555,
-        ID=7,
-    )
-    repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
+    # The phone is already taken by a real row in the users table (mirrored
+    # here by existing_phones, the fake's analog of the UNIQUE constraint on
+    # users.phone). A brand-new registration attempt must surface this as
+    # PhoneAlreadyExistsError from create_user, not from any lookup inside
+    # register() itself.
+    repo = fake_user_repo_factory(existing_phones={"+998901234567"})
     service = RegistrationService(repo, fake_clinic_repo)
 
     with pytest.raises(PhoneAlreadyExistsError):
@@ -69,6 +81,8 @@ async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_f
             role=Role.CLIENT,
             clinic_id=1,
         )
+
+    assert repo.linked == []
 
 
 @pytest.mark.asyncio
@@ -187,10 +201,79 @@ async def test_check_phone_returns_found_unclaimed(fake_user_repo_factory, fake_
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
     service = RegistrationService(repo, fake_clinic_repo)
 
-    result = await service.check_phone("+998901234567", telegram_user_id=1001)
+    result = await service.check_phone("+998901234567", telegram_user_id=1001, contact_user_id=1001)
 
     assert result.status == "found_unclaimed"
     assert result.existing_user is existing
+
+
+@pytest.mark.asyncio
+async def test_check_phone_rejects_mismatched_contact_owner_for_found_unclaimed(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    with pytest.raises(ContactOwnershipMismatchError):
+        await service.check_phone(
+            "+998901234567", telegram_user_id=1001, contact_user_id=2002,
+        )
+
+
+@pytest.mark.asyncio
+async def test_check_phone_allows_matching_contact_owner_for_found_unclaimed(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    result = await service.check_phone(
+        "+998901234567", telegram_user_id=1001, contact_user_id=1001,
+    )
+
+    assert result.status == "found_unclaimed"
+    assert result.existing_user is existing
+
+
+@pytest.mark.asyncio
+async def test_check_phone_rejects_found_unclaimed_when_contact_owner_unknown(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    with pytest.raises(ContactOwnershipMismatchError):
+        await service.check_phone("+998901234567", telegram_user_id=1001)
+
+
+@pytest.mark.asyncio
+async def test_check_phone_not_found_ignores_mismatched_contact_owner(
+        fake_user_repo, fake_clinic_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+
+    result = await service.check_phone(
+        "90 123-45-67", telegram_user_id=1001, contact_user_id=2002,
+    )
+
+    assert result == PhoneLookupResult(status="not_found")
 
 
 @pytest.mark.asyncio

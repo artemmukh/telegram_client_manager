@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from bot.exceptions.user_exceptions import PhoneAlreadyExistsError
 from bot.models.user import User
 
 
@@ -41,6 +42,9 @@ class FakeUserRepository:
         return telegram_user_id in self.existing_telegram_ids
 
     async def create_user(self, user: User) -> None:
+        if user.phone in self.existing_phones:
+            raise PhoneAlreadyExistsError()
+
         self.created_users.append(user)
         self.existing_phones.add(user.phone)
         if user.telegram_user_id is not None:

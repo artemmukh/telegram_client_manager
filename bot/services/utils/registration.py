@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError, UserNotFoundError
+from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, UserAlreadyExistsError, UserNotFoundError
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.utils.role import Role
@@ -33,7 +33,9 @@ class RegistrationService:
     async def get_clinic_by_token(self, token: str) -> Clinic | None:
         return await self.clinic_repository.get_clinic_by_token(token)
 
-    async def check_phone(self, phone: str, telegram_user_id: int) -> PhoneLookupResult:
+    async def check_phone(
+        self, phone: str, telegram_user_id: int, contact_user_id: int | None = None,
+    ) -> PhoneLookupResult:
         phone = normalize_phone(phone.strip())
         validate_phone(phone)
 
@@ -47,6 +49,9 @@ class RegistrationService:
 
         if existing.telegram_user_id is not None:
             raise PhoneAlreadyExistsError()
+
+        if contact_user_id != telegram_user_id:
+            raise ContactOwnershipMismatchError()
 
         return PhoneLookupResult(status="found_unclaimed", existing_user=existing)
 
@@ -94,16 +99,6 @@ class RegistrationService:
 
         if await self.user_repository.user_exists(telegram_user_id):
             raise UserAlreadyExistsError()
-
-        existing = await self.user_repository.get_client_by_phone(phone)
-
-        if existing is not None:
-            if existing.telegram_user_id is not None:
-                raise PhoneAlreadyExistsError()
-
-            await self.user_repository.update_user_telegram_id(existing.ID, telegram_user_id)
-            existing.telegram_user_id = telegram_user_id
-            return existing
 
         user = User(
             full_name=full_name,

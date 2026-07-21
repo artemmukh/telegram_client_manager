@@ -210,7 +210,7 @@ async def test_client_registration_binds_to_existing_unclaimed_patient_by_phone(
     assert unclaimed.telegram_user_id is None
 
     telegram_id = 555000222
-    lookup = await e2e.registration_service.check_phone(phone, telegram_id)
+    lookup = await e2e.registration_service.check_phone(phone, telegram_id, contact_user_id=telegram_id)
     assert lookup.status == "found_unclaimed"
     assert lookup.existing_user.ID == unclaimed.ID
 

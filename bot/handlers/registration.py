@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
-from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError
+from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, UserAlreadyExistsError
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name, full_name_processing
@@ -83,7 +83,9 @@ def create_reg_router(
         phone = normalize_phone(phone=message.contact.phone_number)
 
         try:
-            result = await reg.check_phone(phone, message.from_user.id)
+            result = await reg.check_phone(
+                phone, message.from_user.id, contact_user_id=message.contact.user_id,
+            )
         except UserAlreadyExistsError:
             await message.answer("Вы уже зарегистрированы.")
             return
@@ -91,6 +93,12 @@ def create_reg_router(
             await message.answer(
                 "Этот номер телефона уже привязан к другому аккаунту Telegram.\n"
                 "Обратитесь в клинику."
+            )
+            return
+        except ContactOwnershipMismatchError:
+            await message.answer(
+                "Похоже, вы отправили чужой контакт.\n"
+                "Пожалуйста, отправьте свой собственный контакт кнопкой ниже."
             )
             return
 

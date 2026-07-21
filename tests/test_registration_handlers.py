@@ -178,6 +178,7 @@ async def test_get_phone_found_unclaimed_moves_to_name_conflict(fsm_context, exi
 
     contact = MagicMock()
     contact.phone_number = existing_client.phone
+    contact.user_id = 999
     message = _message(contact=contact)
 
     await get_phone(message, fsm_context)
@@ -188,6 +189,28 @@ async def test_get_phone_found_unclaimed_moves_to_name_conflict(fsm_context, exi
     assert data["existing_full_name"] == existing_client.full_name
     sent_text = message.answer.call_args.args[0]
     assert existing_client.full_name in sent_text
+
+
+@pytest.mark.asyncio
+async def test_get_phone_rejects_contact_owner_mismatch(fsm_context, existing_client, notification_service):
+    router, _ = _build_router(existing_clients=[existing_client], notification_service=notification_service)
+    get_phone = _get_handler(router.message, "get_phone")
+
+    await fsm_context.set_state(RegisterStates.phone)
+    await fsm_context.update_data(clinic_id=1, clinic_name="Клиника Тест")
+
+    contact = MagicMock()
+    contact.phone_number = existing_client.phone
+    contact.user_id = 111
+    message = _message(contact=contact)
+
+    await get_phone(message, fsm_context)
+
+    assert await fsm_context.get_state() == RegisterStates.phone
+    data = await fsm_context.get_data()
+    assert "existing_user_id" not in data
+    sent_text = message.answer.call_args.args[0]
+    assert "чужой контакт" in sent_text
 
 
 @pytest.mark.asyncio
@@ -486,6 +509,7 @@ async def test_rescanning_qr_clears_stale_fsm_data_before_new_registration(
 
     contact_a = MagicMock()
     contact_a.phone_number = existing_client.phone
+    contact_a.user_id = 999
     await get_phone(_message(contact=contact_a), fsm_context)
 
     assert await fsm_context.get_state() == RegisterStates.name_conflict

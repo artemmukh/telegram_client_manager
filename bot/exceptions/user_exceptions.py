@@ -25,6 +25,12 @@ class PhoneAlreadyExistsError(ValidationError):
     """Телефон уже используется."""
     pass
 
+
+class ContactOwnershipMismatchError(ValidationError):
+    """Контакт принадлежит другому пользователю Telegram."""
+    pass
+
+
 class SamePhoneError(ValidationError):
     """Введен тот же телефон."""
     pass
