@@ -274,6 +274,13 @@ def appointment_card_kb(
     if editing_buttons_added:
         rows.append(editing_buttons_added)
 
+    if status in _STATUS_EDITABLE_STATUSES:
+        builder.button(
+            text="🗑 Удалить",
+            callback_data=ApptActionCB(action="delete", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        )
+        rows.append(1)
+
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ApptPageCB(mode=mode, page=page, tab=tab).pack(),

@@ -2,15 +2,15 @@
 
 The keyboard is driven by an editing matrix (see refactoring_record_update.md):
 
-| Status                  | Service | Status | Price | Time |
-|--------------------------|:-------:|:------:|:-----:|:----:|
-| PENDING                  |    Y    |   Y    |   N   |  Y   |
-| CONFIRMED                |    Y    |   Y    |   N   |  Y   |
-| POST_APPOINTMENT_EDIT    |    Y    |   Y*   |   Y   |  N   |
-| COMPLETED                |    Y    |   N    |   Y   |  N   |
-| CANCELLED                |    N    |   N    |   N   |  N   |
-| EXPIRED                  |    N    |   N    |   N   |  N   |
-| NO_SHOW                  |    N    |   N    |   N   |  N   |
+| Status                  | Service | Status | Price | Time | Delete |
+|--------------------------|:-------:|:------:|:-----:|:----:|:------:|
+| PENDING                  |    Y    |   Y    |   N   |  Y   |   Y    |
+| CONFIRMED                |    Y    |   Y    |   N   |  Y   |   Y    |
+| POST_APPOINTMENT_EDIT    |    Y    |   Y*   |   Y   |  N   |   N    |
+| COMPLETED                |    Y    |   N    |   Y   |  N   |   N    |
+| CANCELLED                |    N    |   N    |   N   |  N   |   N    |
+| EXPIRED                  |    N    |   N    |   N   |  N   |   N    |
+| NO_SHOW                  |    N    |   N    |   N   |  N   |   N    |
 
 * post-appointment status change is limited to CANCELLED/NO_SHOW only, plus a
   dedicated "finish_appointment" action (never a set_status button).
@@ -63,7 +63,7 @@ def test_pending_shows_two_status_buttons_and_service_and_time():
     assert _action_cb("edit_datetime", 1, "list", 1) in callback_datas
     assert _action_cb("edit_price", 1, "list", 1) not in callback_datas
     assert _back_cb("list", 1, "pending") in callback_datas
-    assert _action_cb("delete", 1, "list", 1) not in callback_datas
+    assert _action_cb("delete", 1, "list", 1) in callback_datas
     assert _action_cb("finish_appointment", 1, "list", 1) not in callback_datas
 
 
@@ -78,6 +78,7 @@ def test_confirmed_hides_confirm_button_but_keeps_other_three():
     assert _action_cb("edit_purpose", 1, "list", 1) in callback_datas
     assert _action_cb("edit_datetime", 1, "list", 1) in callback_datas
     assert _action_cb("edit_price", 1, "list", 1) not in callback_datas
+    assert _action_cb("delete", 1, "list", 1) in callback_datas
     assert _back_cb("list", 1, "confirmed") in callback_datas
 
 
@@ -91,6 +92,7 @@ def test_completed_shows_only_service_and_price_no_status_no_time():
     assert _action_cb("edit_purpose", 1, "list", 1) in callback_datas
     assert _action_cb("edit_price", 1, "list", 1) in callback_datas
     assert _action_cb("edit_datetime", 1, "list", 1) not in callback_datas
+    assert _action_cb("delete", 1, "list", 1) not in callback_datas
     assert _back_cb("list", 1, "completed") in callback_datas
 
 
@@ -115,11 +117,13 @@ def test_no_show_shows_only_back_button():
     assert callback_datas == [_back_cb("list", 1, "no_show")]
 
 
-def test_delete_action_never_present_regardless_of_status():
+def test_delete_action_present_only_for_pending_and_confirmed():
     for status in AppointmentStatus:
         markup = appointment_card_kb(1, "list", 1, status=status)
         callback_datas = _callback_datas(markup)
-        assert _action_cb("delete", 1, "list", 1) not in callback_datas
+        is_present = _action_cb("delete", 1, "list", 1) in callback_datas
+        expected = status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED)
+        assert is_present == expected, f"delete button presence mismatch for status={status}"
 
 
 def test_post_appt_shows_only_cancelled_and_no_show_status_buttons():
