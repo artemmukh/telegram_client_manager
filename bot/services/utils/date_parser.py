@@ -50,7 +50,11 @@ def parse_ru_datetime(text: str) -> Optional[datetime]:
     if not text or not text.strip():
         return None
 
-    normalized = _normalize_colloquial_time(text.strip())
+    text = text.strip()
+    if len(text) > 50:
+        return None
+
+    normalized = _normalize_colloquial_time(text)
 
     return dateparser.parse(
         normalized,

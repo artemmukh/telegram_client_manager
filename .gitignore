@@ -28,9 +28,14 @@ dist/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+
+# Logs
+logs/
 
 # Binaries / tools
 *.exe

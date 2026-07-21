@@ -9,6 +9,7 @@ from bot.services.utils.date_parser import (
     format_appointment_card_datetime,
     get_current_tashkent_datetime,
     is_appointment_upcoming,
+    parse_ru_datetime,
 )
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
@@ -37,6 +38,29 @@ def test_format_appointment_card_datetime_formats_without_seconds():
 
 def test_format_appointment_card_datetime_falls_back_to_raw_value_when_unparseable():
     assert format_appointment_card_datetime("not-a-real-datetime") == "not-a-real-datetime"
+
+
+def test_parse_ru_datetime_parses_normal_short_input():
+    assert parse_ru_datetime("24.07.2026 12:30") is not None
+
+
+def test_parse_ru_datetime_rejects_text_over_fifty_chars_without_calling_dateparser(monkeypatch):
+    import bot.services.utils.date_parser as date_parser_module
+
+    called = False
+
+    def _fail_if_called(*args, **kwargs):
+        nonlocal called
+        called = True
+        return None
+
+    monkeypatch.setattr(date_parser_module.dateparser, "parse", _fail_if_called)
+
+    text = "24.07.2026 12:30" + "x" * 35
+    assert len(text) == 51
+
+    assert parse_ru_datetime(text) is None
+    assert called is False
 
 
 def _appointment(**overrides):

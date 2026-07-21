@@ -27,9 +27,11 @@ SEARCH_NAME_PATTERN = re.compile(
 
 
 def validate_full_name(full_name: str, pattern) -> str:
-    if not pattern.fullmatch(full_name.strip()):
+    full_name = full_name.strip()
+
+    if len(full_name) > 50 or not pattern.fullmatch(full_name):
         raise InvalidFullNameError(
-            "Введите ФИ корректно.\n\n"
+            "Введите ФИ корректно (до 50 символов).\n\n"
             "Например:\n"
             "Иван, Иван Иванов, Иван Иванов Иванович."
         )

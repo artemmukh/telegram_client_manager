@@ -41,6 +41,19 @@ def test_validate_full_name_rejects_invalid_names(full_name):
         validate_full_name(full_name, FULL_NAME_PATTERN)
 
 
+def test_validate_full_name_accepts_name_at_the_fifty_char_limit():
+    full_name = "И" + "в" * 23 + " " + "В" + "в" * 24
+    assert len(full_name) == 50
+    assert validate_full_name(full_name, FULL_NAME_PATTERN) == full_name
+
+
+def test_validate_full_name_rejects_name_over_fifty_chars():
+    full_name = "И" + "в" * 23 + " " + "В" + "в" * 25
+    assert len(full_name) == 51
+    with pytest.raises(InvalidFullNameError):
+        validate_full_name(full_name, FULL_NAME_PATTERN)
+
+
 @pytest.mark.parametrize(
     ("raw_phone", "expected"),
     [
