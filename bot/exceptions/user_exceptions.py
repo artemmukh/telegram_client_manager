@@ -18,6 +18,9 @@ class UserNotFoundError(ValidationError):
 
 
 
+PHONE_ALREADY_EXISTS_MESSAGE = "Номер уже зарегистрирован. Пожалуйста, введите другой:"
+
+
 class PhoneAlreadyExistsError(ValidationError):
     """Телефон уже используется."""
     pass

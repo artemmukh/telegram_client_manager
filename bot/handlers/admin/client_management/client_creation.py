@@ -4,8 +4,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.exceptions.exceptions import BotException
-from bot.exceptions.user_exceptions import InvalidPhoneError, InvalidFullNameError, PhoneAlreadyExistsError, \
-    ValidationError
+from bot.exceptions.user_exceptions import (
+    PHONE_ALREADY_EXISTS_MESSAGE,
+    InvalidPhoneError,
+    InvalidFullNameError,
+    PhoneAlreadyExistsError,
+    ValidationError,
+)
 from bot.handlers.utils.admin_utils.confirmations import build_client_text, show_success, show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     edit_full_name,
@@ -31,7 +36,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
 
     async def validate_phone_available(phone: str):
         if await cl_mng.is_phone_taken(phone):
-            raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
+            raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE)
 
 
     router.message.filter(RoleFilter("admin"))

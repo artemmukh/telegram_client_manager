@@ -2,7 +2,7 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from bot.exceptions.user_exceptions import UserAlreadyExistsError
+from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError, ValidationError
 from bot.models.user import User
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
@@ -73,6 +73,69 @@ async def test_user_repository_updates_user(user_repo):
     assert user.full_name == updated.full_name
     assert user.phone == updated.phone
     assert user.role == Role.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_update_client_phone_collision_raises_domain_error_without_partial_write(user_repo):
+    """TOCTOU regression: update_client used to let a UNIQUE-phone collision
+    surface as a raw aiosqlite.IntegrityError. It must now be translated into
+    PhoneAlreadyExistsError, and the failed UPDATE must not partially apply --
+    client B's phone stays exactly what it was before the call."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+        )
+    )
+    await user_repo.create_user(
+        User(
+            full_name="Петров Петр",
+            phone="+998901234568",
+            role=Role.CLIENT,
+            telegram_user_id=1002,
+        )
+    )
+    client_b = await user_repo.get_user_by_telegram_id(1002)
+
+    colliding_update = User(
+        full_name=client_b.full_name,
+        phone="+998901234567",
+        role=Role.CLIENT,
+    )
+
+    with pytest.raises(PhoneAlreadyExistsError):
+        await user_repo.update_client(client_b.ID, colliding_update)
+
+    unchanged = await user_repo.get_client_by_id(client_b.ID)
+    assert unchanged.phone == "+998901234568"
+
+
+@pytest.mark.asyncio
+async def test_update_client_non_phone_integrity_error_raises_domain_error(user_repo):
+    """A non-phone IntegrityError (NOT NULL on full_name) must not be
+    mislabeled as PhoneAlreadyExistsError -- _is_phone_unique_violation only
+    matches messages that mention both UNIQUE and phone. It must also not
+    leak a raw aiosqlite.IntegrityError past the repository boundary."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+        )
+    )
+    client = await user_repo.get_user_by_telegram_id(1001)
+
+    update_with_null_name = User(
+        full_name=None,
+        phone=client.phone,
+        role=Role.CLIENT,
+    )
+
+    with pytest.raises(ValidationError):
+        await user_repo.update_client(client.ID, update_with_null_name)
 
 
 @pytest.mark.asyncio
@@ -333,7 +396,7 @@ async def test_user_repository_enforces_unique_phone(user_repo):
         )
     )
 
-    with pytest.raises(UserAlreadyExistsError):
+    with pytest.raises(PhoneAlreadyExistsError):
         await user_repo.create_user(
             User(
                 full_name="\u041f\u0435\u0442\u0440\u043e\u0432 \u041f\u0435\u0442\u0440",

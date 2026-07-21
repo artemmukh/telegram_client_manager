@@ -1,6 +1,12 @@
 import aiosqlite
 
-from bot.exceptions.user_exceptions import UserAlreadyExistsError, UserNotFoundError
+from bot.exceptions.user_exceptions import (
+    PHONE_ALREADY_EXISTS_MESSAGE,
+    PhoneAlreadyExistsError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
+    ValidationError,
+)
 from bot.models.user import User
 from bot.utils.role import Role
 
@@ -98,8 +104,10 @@ class UserRepository:
             await self.connection.commit()
             user.ID = cursor.lastrowid
 
-        except aiosqlite.IntegrityError:
-            raise UserAlreadyExistsError()
+        except aiosqlite.IntegrityError as error:
+            if self._is_phone_unique_violation(error):
+                raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE) from error
+            raise UserAlreadyExistsError() from error
 
     async def get_staff_users_by_clinic_id(self, clinic_id: int) -> list[User]:
         cursor = await self.connection.execute(
@@ -190,24 +198,34 @@ class UserRepository:
         return self._row_to_user(await cursor.fetchone())
 
     async def update_client(self, user_id: int, user: User) -> User | None:
-        await self.connection.execute(
-            """
-            UPDATE users
-            SET full_name = ?,
-                phone     = ?,
-                role      = ?
-            WHERE id = ?
-            """,
-            (
-                user.full_name,
-                user.phone,
-                user.role.value,
-                user_id
+        try:
+            await self.connection.execute(
+                """
+                UPDATE users
+                SET full_name = ?,
+                    phone     = ?,
+                    role      = ?
+                WHERE id = ?
+                """,
+                (
+                    user.full_name,
+                    user.phone,
+                    user.role.value,
+                    user_id
+                )
             )
-        )
-        await self.connection.commit()
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_phone_unique_violation(error):
+                raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE) from error
+            raise ValidationError("Не удалось обновить данные клиента.") from error
 
         return await self.get_client_by_id(user_id)
+
+    @staticmethod
+    def _is_phone_unique_violation(error: aiosqlite.IntegrityError) -> bool:
+        message = str(error)
+        return "UNIQUE constraint failed" in message and "phone" in message
 
     async def update_reminder_preferences(self, user_id: int, reminder_24h: bool, reminder_2h: bool) -> None:
         await self.connection.execute(

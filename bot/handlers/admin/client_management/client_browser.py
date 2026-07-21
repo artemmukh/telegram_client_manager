@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.exceptions.exceptions import BotException, PaginationError
 from bot.exceptions.user_exceptions import (
+    PHONE_ALREADY_EXISTS_MESSAGE,
     InvalidFullNameError,
     InvalidPhoneError,
     PhoneAlreadyExistsError,
@@ -420,7 +421,7 @@ def create_admin_client_browser_router(
             if phone == user.phone:
                 raise SamePhoneError("Введён такой же номер телефона. Пожалуйста, введите другой:")
             if await cl_mng.is_phone_taken(phone):
-                raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
+                raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE)
 
         if not await phone_processing(
             message, state,

@@ -1,5 +1,10 @@
 from bot.exceptions.exceptions import BotException
-from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError, ValidationError
+from bot.exceptions.user_exceptions import (
+    PHONE_ALREADY_EXISTS_MESSAGE,
+    PhoneAlreadyExistsError,
+    UserNotFoundError,
+    ValidationError,
+)
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
@@ -168,7 +173,7 @@ class ClientManagement:
             raise ValidationError("Введён такой же номер телефона")
 
         if await self.user_repository.phone_exists(new_phone):
-            raise PhoneAlreadyExistsError("Номер уже зарегистрирован. Пожалуйста, введите другой:")
+            raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE)
 
         user.phone = new_phone
 
