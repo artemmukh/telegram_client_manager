@@ -8,11 +8,16 @@ from bot.exceptions.appointment_exceptions import (
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
     BookingTooSoonError,
+    CancellationCooldownExceededError,
     CancellationWindowExpiredError,
     NegotiationInProgressError,
     NoPendingProposalError,
     PendingRequestLimitExceededError,
     SlotUnavailableError,
+)
+from bot.config.booking_config import (
+    CANCELLATION_COOLDOWN_WINDOW_MINUTES,
+    MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
 )
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
@@ -866,7 +871,13 @@ async def test_create_self_booking_succeeds_with_no_pending_requests():
     assert appointment.status is AppointmentStatus.PENDING
 
 
-def _self_booked_appointment(appointment_id=1, client_id=7, status=AppointmentStatus.PENDING, proposed_datetime=None):
+def _self_booked_appointment(
+    appointment_id=1,
+    client_id=7,
+    status=AppointmentStatus.PENDING,
+    proposed_datetime=None,
+    status_updated_at=None,
+):
     return Appointment(
         clinic_id=1,
         client_id=client_id,
@@ -876,6 +887,7 @@ def _self_booked_appointment(appointment_id=1, client_id=7, status=AppointmentSt
         status=status,
         id=appointment_id,
         proposed_datetime=proposed_datetime,
+        status_updated_at=status_updated_at,
     )
 
 
@@ -938,6 +950,254 @@ async def test_ensure_pending_limit_ignores_admin_created_pending_appointment():
     service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
 
     await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+
+
+# --- Cancellation cooldown throttle tests ---
+#
+# A client capped at MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW client-created
+# CANCELLED transitions within CANCELLATION_COOLDOWN_WINDOW_MINUTES; a further
+# create_self_booking attempt must raise before any DB write. Time is frozen
+# via patching get_current_tashkent_datetime, mirroring the MIN_LEAD_TIME
+# boundary tests above, so counts never depend on wall-clock timing.
+
+
+def _admin_cancelled_appointment(appointment_id, client_id, status_updated_at):
+    """A CANCELLED appointment created by admin (not client) -- used to prove
+    admin-created cancellations are excluded from the client's cooldown count."""
+    return Appointment(
+        clinic_id=1,
+        client_id=client_id,
+        datetime="2026-07-10 14:30",
+        purpose="Консультация",
+        created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CANCELLED,
+        id=appointment_id,
+        status_updated_at=status_updated_at,
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_raises_when_cancellation_cooldown_exceeded():
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        with pytest.raises(CancellationCooldownExceededError):
+            await service.create_self_booking(
+                client.telegram_user_id,
+                {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+            )
+
+    assert appt_repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_allows_when_cancellations_below_limit():
+    """2 recent cancellations is below the MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW
+    threshold of 3 -- the check is strictly '>=', so 2 must be allowed."""
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        appointment = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+        )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_raises_when_cancellation_is_just_under_window():
+    """A cancellation 4m59s ago is still inside the 5-minute window and must
+    count, tipping 2 older cancellations plus this one over the limit."""
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        just_under_window = (
+            base - timedelta(minutes=CANCELLATION_COOLDOWN_WINDOW_MINUTES) + timedelta(seconds=1)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=just_under_window),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        with pytest.raises(CancellationCooldownExceededError):
+            await service.create_self_booking(
+                client.telegram_user_id,
+                {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+            )
+
+    assert appt_repo.created == []
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_ignores_cancellation_exactly_at_window_boundary():
+    """A cancellation exactly CANCELLATION_COOLDOWN_WINDOW_MINUTES ago is
+    excluded (strict '<' comparison), so only 2 recent ones remain counted
+    and the booking must succeed."""
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        at_boundary = (base - timedelta(minutes=CANCELLATION_COOLDOWN_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=at_boundary),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        appointment = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+        )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_ignores_admin_created_cancellations():
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _admin_cancelled_appointment(1, client.ID, recent),
+            _admin_cancelled_appointment(2, client.ID, recent),
+            _admin_cancelled_appointment(3, client.ID, recent),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        appointment = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+        )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED, AppointmentStatus.EXPIRED],
+)
+async def test_create_self_booking_ignores_non_cancelled_statuses(status):
+    """Finalized-but-not-CANCELLED self-bookings (even with a recent
+    status_updated_at) must never count toward the cooldown."""
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, status, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, status, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, status, status_updated_at=recent),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        appointment = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+        )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_cancellation_cooldown_also_counts_admin_rejected_requests():
+    """Known, accepted tradeoff: an admin-rejected self-booking also
+    transitions to CANCELLED via update_status, so it counts toward the same
+    cooldown as a client-initiated cancellation. This is intentional -- the
+    throttle keys purely on (created_by == CLIENT, status == CANCELLED,
+    status_updated_at), not on which actor/code path produced that state."""
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+
+        with pytest.raises(CancellationCooldownExceededError):
+            await service.create_self_booking(
+                client.telegram_user_id,
+                {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+            )
+
+    assert appt_repo.created == []
 
 
 @pytest.mark.asyncio

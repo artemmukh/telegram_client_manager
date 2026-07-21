@@ -1,11 +1,16 @@
 from datetime import date, datetime, timedelta
 
-from bot.config.booking_config import MAX_PENDING_REQUESTS_PER_CLIENT
+from bot.config.booking_config import (
+    CANCELLATION_COOLDOWN_WINDOW_MINUTES,
+    MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
+    MAX_PENDING_REQUESTS_PER_CLIENT,
+)
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
     BookingTooSoonError,
+    CancellationCooldownExceededError,
     CancellationWindowExpiredError,
     NegotiationInProgressError,
     NoPendingProposalError,
@@ -148,6 +153,7 @@ class AppointmentManagement:
             raise UserNotFoundError("Клиент не найден.")
 
         await self.ensure_pending_limit_not_exceeded(client_telegram_id)
+        await self.ensure_cancellation_cooldown_not_exceeded(client_telegram_id)
 
         staff = await self.user_repository.get_user_by_id(data["staff_user_id"])
         if staff is None:
@@ -179,6 +185,13 @@ class AppointmentManagement:
         if pending_count >= MAX_PENDING_REQUESTS_PER_CLIENT:
             raise PendingRequestLimitExceededError(
                 "У вас уже есть заявка на рассмотрении. Дождитесь решения клиники, прежде чем создавать новую."
+            )
+
+    async def ensure_cancellation_cooldown_not_exceeded(self, client_telegram_id: int) -> None:
+        recent_cancellations = await self._count_recent_client_cancellations(client_telegram_id)
+        if recent_cancellations >= MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW:
+            raise CancellationCooldownExceededError(
+                "Вы слишком часто отменяете заявки. Подождите немного, прежде чем создать новую."
             )
 
     async def get_admin_clinic(self, doctor_telegram_id: int) -> Clinic:
@@ -682,6 +695,23 @@ class AppointmentManagement:
             1 for a in appointments
             if a.created_by == CreatedBy.CLIENT and a.status == AppointmentStatus.PENDING
         )
+
+    async def _count_recent_client_cancellations(self, client_telegram_id: int) -> int:
+        appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)
+        now = get_current_tashkent_datetime()
+        window = timedelta(minutes=CANCELLATION_COOLDOWN_WINDOW_MINUTES)
+
+        count = 0
+        for a in appointments:
+            if a.created_by != CreatedBy.CLIENT or a.status != AppointmentStatus.CANCELLED:
+                continue
+            if a.status_updated_at is None:
+                continue
+            cancelled_at = datetime.fromisoformat(a.status_updated_at)
+            if now - cancelled_at < window:
+                count += 1
+
+        return count
 
     async def _ensure_slot_available(
         self, doctor_id: int, datetime_str: str, exclude_appointment_id: int | None

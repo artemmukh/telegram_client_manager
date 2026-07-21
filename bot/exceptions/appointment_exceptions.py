@@ -22,6 +22,11 @@ class PendingRequestLimitExceededError(ValidationError):
     pass
 
 
+class CancellationCooldownExceededError(ValidationError):
+    """Клиент слишком часто отменяет заявки на самозапись подряд."""
+    pass
+
+
 class CancellationWindowExpiredError(ValidationError):
     """Отмена записи менее чем за 1 час до приёма."""
     pass
