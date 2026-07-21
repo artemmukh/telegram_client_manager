@@ -268,15 +268,25 @@ class UserRepository:
         return await self.get_user_by_id(user_id)
 
     async def update_user_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
-        await self.connection.execute(
-            """
-            UPDATE users
-            SET telegram_user_id = ?
-            WHERE id = ?
-            """,
-            (telegram_user_id, user_id),
-        )
-        await self.connection.commit()
+        try:
+            await self.connection.execute(
+                """
+                UPDATE users
+                SET telegram_user_id = ?
+                WHERE id = ?
+                """,
+                (telegram_user_id, user_id),
+            )
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_telegram_id_unique_violation(error):
+                raise UserAlreadyExistsError() from error
+            raise ValidationError("Не удалось обновить данные клиента.") from error
+
+    @staticmethod
+    def _is_telegram_id_unique_violation(error: aiosqlite.IntegrityError) -> bool:
+        message = str(error)
+        return "UNIQUE constraint failed" in message and "telegram_user_id" in message
 
     async def delete_client(self, user_id: int) -> None:
         await self.connection.execute(

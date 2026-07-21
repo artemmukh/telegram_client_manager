@@ -139,6 +139,37 @@ async def test_update_client_non_phone_integrity_error_raises_domain_error(user_
 
 
 @pytest.mark.asyncio
+async def test_update_user_telegram_id_collision_raises_domain_error_without_partial_write(user_repo):
+    """TOCTOU regression: update_user_telegram_id used to let a UNIQUE-telegram_user_id
+    collision surface as a raw aiosqlite.IntegrityError. It must now be translated into
+    UserAlreadyExistsError, and the failed UPDATE must not partially apply -- client B's
+    telegram_user_id stays exactly what it was before the call."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+        )
+    )
+    await user_repo.create_user(
+        User(
+            full_name="Петров Петр",
+            phone="+998901234568",
+            role=Role.CLIENT,
+            telegram_user_id=1002,
+        )
+    )
+    client_b = await user_repo.get_user_by_telegram_id(1002)
+
+    with pytest.raises(UserAlreadyExistsError):
+        await user_repo.update_user_telegram_id(client_b.ID, 1001)
+
+    unchanged = await user_repo.get_client_by_id(client_b.ID)
+    assert unchanged.telegram_user_id == 1002
+
+
+@pytest.mark.asyncio
 async def test_user_repository_deletes_user(user_repo):
     await user_repo.create_user(
         User(
