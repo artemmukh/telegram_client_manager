@@ -141,7 +141,7 @@ async def test_phase2_complete_workflow():
 
     # Step 3: Client confirms appointment
     appointment = await appointment_mgmt.update_status(
-        appointment.id, AppointmentStatus.CONFIRMED
+        appointment, AppointmentStatus.CONFIRMED
     )
     assert appointment.status == AppointmentStatus.CONFIRMED
     assert appt_repo.status_updates[-1] == (appointment.id, AppointmentStatus.CONFIRMED)
@@ -202,7 +202,7 @@ async def test_phase2_cancellation_workflow():
 
     # Step 2: Client cancels appointment
     appointment = await appointment_mgmt.update_status(
-        appointment.id, AppointmentStatus.CANCELLED
+        appointment, AppointmentStatus.CANCELLED
     )
     assert appointment.status == AppointmentStatus.CANCELLED
 

@@ -482,7 +482,7 @@ async def test_appointment_completion_follow_up_and_pagination_by_tab(e2e):
     assert any(m.chat_id == ADMIN_TELEGRAM_ID for m in e2e.fake_bot.sent_messages)
 
     # The admin answers "Нет" (skip corrections): only this finalizes COMPLETED.
-    finalized = await e2e.appointment_management.update_status(confirmed_appt.id, AppointmentStatus.COMPLETED)
+    finalized = await e2e.appointment_management.update_status(untouched, AppointmentStatus.COMPLETED)
     assert finalized.status is AppointmentStatus.COMPLETED
 
     completed_page = await e2e.appointment_pagination.paginate_all_appointments_by_tab("completed", page=1, clinic_id=1)

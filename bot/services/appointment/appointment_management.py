@@ -74,6 +74,10 @@ class AppointmentManagement:
                 raise UserNotFoundError("Врач не найден.")
             if doctor.clinic_id != clinic.clinic_id:
                 raise UserNotFoundError("Врач не найден.")
+            if doctor.ID != admin.ID:
+                staff_record = await self.staff_repository.get_staff(doctor_telegram_id)
+                if staff_record is None or staff_record.visibility_scope != "clinic":
+                    raise UserNotFoundError("Врач не найден.")
             doctor_id = doctor.ID
 
         await self._ensure_slot_available(doctor_id, appointment_datetime, None)
@@ -311,7 +315,7 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
 
-        return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
+        return await self.update_status(appointment, AppointmentStatus.CONFIRMED)
 
     async def cancel_appointment_by_client(
         self, appointment_id: int, telegram_user_id: int, enforce_cutoff: bool = True
@@ -335,10 +339,12 @@ class AppointmentManagement:
             await self.appointment_repository.update_proposed_datetime(appointment_id, None)
             await self.appointment_repository.update_proposed_by(appointment_id, None)
 
-        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
 
     async def confirm_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
+        appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
         self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
 
         if appointment.proposed_datetime is not None:
@@ -348,10 +354,12 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
 
-        return await self.update_status(appointment_id, AppointmentStatus.CONFIRMED)
+        return await self.update_status(appointment, AppointmentStatus.CONFIRMED)
 
     async def reject_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
+        appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
         self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
 
         if appointment.proposed_datetime is not None:
@@ -359,12 +367,14 @@ class AppointmentManagement:
                 "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
             )
 
-        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
 
     async def propose_new_datetime(
         self, appointment_id: int, staff_telegram_id: int, proposed_datetime: str
     ) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
+        appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
         self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
 
         if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
@@ -426,7 +436,7 @@ class AppointmentManagement:
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)
         await self.appointment_repository.update_proposed_by(appointment_id, None)
 
-        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
 
     async def request_reschedule_by_client(
         self, appointment_id: int, telegram_user_id: int, new_datetime: str
@@ -475,7 +485,9 @@ class AppointmentManagement:
         return appointment
 
     async def accept_client_reschedule(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
+        appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
         self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
 
         if appointment.proposed_by != CreatedBy.CLIENT:
@@ -495,7 +507,9 @@ class AppointmentManagement:
         return appointment
 
     async def reject_client_reschedule(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
+        appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
+        if appointment is None:
+            raise AppointmentNotFoundError()
         self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
 
         if appointment.proposed_by != CreatedBy.CLIENT:
@@ -504,7 +518,7 @@ class AppointmentManagement:
         await self.appointment_repository.update_proposed_datetime(appointment_id, None)
         await self.appointment_repository.update_proposed_by(appointment_id, None)
 
-        return await self.update_status(appointment_id, AppointmentStatus.CANCELLED)
+        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
 
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
@@ -515,17 +529,15 @@ class AppointmentManagement:
     async def update_proposal_message_id(self, appointment_id: int, message_id: int | None) -> None:
         await self.appointment_repository.update_proposal_message_id(appointment_id, message_id)
 
-    async def delete_appointment(self, appointment_id: int) -> None:
-        if not await self.appointment_repository.appointment_exists(appointment_id):
+    async def delete_appointment(self, appointment: Appointment) -> None:
+        if not await self.appointment_repository.appointment_exists(appointment.id):
             raise AppointmentNotFoundError()
 
-        await self.appointment_repository.delete_appointment(appointment_id)
+        await self.appointment_repository.delete_appointment(appointment.id)
 
-    async def update_status(self, appointment_id: int, status: AppointmentStatus) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
-
+    async def update_status(self, appointment: Appointment, status: AppointmentStatus) -> Appointment:
         status_updated_at = get_current_tashkent_time()
-        await self.appointment_repository.update_appointment_status(appointment_id, status, status_updated_at)
+        await self.appointment_repository.update_appointment_status(appointment.id, status, status_updated_at)
         appointment.status = status
         appointment.status_updated_at = status_updated_at
 
@@ -554,7 +566,7 @@ class AppointmentManagement:
         if appointment.status != AppointmentStatus.CONFIRMED or appointment.proposed_datetime is not None:
             return None
 
-        return await self.update_status(appointment_id, AppointmentStatus.COMPLETED)
+        return await self.update_status(appointment, AppointmentStatus.COMPLETED)
 
     async def expire_reschedule_request(self, appointment_id: int) -> Appointment | None:
         appointment = await self.appointment_repository.get_appointment_by_id(appointment_id)
@@ -597,27 +609,15 @@ class AppointmentManagement:
         await self.appointment_repository.update_proposal_message_id(appointment_id, None)
         await self.appointment_repository.update_proposed_by(appointment_id, None)
 
-    async def update_datetime(self, appointment_id: int, new_datetime: str) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
-
-        appointment.datetime = validate_datetime(new_datetime)
-        await self.appointment_repository.update_appointment(appointment_id, appointment)
-
-        return appointment
-
-    async def update_purpose(self, appointment_id: int, new_purpose: str) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
-
+    async def update_purpose(self, appointment: Appointment, new_purpose: str) -> Appointment:
         appointment.purpose = validate_purpose(new_purpose)
-        await self.appointment_repository.update_appointment(appointment_id, appointment)
+        await self.appointment_repository.update_appointment(appointment.id, appointment)
 
         return appointment
 
-    async def update_price(self, appointment_id: int, new_price: float) -> Appointment:
-        appointment = await self._get_or_raise(appointment_id)
-
+    async def update_price(self, appointment: Appointment, new_price: float) -> Appointment:
         appointment.price = validate_price(str(new_price))
-        await self.appointment_repository.update_appointment_price(appointment_id, appointment.price)
+        await self.appointment_repository.update_appointment_price(appointment.id, appointment.price)
 
         return appointment
 

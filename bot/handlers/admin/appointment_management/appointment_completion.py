@@ -46,7 +46,7 @@ def create_admin_completion_router(
             return
 
         try:
-            appointment = await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
+            appointment = await appt_mng.update_status(owned_appointment, AppointmentStatus.COMPLETED)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return

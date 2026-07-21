@@ -529,6 +529,8 @@ async def test_list_clinic_doctors_for_creation_clinic_scope_shows_picker_with_s
 
 @pytest.mark.asyncio
 async def test_create_appointment_uses_chosen_doctor_when_staff_user_id_present():
+    """Choosing another doctor is the 'clinic'-scope (dispatcher/manager) flow --
+    the acting admin's own staff record must reflect that scope."""
     appt_repo = FakeAppointmentRepository()
     admin = User(full_name="Управляющий", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
     chosen_doctor = User(full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN, ID=99, telegram_user_id=1000, clinic_id=1)
@@ -536,7 +538,7 @@ async def test_create_appointment_uses_chosen_doctor_when_staff_user_id_present(
     service = AppointmentManagement(
         appt_repo,
         user_repo,
-        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic")),
         _clinic_repo(),
     )
 
@@ -561,7 +563,7 @@ async def test_create_appointment_raises_when_chosen_doctor_not_found():
     service = AppointmentManagement(
         appt_repo,
         user_repo,
-        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic")),
         _clinic_repo(),
     )
 
@@ -588,7 +590,7 @@ async def test_create_appointment_rejects_doctor_from_another_clinic():
     service = AppointmentManagement(
         appt_repo,
         user_repo,
-        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic")),
         _clinic_repo(),
     )
 
@@ -602,6 +604,64 @@ async def test_create_appointment_rejects_doctor_from_another_clinic():
                 "staff_user_id": 99,
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_rejects_own_scope_admin_assigning_another_doctor():
+    """An 'own'-scope doctor has no legitimate way to reach staff_user_id != self
+    through the UI (the doctor picker is never shown to them), but the service
+    itself must reject it too -- not just rely on the handler/FSM never offering it."""
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Петров Петр", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999)
+    colleague = User(
+        full_name="Иванова Анна", phone="+998907654321", role=Role.ADMIN, ID=99, telegram_user_id=1000, clinic_id=1
+    )
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={99: colleague})
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1, visibility_scope="own")),
+        _clinic_repo(),
+    )
+
+    with pytest.raises(UserNotFoundError):
+        await service.create_appointment(
+            999,
+            {
+                "phone": "+998901234567",
+                "appointment_datetime": _future_datetime(),
+                "purpose": "Консультация",
+                "staff_user_id": 99,
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_allows_own_scope_admin_assigning_to_self():
+    """staff_user_id pointing back at the acting admin's own ID must never be
+    blocked by the scope check -- only assigning to someone ELSE requires
+    'clinic' scope."""
+    appt_repo = FakeAppointmentRepository()
+    admin = User(full_name="Петров Петр", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={42: admin})
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1, visibility_scope="own")),
+        _clinic_repo(),
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {
+            "phone": "+998901234567",
+            "appointment_datetime": _future_datetime(),
+            "purpose": "Консультация",
+            "staff_user_id": 42,
+        },
+    )
+
+    assert appointment.doctor_id == 42
 
 
 # --- get_appointment_for_admin ---
@@ -1062,32 +1122,48 @@ async def test_check_or_create_client_without_repository_wired_behaves_as_before
 
 @pytest.mark.asyncio
 async def test_update_status():
-    appt_repo = FakeAppointmentRepository([_appointment()])
+    appt = _appointment()
+    appt_repo = FakeAppointmentRepository([appt])
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
-    appointment = await service.update_status(1, AppointmentStatus.CONFIRMED)
+    appointment = await service.update_status(appt, AppointmentStatus.CONFIRMED)
 
     assert appointment.status is AppointmentStatus.CONFIRMED
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
 
 
 @pytest.mark.asyncio
-async def test_update_datetime_validates_and_persists():
-    appt_repo = FakeAppointmentRepository([_appointment()])
+async def test_delete_appointment_removes_row():
+    appt = _appointment()
+    appt_repo = FakeAppointmentRepository([appt])
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
-    appointment = await service.update_datetime(1, "2026-08-01 09:00")
+    await service.delete_appointment(appt)
 
-    assert appointment.datetime == "2026-08-01 09:00"
-    assert appt_repo.updated[0][0] == 1
+    assert appt_repo.appointments == []
+
+
+@pytest.mark.asyncio
+async def test_delete_appointment_raises_when_already_deleted():
+    """Guards the second racer in a concurrent double-delete: the row is gone
+    by the time this call runs, so it must raise instead of silently
+    succeeding and letting the caller send a duplicate cancellation notice."""
+    appt = _appointment()
+    appt_repo = FakeAppointmentRepository([appt])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    appt_repo.appointments = []
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.delete_appointment(appt)
 
 
 @pytest.mark.asyncio
 async def test_update_price_validates_and_persists():
-    appt_repo = FakeAppointmentRepository([_appointment()])
+    appt = _appointment()
+    appt_repo = FakeAppointmentRepository([appt])
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
-    appointment = await service.update_price(1, 150000.0)
+    appointment = await service.update_price(appt, 150000.0)
 
     assert appointment.price == 150000.0
     assert appt_repo.price_updates == [(1, 150000.0)]
@@ -1097,11 +1173,12 @@ async def test_update_price_validates_and_persists():
 async def test_update_price_rejects_negative_price():
     from bot.exceptions.appointment_exceptions import InvalidPriceError
 
-    appt_repo = FakeAppointmentRepository([_appointment()])
+    appt = _appointment()
+    appt_repo = FakeAppointmentRepository([appt])
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
 
     with pytest.raises(InvalidPriceError):
-        await service.update_price(1, -100.0)
+        await service.update_price(appt, -100.0)
 
 
 @pytest.mark.asyncio
@@ -1407,7 +1484,8 @@ def _pending_client_request(
 @pytest.mark.asyncio
 async def test_confirm_pending_request_updates_status():
     appt_repo = FakeAppointmentRepository([_pending_client_request()])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.confirm_pending_request(1, staff_telegram_id=999)
 
@@ -1420,7 +1498,8 @@ async def test_confirm_pending_request_blocked_when_proposal_pending():
     appt_repo = FakeAppointmentRepository(
         [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NegotiationInProgressError):
         await service.confirm_pending_request(1, staff_telegram_id=999)
@@ -1433,16 +1512,37 @@ async def test_confirm_pending_request_raises_when_finalized():
     appt_repo = FakeAppointmentRepository(
         [_pending_client_request(status=AppointmentStatus.EXPIRED)]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(AppointmentAlreadyFinalizedError):
         await service.confirm_pending_request(1, staff_telegram_id=999)
 
 
 @pytest.mark.asyncio
+async def test_confirm_pending_request_raises_when_admin_from_different_clinic():
+    """Regression guard: a staff_telegram_id resolving to an admin of another
+    clinic must not be able to act on this appointment via a forged/replayed
+    appointment_id, even though the id itself exists."""
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    admin, staff = _admin_with_scope("clinic")
+    admin.clinic_id = 2
+    staff.clinic_id = 2
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo(clinic_id=2)
+    )
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.confirm_pending_request(1, staff_telegram_id=999)
+
+    assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
 async def test_reject_pending_request_updates_status():
     appt_repo = FakeAppointmentRepository([_pending_client_request()])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.reject_pending_request(1, staff_telegram_id=999)
 
@@ -1455,7 +1555,8 @@ async def test_reject_pending_request_blocked_when_proposal_pending():
     appt_repo = FakeAppointmentRepository(
         [_pending_client_request(proposed_datetime="2026-07-11 10:00")]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NegotiationInProgressError):
         await service.reject_pending_request(1, staff_telegram_id=999)
@@ -1466,7 +1567,8 @@ async def test_reject_pending_request_blocked_when_proposal_pending():
 @pytest.mark.asyncio
 async def test_propose_new_datetime_sets_proposed_without_touching_status_or_datetime():
     appt_repo = FakeAppointmentRepository([_pending_client_request()])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
     proposed_datetime = _future_datetime(days=3, time_str="10:00")
 
     appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
@@ -1487,7 +1589,8 @@ async def test_propose_new_datetime_raises_when_own_proposal_already_outstanding
     appt_repo = FakeAppointmentRepository(
         [_pending_client_request(proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN)]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NegotiationInProgressError):
         await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00")
@@ -1509,7 +1612,8 @@ async def test_propose_new_datetime_overwrites_when_proposed_by_client():
             proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.CLIENT,
         )]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=new_proposed_datetime)
 
@@ -1530,7 +1634,8 @@ async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_ou
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
 
@@ -1546,7 +1651,8 @@ async def test_propose_new_datetime_raises_when_finalized():
     appt_repo = FakeAppointmentRepository(
         [_pending_client_request(status=AppointmentStatus.CANCELLED)]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(AppointmentAlreadyFinalizedError):
         await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
@@ -1935,7 +2041,8 @@ async def test_accept_client_reschedule_promotes_datetime_and_clears_proposal():
             proposed_datetime=new_dt, proposed_by=CreatedBy.CLIENT,
         )]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.accept_client_reschedule(1, staff_telegram_id=999)
 
@@ -1962,7 +2069,8 @@ async def test_accept_client_reschedule_confirms_pending_admin_created_appointme
             proposed_datetime=new_dt, proposed_by=CreatedBy.CLIENT,
         )]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.accept_client_reschedule(1, staff_telegram_id=999)
 
@@ -1984,7 +2092,8 @@ async def test_accept_client_reschedule_raises_when_proposed_by_admin():
             proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN,
         )]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NoPendingProposalError):
         await service.accept_client_reschedule(1, staff_telegram_id=999)
@@ -1996,7 +2105,8 @@ async def test_accept_client_reschedule_raises_when_no_proposal():
     appt_repo = FakeAppointmentRepository(
         [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NoPendingProposalError):
         await service.accept_client_reschedule(1, staff_telegram_id=999)
@@ -2016,7 +2126,8 @@ async def test_reject_client_reschedule_cancels_appointment_and_clears_proposal(
             proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.CLIENT,
         )]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.reject_client_reschedule(1, staff_telegram_id=999)
 
@@ -2037,7 +2148,8 @@ async def test_reject_client_reschedule_raises_when_proposed_by_admin():
             proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN,
         )]
     )
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NoPendingProposalError):
         await service.reject_client_reschedule(1, staff_telegram_id=999)
@@ -2154,7 +2266,8 @@ async def test_confirm_pending_request_raises_when_slot_taken_by_another_confirm
     own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
     other = _appt(2, 50, "2026-07-10 14:30", AppointmentStatus.CONFIRMED, client_id=8)
     appt_repo = FakeAppointmentRepository([own, other])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(SlotUnavailableError):
         await service.confirm_pending_request(1, staff_telegram_id=999)
@@ -2166,7 +2279,8 @@ async def test_confirm_pending_request_raises_when_slot_taken_by_another_confirm
 async def test_confirm_pending_request_succeeds_when_slot_free():
     own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
     appt_repo = FakeAppointmentRepository([own])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.confirm_pending_request(1, staff_telegram_id=999)
 
@@ -2180,7 +2294,8 @@ async def test_propose_new_datetime_raises_when_proposed_slot_already_confirmed(
     own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
     other = _appt(2, 50, proposed_datetime, AppointmentStatus.CONFIRMED, client_id=8)
     appt_repo = FakeAppointmentRepository([own, other])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(SlotUnavailableError):
         await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
@@ -2234,7 +2349,8 @@ async def test_accept_client_reschedule_raises_when_proposed_slot_already_confir
     )
     other = _appt(2, 50, "2026-07-11 10:00", AppointmentStatus.CONFIRMED, client_id=8)
     appt_repo = FakeAppointmentRepository([own, other])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(SlotUnavailableError):
         await service.accept_client_reschedule(1, staff_telegram_id=999)
@@ -2250,7 +2366,8 @@ async def test_accept_client_reschedule_succeeds_when_only_own_confirmed_row_sha
         proposed_datetime="2026-07-10 16:00", proposed_by=CreatedBy.CLIENT,
     )
     appt_repo = FakeAppointmentRepository([own])
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client()), FakeStaffRepo(None), _clinic_repo())
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_owning_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     appointment = await service.accept_client_reschedule(1, staff_telegram_id=999)
 

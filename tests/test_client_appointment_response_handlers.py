@@ -131,7 +131,7 @@ async def test_handle_appointment_confirm_updates_status():
         appt_repo, user_repo, FakeStaffRepo(), FakeClinicRepo()
     )
 
-    confirmed_appt = await service.update_status(1, AppointmentStatus.CONFIRMED)
+    confirmed_appt = await service.update_status(appt, AppointmentStatus.CONFIRMED)
 
     assert confirmed_appt.status == AppointmentStatus.CONFIRMED
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
@@ -265,7 +265,7 @@ async def test_handle_appointment_cancel_updates_status():
         appt_repo, user_repo, FakeStaffRepo(), FakeClinicRepo()
     )
 
-    cancelled_appt = await service.update_status(1, AppointmentStatus.CANCELLED)
+    cancelled_appt = await service.update_status(appt, AppointmentStatus.CANCELLED)
 
     assert cancelled_appt.status == AppointmentStatus.CANCELLED
     assert appt_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]

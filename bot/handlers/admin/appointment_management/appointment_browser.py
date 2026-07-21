@@ -287,7 +287,7 @@ def create_admin_appointment_browser_router(
             return
 
         try:
-            appointment = await appt_mng.update_status(callback_data.appointment_id, new_status)
+            appointment = await appt_mng.update_status(owned_appointment, new_status)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -373,7 +373,7 @@ def create_admin_appointment_browser_router(
             return
 
         try:
-            await appt_mng.delete_appointment(callback_data.appointment_id)
+            await appt_mng.delete_appointment(appointment)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -564,7 +564,7 @@ def create_admin_appointment_browser_router(
             return
 
         try:
-            appointment = await appt_mng.update_purpose(callback_data.appointment_id, data["purpose"])
+            appointment = await appt_mng.update_purpose(owned_appointment, data["purpose"])
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -642,7 +642,7 @@ def create_admin_appointment_browser_router(
             return
 
         try:
-            appointment = await appt_mng.update_price(callback_data.appointment_id, data["price"])
+            appointment = await appt_mng.update_price(owned_appointment, data["price"])
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -668,7 +668,7 @@ def create_admin_appointment_browser_router(
             return
 
         try:
-            appointment = await appt_mng.update_status(callback_data.appointment_id, AppointmentStatus.COMPLETED)
+            appointment = await appt_mng.update_status(owned_appointment, AppointmentStatus.COMPLETED)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
