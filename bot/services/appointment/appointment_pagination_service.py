@@ -159,10 +159,27 @@ class AppointmentPaginationService:
                 page, clinic_id, doctor_id, APPOINTMENTS_PER_PAGE
             )
         elif mode == "search":
+            if tab not in self._STATUS_TABS:
+                raise PaginationError(f"Неизвестная вкладка: {tab}")
+
             full_name = (search_data or {}).get("full_name", "")
-            appointments = await self.appointment_repo.get_appointments_by_name(full_name, clinic_id, doctor_id)
-            ordered = self._filter_by_tab(appointments, tab)
-            total_count = len(ordered)
+            status = self._STATUS_TABS[tab]
+
+            total_count = await self.appointment_repo.count_appointments_by_name_and_status(
+                full_name, status, clinic_id, doctor_id, tab_bucket=True
+            )
+            page, total_pages = self._paginate_math(total_count, page, APPOINTMENTS_PER_PAGE)
+
+            items = await self.appointment_repo.get_appointments_by_name_and_status_page(
+                full_name, status, page, clinic_id, doctor_id, APPOINTMENTS_PER_PAGE, tab_bucket=True
+            )
+
+            return AppointmentPaginationResult(
+                items=items,
+                current_page=page,
+                total_pages=total_pages,
+                total_count=total_count,
+            )
         elif mode == "phone":
             client_id = (search_data or {}).get("client_id")
             appointments = await self.appointment_repo.get_appointments_by_client_id(

@@ -373,56 +373,39 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def get_appointments_by_name(
-        self, full_name: str, clinic_id: int, doctor_id: int | None = None
+    async def get_appointments_by_name_and_status_page(
+        self,
+        full_name: str,
+        status: AppointmentStatus,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        per_page: int = 10,
+        tab_bucket: bool = False,
     ) -> list[Appointment]:
-        """Получить все записи, соответствующие поиску по имени клиента"""
+        """Получить страницу результатов поиска по имени клиента с определённым
+        статусом (для вкладок поиска по ФИО)"""
         parts = full_name.strip().title().split()
         if not parts:
             return []
 
         name_conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
-        params = [f"%{part}%" for part in parts]
-
-        conditions = [f"({name_conditions})", "a.clinic_id = ?"]
-        params.append(clinic_id)
-
-        if doctor_id is not None:
-            conditions.append("a.admin_id = ?")
-            params.append(doctor_id)
-
-        sql = APPOINTMENT_SELECT + f"""
-        WHERE {' AND '.join(conditions)}
-        ORDER BY a.created_at DESC
-        """
-
-        cursor = await self.connection.execute(sql, params)
-        rows = await cursor.fetchall()
-        return [self._row_to_appointment(row) for row in rows]
-
-    async def get_appointments_by_name_page(
-        self, full_name: str, page: int, clinic_id: int, doctor_id: int | None = None, per_page: int = 10
-    ) -> list[Appointment]:
-        """Получить страницу результатов поиска записей по имени клиента"""
-        parts = full_name.strip().title().split()
-        if not parts:
-            return []
-
-        name_conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
-        params = [f"%{part}%" for part in parts]
-
-        conditions = [f"({name_conditions})", "a.clinic_id = ?"]
-        params.append(clinic_id)
-
-        if doctor_id is not None:
-            conditions.append("a.admin_id = ?")
-            params.append(doctor_id)
+        name_params = [f"%{part}%" for part in parts]
 
         offset = (page - 1) * per_page
+        order_by = self._status_order_by(status)
+
+        status_condition, status_params = self._status_bucket_condition("a.", status, tab_bucket)
+        conditions = [f"({name_conditions})", status_condition, "a.clinic_id = ?"]
+        params = [*name_params, *status_params, clinic_id]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
 
         sql = APPOINTMENT_SELECT + f"""
         WHERE {' AND '.join(conditions)}
-        ORDER BY a.created_at DESC, a.id DESC
+        ORDER BY {order_by}
         LIMIT ? OFFSET ?
         """
         params.extend([per_page, offset])
@@ -431,19 +414,25 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def count_appointments_by_name(
-        self, full_name: str, clinic_id: int, doctor_id: int | None = None
+    async def count_appointments_by_name_and_status(
+        self,
+        full_name: str,
+        status: AppointmentStatus,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        tab_bucket: bool = False,
     ) -> int:
-        """Получить количество результатов поиска записей по имени клиента"""
+        """Получить количество результатов поиска записей по имени клиента с определённым статусом"""
         parts = full_name.strip().title().split()
         if not parts:
             return 0
 
         name_conditions = " OR ".join(["u.full_name LIKE ?"] * len(parts))
-        params = [f"%{part}%" for part in parts]
+        name_params = [f"%{part}%" for part in parts]
 
-        conditions = [f"({name_conditions})", "a.clinic_id = ?"]
-        params.append(clinic_id)
+        status_condition, status_params = self._status_bucket_condition("a.", status, tab_bucket)
+        conditions = [f"({name_conditions})", status_condition, "a.clinic_id = ?"]
+        params = [*name_params, *status_params, clinic_id]
 
         if doctor_id is not None:
             conditions.append("a.admin_id = ?")

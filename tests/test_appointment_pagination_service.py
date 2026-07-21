@@ -39,10 +39,35 @@ class FakeAppointmentRepository:
         self.calls.append(("get_appointments_page", page, clinic_id, doctor_id, per_page))
         return self.page_items
 
-    async def get_appointments_by_name(
-        self, full_name: str, clinic_id: int, doctor_id: int | None = None
+    async def count_appointments_by_name_and_status(
+        self,
+        full_name: str,
+        status: AppointmentStatus,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        tab_bucket: bool = False,
+    ) -> int:
+        self.calls.append(
+            ("count_appointments_by_name_and_status", full_name, status, clinic_id, doctor_id, tab_bucket)
+        )
+        return self.total_count
+
+    async def get_appointments_by_name_and_status_page(
+        self,
+        full_name: str,
+        status: AppointmentStatus,
+        page: int,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        per_page: int = 10,
+        tab_bucket: bool = False,
     ) -> list[Appointment]:
-        self.calls.append(("get_appointments_by_name", full_name, clinic_id, doctor_id))
+        self.calls.append(
+            (
+                "get_appointments_by_name_and_status_page",
+                full_name, status, page, clinic_id, doctor_id, per_page, tab_bucket,
+            )
+        )
         return self.page_items
 
     async def get_appointments_by_client_id(
@@ -149,6 +174,11 @@ async def test_paginate_list_mode_forwards_concrete_doctor_id_to_repository():
 
 
 # --- mode="search" ---
+# NOTE: mode="search" is backed by SQL-level pagination (see
+# tests/test_appointment_repository.py for tab-bucket/sort-order correctness
+# against a real SQLite connection). These tests only verify routing: correct
+# status resolved from tab, correct repository calls made, items passed
+# through untouched.
 
 @pytest.mark.asyncio
 async def test_paginate_search_mode_routes_full_name_to_repository_and_filters_by_tab():
@@ -162,7 +192,14 @@ async def test_paginate_search_mode_routes_full_name_to_repository_and_filters_b
 
     assert result.items == items
     assert result.total_count == 1
-    assert ("get_appointments_by_name", "Иванов", 1, None) in repo.calls
+    assert (
+        "count_appointments_by_name_and_status",
+        "Иванов", AppointmentStatus.PENDING, 1, None, True,
+    ) in repo.calls
+    assert (
+        "get_appointments_by_name_and_status_page",
+        "Иванов", AppointmentStatus.PENDING, 1, 1, None, APPOINTMENTS_PER_PAGE, True,
+    ) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -173,57 +210,14 @@ async def test_paginate_search_mode_defaults_full_name_when_search_data_missing(
     result = await service.paginate_appointments("search", 1, clinic_id=1, search_data=None, tab="pending")
 
     assert result.total_count == 0
-    assert ("get_appointments_by_name", "", 1, None) in repo.calls
-
-
-@pytest.mark.asyncio
-async def test_paginate_search_mode_filters_by_status_tab():
-    pending = _appointment(1)
-    pending.status = AppointmentStatus.PENDING
-    confirmed = _appointment(2)
-    confirmed.status = AppointmentStatus.CONFIRMED
-    repo = FakeAppointmentRepository(page_items=[pending, confirmed])
-    service = AppointmentPaginationService(repo)
-
-    result = await service.paginate_appointments(
-        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="confirmed"
-    )
-
-    assert [a.id for a in result.items] == [2]
-    assert result.total_count == 1
-
-
-@pytest.mark.asyncio
-async def test_paginate_search_mode_confirmed_tab_excludes_negotiating_appointment():
-    plain_confirmed = _appointment(1)
-    plain_confirmed.status = AppointmentStatus.CONFIRMED
-    negotiating = _appointment(2)
-    negotiating.status = AppointmentStatus.CONFIRMED
-    negotiating.proposed_datetime = "2026-08-01 10:00"
-    repo = FakeAppointmentRepository(page_items=[plain_confirmed, negotiating])
-    service = AppointmentPaginationService(repo)
-
-    result = await service.paginate_appointments(
-        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="confirmed"
-    )
-
-    assert [a.id for a in result.items] == [1]
-
-
-@pytest.mark.asyncio
-async def test_paginate_search_mode_pending_tab_includes_negotiating_confirmed_appointment():
-    plain_pending = _appointment(1)
-    negotiating = _appointment(2)
-    negotiating.status = AppointmentStatus.CONFIRMED
-    negotiating.proposed_datetime = "2026-08-01 10:00"
-    repo = FakeAppointmentRepository(page_items=[plain_pending, negotiating])
-    service = AppointmentPaginationService(repo)
-
-    result = await service.paginate_appointments(
-        "search", 1, clinic_id=1, search_data={"full_name": "Иванов"}, tab="pending"
-    )
-
-    assert {a.id for a in result.items} == {1, 2}
+    assert (
+        "count_appointments_by_name_and_status",
+        "", AppointmentStatus.PENDING, 1, None, True,
+    ) in repo.calls
+    assert (
+        "get_appointments_by_name_and_status_page",
+        "", AppointmentStatus.PENDING, 1, 1, None, APPOINTMENTS_PER_PAGE, True,
+    ) in repo.calls
 
 
 @pytest.mark.asyncio
@@ -235,7 +229,14 @@ async def test_paginate_search_mode_forwards_concrete_doctor_id_to_repository():
         "search", 1, clinic_id=1, doctor_id=5, search_data={"full_name": "Иванов"}, tab="pending"
     )
 
-    assert ("get_appointments_by_name", "Иванов", 1, 5) in repo.calls
+    assert (
+        "count_appointments_by_name_and_status",
+        "Иванов", AppointmentStatus.PENDING, 1, 5, True,
+    ) in repo.calls
+    assert (
+        "get_appointments_by_name_and_status_page",
+        "Иванов", AppointmentStatus.PENDING, 1, 1, 5, APPOINTMENTS_PER_PAGE, True,
+    ) in repo.calls
 
 
 # --- mode="phone" ---

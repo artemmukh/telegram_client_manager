@@ -161,7 +161,7 @@ async def test_get_appointments_page_paginates_with_correct_offset_and_ordering(
 
 
 @pytest.mark.asyncio
-async def test_get_appointments_by_name_page_matches_multi_token_full_name():
+async def test_get_appointments_by_name_and_status_page_matches_multi_token_full_name():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
@@ -173,8 +173,12 @@ async def test_get_appointments_by_name_page_matches_multi_token_full_name():
         await appointment_repo.create_appointment(_appointment_for(sidorov.ID, "2026-07-03 10:00:00"))
 
         # Multi-token search matches either token (OR), so both "Иванов" and "Пётр" match.
-        count = await appointment_repo.count_appointments_by_name("Иванов Пётр", clinic_id=1)
-        page = await appointment_repo.get_appointments_by_name_page("Иванов Пётр", 1, clinic_id=1, per_page=10)
+        count = await appointment_repo.count_appointments_by_name_and_status(
+            "Иванов Пётр", AppointmentStatus.PENDING, clinic_id=1
+        )
+        page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов Пётр", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        )
 
         assert count == 2
         assert count == len(page)
@@ -185,15 +189,19 @@ async def test_get_appointments_by_name_page_matches_multi_token_full_name():
 
 
 @pytest.mark.asyncio
-async def test_get_appointments_by_name_page_normalizes_case_before_matching():
+async def test_get_appointments_by_name_and_status_page_normalizes_case_before_matching():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         await appointment_repo.create_appointment(_appointment_for(ivanov.ID, "2026-07-01 10:00:00"))
 
         # Input is lower-cased; repository .title()-normalizes it before LIKE.
-        count = await appointment_repo.count_appointments_by_name("иванов", clinic_id=1)
-        page = await appointment_repo.get_appointments_by_name_page("иванов", 1, clinic_id=1, per_page=10)
+        count = await appointment_repo.count_appointments_by_name_and_status(
+            "иванов", AppointmentStatus.PENDING, clinic_id=1
+        )
+        page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "иванов", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        )
 
         assert count == 1
         assert len(page) == 1
@@ -203,18 +211,120 @@ async def test_get_appointments_by_name_page_normalizes_case_before_matching():
 
 
 @pytest.mark.asyncio
-async def test_get_appointments_by_name_page_empty_full_name_is_defensive_guard():
+async def test_get_appointments_by_name_and_status_page_empty_full_name_is_defensive_guard():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         await appointment_repo.create_appointment(_appointment_for(client.ID, "2026-07-01 10:00:00"))
 
-        assert await appointment_repo.get_appointments_by_name_page("", 1, clinic_id=1, per_page=10) == []
-        assert await appointment_repo.count_appointments_by_name("", clinic_id=1) == 0
+        assert await appointment_repo.get_appointments_by_name_and_status_page(
+            "", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        ) == []
+        assert await appointment_repo.count_appointments_by_name_and_status(
+            "", AppointmentStatus.PENDING, clinic_id=1
+        ) == 0
 
         # Whitespace-only input also strips down to an empty token list.
-        assert await appointment_repo.get_appointments_by_name_page("   ", 1, clinic_id=1, per_page=10) == []
-        assert await appointment_repo.count_appointments_by_name("   ", clinic_id=1) == 0
+        assert await appointment_repo.get_appointments_by_name_and_status_page(
+            "   ", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        ) == []
+        assert await appointment_repo.count_appointments_by_name_and_status(
+            "   ", AppointmentStatus.PENDING, clinic_id=1
+        ) == 0
+    finally:
+        await connection.close()
+
+
+# --- tab_bucket + sort order: get_appointments_by_name_and_status_page / count_appointments_by_name_and_status ---
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_name_and_status_page_tab_bucket_false_keeps_negotiating_appointment_under_confirmed():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        negotiating = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_proposed_datetime(negotiating.id, "2026-08-01 10:00:00")
+
+        confirmed_page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10
+        )
+        pending_page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        )
+        confirmed_count = await appointment_repo.count_appointments_by_name_and_status(
+            "Иванов", AppointmentStatus.CONFIRMED, clinic_id=1
+        )
+        pending_count = await appointment_repo.count_appointments_by_name_and_status(
+            "Иванов", AppointmentStatus.PENDING, clinic_id=1
+        )
+
+        assert [a.id for a in confirmed_page] == [negotiating.id]
+        assert pending_page == []
+        assert confirmed_count == 1
+        assert pending_count == 0
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_name_and_status_page_tab_bucket_true_moves_negotiating_appointment_to_pending():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        negotiating = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
+        )
+        await appointment_repo.update_proposed_datetime(negotiating.id, "2026-08-01 10:00:00")
+        plain_confirmed = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-11 10:00:00", AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00")
+        )
+        plain_pending = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-12 10:00:00", AppointmentStatus.PENDING, "2026-07-03 10:00:00")
+        )
+
+        confirmed_page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов", AppointmentStatus.CONFIRMED, 1, clinic_id=1, per_page=10, tab_bucket=True
+        )
+        pending_page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10, tab_bucket=True
+        )
+        confirmed_count = await appointment_repo.count_appointments_by_name_and_status(
+            "Иванов", AppointmentStatus.CONFIRMED, clinic_id=1, tab_bucket=True
+        )
+        pending_count = await appointment_repo.count_appointments_by_name_and_status(
+            "Иванов", AppointmentStatus.PENDING, clinic_id=1, tab_bucket=True
+        )
+
+        assert [a.id for a in confirmed_page] == [plain_confirmed.id]
+        assert {a.id for a in pending_page} == {negotiating.id, plain_pending.id}
+        assert confirmed_count == 1
+        assert pending_count == 2
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_name_and_status_page_uses_status_appropriate_sort_order():
+    """Verifies get_appointments_by_name_and_status_page sorts via _status_order_by
+    (created_at DESC for the pending bucket), not a fixed/insertion order."""
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        older = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-10 10:00:00", AppointmentStatus.PENDING, "2026-07-01 10:00:00")
+        )
+        newer = await appointment_repo.create_appointment(
+            _appointment_with_status(client.ID, "2026-07-11 10:00:00", AppointmentStatus.PENDING, "2026-07-02 10:00:00")
+        )
+
+        page = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов", AppointmentStatus.PENDING, 1, clinic_id=1, per_page=10
+        )
+
+        assert [a.id for a in page] == [newer.id, older.id]
     finally:
         await connection.close()
 
@@ -714,7 +824,9 @@ async def test_clinic_and_doctor_filters_exclude_other_clinics_and_other_doctors
             AppointmentStatus.PENDING, clinic_id=1, doctor_id=100
         ) == 1
 
-        by_name = await appointment_repo.get_appointments_by_name("Иванов", clinic_id=1, doctor_id=100)
+        by_name = await appointment_repo.get_appointments_by_name_and_status_page(
+            "Иванов", AppointmentStatus.PENDING, 1, clinic_id=1, doctor_id=100, per_page=10
+        )
         assert [a.id for a in by_name] == [own_doctor.id]
 
         by_client = await appointment_repo.get_appointments_by_client_id(client.ID, clinic_id=1, doctor_id=100)
