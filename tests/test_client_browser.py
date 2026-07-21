@@ -135,7 +135,9 @@ async def test_search_paginate_update_delete_flow_composes():
         await user_repo.create_user(second)
         await client_clinic_repo.link_client_to_clinic(second.ID, clinic_id)
 
-        cl_mng = ClientManagement(user_repo, FakeStaffRepo(), FakeClinicRepo())
+        cl_mng = ClientManagement(
+            user_repo, FakeStaffRepo(), FakeClinicRepo(), client_clinic_repository=client_clinic_repo,
+        )
         pagination = ClientPaginationService(user_repo)
 
         # Search by name (fuzzy, multiple matches) - same mechanism the browser reuses.
@@ -150,7 +152,7 @@ async def test_search_paginate_update_delete_flow_composes():
         target_id = found[0].ID
 
         # Edit ФИО via the existing CRUD method - the card's "Изменить ФИО" action.
-        updated = await cl_mng.update_client_name(target_id, "Иванов Иван-Обновлённый")
+        updated = await cl_mng.update_client_name(target_id, "Иванов Иван-Обновлённый", clinic_id)
         assert updated.full_name == "Иванов Иван-Обновлённый"
 
         # Re-render the same page - updated name must be reflected.
@@ -159,7 +161,7 @@ async def test_search_paginate_update_delete_flow_composes():
         assert names[target_id] == "Иванов Иван-Обновлённый"
 
         # Delete - the card's "Удалить" action after confirmation.
-        await cl_mng.delete_client(target_id)
+        await cl_mng.delete_client(target_id, clinic_id)
 
         result = await pagination.paginate_clients("search", 1, clinic_id, {"full_name": "Иванов"})
         assert result.total_count == 1
@@ -294,6 +296,22 @@ class FakeAppointmentRepoForDelete:
         return self.count
 
 
+class FakeStaffRepoForDelete:
+    def __init__(self, staff):
+        self.staff = staff
+
+    async def get_staff(self, telegram_user_id):
+        return self.staff
+
+
+class FakeClinicRepoForDelete:
+    def __init__(self, clinic):
+        self.clinic = clinic
+
+    async def get_clinic_by_id(self, clinic_id):
+        return self.clinic
+
+
 def _find_handler(router, name):
     for handler in router.callback_query.handlers:
         if handler.callback.__name__ == name:
@@ -309,11 +327,18 @@ def _callback_query():
     return callback_query
 
 
-async def _run_start_delete(appointments_count):
+async def _run_start_delete(appointments_count, client_clinic_repo_factory):
     client = User(ID=1, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
     user_repo = FakeUserRepoForDelete(client)
     appointment_repo = FakeAppointmentRepoForDelete(appointments_count)
-    router = create_admin_client_browser_router(user_repo, FakeStaffRepo(), FakeClinicRepo(), appointment_repo)
+    staff_repo = FakeStaffRepoForDelete(
+        Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+    )
+    clinic_repo = FakeClinicRepoForDelete(Clinic(clinic_id=1, name="Клиника Тест", token="t"))
+    client_clinic_repo = client_clinic_repo_factory(links={(client.ID, 1)})
+    router = create_admin_client_browser_router(
+        user_repo, staff_repo, clinic_repo, appointment_repo, client_clinic_repo,
+    )
     start_delete = _find_handler(router, "start_delete")
 
     callback_data = ClientActionCB(action="delete", client_id=1, mode="list", page=1)
@@ -324,15 +349,15 @@ async def _run_start_delete(appointments_count):
 
 
 @pytest.mark.asyncio
-async def test_start_delete_warning_omits_count_when_no_appointments():
-    text = await _run_start_delete(0)
+async def test_start_delete_warning_omits_count_when_no_appointments(fake_client_clinic_repo_factory):
+    text = await _run_start_delete(0, fake_client_clinic_repo_factory)
 
     assert "записи на приём" not in text
 
 
 @pytest.mark.asyncio
-async def test_start_delete_warning_includes_count_when_appointments_exist():
-    text = await _run_start_delete(3)
+async def test_start_delete_warning_includes_count_when_appointments_exist(fake_client_clinic_repo_factory):
+    text = await _run_start_delete(3, fake_client_clinic_repo_factory)
 
     assert "записи на приём" in text
     assert "3" in text
@@ -384,23 +409,28 @@ def _new_appointment_fsm_context():
     return FSMContext(storage=storage, key=key)
 
 
-def _build_new_appointment_router(client, staff_by_telegram_id, staff_by_clinic=None):
+def _build_new_appointment_router(client, staff_by_telegram_id, staff_by_clinic=None, client_clinic_repo=None):
     user_repo = FakeUserRepoForNewAppointment(
         clients_by_id={client.ID: client} if client else {},
         staff_by_clinic=staff_by_clinic or {},
     )
     staff_repo = FakeStaffRepoForNewAppointment(staff_by_telegram_id)
     clinic_repo = FakeClinicRepoForNewAppointment(Clinic(clinic_id=1, name="Клиника Тест", token="t"))
-    return create_admin_client_browser_router(user_repo, staff_repo, clinic_repo)
+    return create_admin_client_browser_router(
+        user_repo, staff_repo, clinic_repo, client_clinic_repo=client_clinic_repo,
+    )
 
 
 @pytest.mark.asyncio
-async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_preselect_and_origin_data():
+async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_preselect_and_origin_data(
+    fake_client_clinic_repo_factory,
+):
     client = _new_appointment_client()
     staff_by_telegram_id = {
         ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
     }
-    router = _build_new_appointment_router(client, staff_by_telegram_id)
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(client.ID, 1)})
+    router = _build_new_appointment_router(client, staff_by_telegram_id, client_clinic_repo=client_clinic_repo)
     new_appointment = _find_handler(router, "new_appointment")
 
     callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="list", page=2)
@@ -426,7 +456,9 @@ async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_pr
 
 
 @pytest.mark.asyncio
-async def test_new_appointment_clinic_wide_admin_shows_doctor_picker_with_preselect_and_origin_data():
+async def test_new_appointment_clinic_wide_admin_shows_doctor_picker_with_preselect_and_origin_data(
+    fake_client_clinic_repo_factory,
+):
     client = _new_appointment_client()
     admin = User(
         ID=42, full_name="Управляющий", phone="+998900000000", role=Role.ADMIN,
@@ -440,7 +472,10 @@ async def test_new_appointment_clinic_wide_admin_shows_doctor_picker_with_presel
         ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
         1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="own"),
     }
-    router = _build_new_appointment_router(client, staff_by_telegram_id, staff_by_clinic={1: [admin, doctor]})
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(client.ID, 1)})
+    router = _build_new_appointment_router(
+        client, staff_by_telegram_id, staff_by_clinic={1: [admin, doctor]}, client_clinic_repo=client_clinic_repo,
+    )
     new_appointment = _find_handler(router, "new_appointment")
 
     callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="search", page=1)
@@ -466,12 +501,15 @@ async def test_new_appointment_clinic_wide_admin_shows_doctor_picker_with_presel
 
 
 @pytest.mark.asyncio
-async def test_new_appointment_from_search_result_threads_search_data_into_origin_search_data():
+async def test_new_appointment_from_search_result_threads_search_data_into_origin_search_data(
+    fake_client_clinic_repo_factory,
+):
     client = _new_appointment_client()
     staff_by_telegram_id = {
         ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
     }
-    router = _build_new_appointment_router(client, staff_by_telegram_id)
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(client.ID, 1)})
+    router = _build_new_appointment_router(client, staff_by_telegram_id, client_clinic_repo=client_clinic_repo)
     new_appointment = _find_handler(router, "new_appointment")
 
     callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="search", page=1)

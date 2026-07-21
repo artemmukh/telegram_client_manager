@@ -31,11 +31,12 @@ class FakeClinicRepo:
         return self.clinic
 
 
-def _service(user_repo, clinic_id=1):
+def _service(user_repo, clinic_id=1, client_clinic_repo=None):
     return ClientManagement(
         user_repo,
         FakeStaffRepo(Staff(telegram_user_id=100, clinic_id=clinic_id)),
         FakeClinicRepo(Clinic(clinic_id=clinic_id, name="Зуб Мудрости", token="t")),
+        client_clinic_repository=client_clinic_repo,
     )
 
 
@@ -203,37 +204,46 @@ async def test_request_name_change_rejects_invalid_name(fake_user_repo_factory):
 
 
 @pytest.mark.asyncio
-async def test_approve_name_change_applies_pending_full_name(fake_user_repo_factory):
+async def test_approve_name_change_applies_pending_full_name(
+    fake_user_repo_factory, fake_client_clinic_repo_factory,
+):
     client = _existing_client()
     client.pending_full_name = "Петров Петр"
-    repo = fake_user_repo_factory(users_by_id={1: client})
-    service = _service(repo)
+    repo = fake_user_repo_factory(clients_by_id={1: client})
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(1, 1)})
+    service = _service(repo, client_clinic_repo=client_clinic_repo)
 
-    user = await service.approve_name_change(1)
+    user = await service.approve_name_change(1, 1)
 
     assert user.full_name == "Петров Петр"
     assert user.pending_full_name is None
 
 
 @pytest.mark.asyncio
-async def test_reject_name_change_clears_pending_full_name(fake_user_repo_factory):
+async def test_reject_name_change_clears_pending_full_name(
+    fake_user_repo_factory, fake_client_clinic_repo_factory,
+):
     client = _existing_client()
     client.pending_full_name = "Петров Петр"
-    repo = fake_user_repo_factory(users_by_id={1: client})
-    service = _service(repo)
+    repo = fake_user_repo_factory(clients_by_id={1: client})
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(1, 1)})
+    service = _service(repo, client_clinic_repo=client_clinic_repo)
 
-    user = await service.reject_name_change(1)
+    user = await service.reject_name_change(1, 1)
 
     assert user.full_name == "Иванов Иван"
     assert user.pending_full_name is None
 
 
 @pytest.mark.asyncio
-async def test_approve_name_change_returns_none_when_already_resolved(fake_user_repo_factory):
-    repo = fake_user_repo_factory(users_by_id={1: _existing_client()})
-    service = _service(repo)
+async def test_approve_name_change_returns_none_when_already_resolved(
+    fake_user_repo_factory, fake_client_clinic_repo_factory,
+):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(1, 1)})
+    service = _service(repo, client_clinic_repo=client_clinic_repo)
 
-    result = await service.approve_name_change(1)
+    result = await service.approve_name_change(1, 1)
 
     assert result is None
 

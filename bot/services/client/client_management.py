@@ -67,8 +67,21 @@ class ClientManagement:
             self.staff_repository, self.clinic_repository, admin_telegram_id
         )
 
-    async def get_client_by_id(self, user_id: int) -> User | None:
-        return await self.user_repository.get_client_by_id(user_id)
+    async def get_client_by_id(self, user_id: int, clinic_id: int) -> User | None:
+        client = await self.user_repository.get_client_by_id(user_id)
+        if client is None or self.client_clinic_repository is None:
+            return None
+        if not await self.client_clinic_repository.client_linked_to_clinic(user_id, clinic_id):
+            return None
+        return client
+
+    async def _ensure_client_in_clinic(self, user_id: int, clinic_id: int) -> User:
+        client = await self.user_repository.get_client_by_id(user_id)
+        if client is None or self.client_clinic_repository is None:
+            raise UserNotFoundError("Клиент не найден.")
+        if not await self.client_clinic_repository.client_linked_to_clinic(user_id, clinic_id):
+            raise UserNotFoundError("Клиент не найден.")
+        return client
 
     async def is_phone_taken(self, phone: str) -> bool:
         return await self.user_repository.phone_exists(phone)
@@ -103,28 +116,40 @@ class ClientManagement:
         full_name = full_name.strip()
         return await self.user_repository.get_clients_by_exact_name(full_name, clinic_id)
 
-    async def delete_client(self, user_id: int) -> bool:
+    async def delete_client(self, user_id: int, clinic_id: int) -> bool:
+        """Returns True if the client was fully deleted, False if only unlinked from this clinic."""
 
-        if user_id:
-            await self.user_repository.delete_client(user_id)
-            return True
+        if not user_id:
+            raise BotException("Ошибка удаления клиента")
 
-        raise BotException("Ошибка удаления клиента")
+        await self._ensure_client_in_clinic(user_id, clinic_id)
+
+        await self.client_clinic_repository.unlink_client_from_clinic(user_id, clinic_id)
+
+        remaining_clinic_ids = await self.client_clinic_repository.get_client_clinic_ids(user_id)
+        if remaining_clinic_ids:
+            return False
+
+        await self.user_repository.delete_client(user_id)
+        return True
 
     async def count_client_appointments(self, user_id: int, clinic_id: int) -> int:
         if self.appointment_repository is None:
             raise BotException("Проверка количества записей недоступна")
         return await self.appointment_repository.count_appointments_by_client_id(user_id, clinic_id)
 
-    async def update_client_name(self, user_id: int, new_full_name: str) -> User:
+    async def is_last_linked_clinic(self, user_id: int, clinic_id: int) -> bool:
+        if self.client_clinic_repository is None:
+            raise UserNotFoundError("Клиент не найден.")
+        clinic_ids = await self.client_clinic_repository.get_client_clinic_ids(user_id)
+        return clinic_id in clinic_ids and len(clinic_ids) <= 1
+
+    async def update_client_name(self, user_id: int, new_full_name: str, clinic_id: int) -> User:
         new_full_name = new_full_name.strip()
 
         validate_full_name(new_full_name, FULL_NAME_PATTERN)
 
-        user = await self.user_repository.get_client_by_id(user_id)
-
-        if user is None:
-            raise UserNotFoundError("Клиент не найден.")
+        user = await self._ensure_client_in_clinic(user_id, clinic_id)
 
         user.full_name = new_full_name
 
@@ -132,15 +157,12 @@ class ClientManagement:
 
         return user
 
-    async def update_client_phone(self, user_id: int, new_phone: str) -> User:
+    async def update_client_phone(self, user_id: int, new_phone: str, clinic_id: int) -> User:
         new_phone = normalize_phone(new_phone.strip())
 
         validate_phone(new_phone)
 
-        user = await self.user_repository.get_client_by_id(user_id)
-
-        if user is None:
-            raise UserNotFoundError("Клиент не найден.")
+        user = await self._ensure_client_in_clinic(user_id, clinic_id)
 
         if new_phone == user.phone:
             raise ValidationError("Введён такой же номер телефона")
@@ -168,10 +190,12 @@ class ClientManagement:
 
         return user
 
-    async def approve_name_change(self, user_id: int) -> User | None:
+    async def approve_name_change(self, user_id: int, clinic_id: int) -> User | None:
+        await self._ensure_client_in_clinic(user_id, clinic_id)
         return await self.user_repository.resolve_pending_full_name(user_id, approve=True)
 
-    async def reject_name_change(self, user_id: int) -> User | None:
+    async def reject_name_change(self, user_id: int, clinic_id: int) -> User | None:
+        await self._ensure_client_in_clinic(user_id, clinic_id)
         return await self.user_repository.resolve_pending_full_name(user_id, approve=False)
 
     async def update_reminder_preferences(self, user_id: int, preset: str) -> User:

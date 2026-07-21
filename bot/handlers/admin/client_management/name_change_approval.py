@@ -2,15 +2,22 @@
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
 
+from bot.exceptions.exceptions import BotException
+from bot.exceptions.user_exceptions import UserNotFoundError
 from bot.keyboards.admin.name_change_cb import NameChangeApprovalCB
 from bot.services.client.client_management import ClientManagement
 from bot.utils.role import RoleFilter
 
 
-def create_admin_name_change_router(user_repo, staff_repo, clinic_repo) -> Router:
+def create_admin_name_change_router(user_repo, staff_repo, clinic_repo, client_clinic_repo=None) -> Router:
     router = Router()
 
-    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo)
+    cl_mng = ClientManagement(
+        user_repository=user_repo,
+        staff_repository=staff_repo,
+        clinic_repository=clinic_repo,
+        client_clinic_repository=client_clinic_repo,
+    )
 
     router.callback_query.filter(RoleFilter("admin"))
 
@@ -24,7 +31,17 @@ def create_admin_name_change_router(user_repo, staff_repo, clinic_repo) -> Route
 
     @router.callback_query(NameChangeApprovalCB.filter(F.action == "approve"))
     async def approve_name_change(callback_query: CallbackQuery, callback_data: NameChangeApprovalCB):
-        user = await cl_mng.approve_name_change(callback_data.user_id)
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        try:
+            user = await cl_mng.approve_name_change(callback_data.user_id, clinic.clinic_id)
+        except UserNotFoundError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
 
         if user is None:
             await mark_already_resolved(callback_query)
@@ -41,7 +58,17 @@ def create_admin_name_change_router(user_repo, staff_repo, clinic_repo) -> Route
 
     @router.callback_query(NameChangeApprovalCB.filter(F.action == "reject"))
     async def reject_name_change(callback_query: CallbackQuery, callback_data: NameChangeApprovalCB):
-        user = await cl_mng.reject_name_change(callback_data.user_id)
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        try:
+            user = await cl_mng.reject_name_change(callback_data.user_id, clinic.clinic_id)
+        except UserNotFoundError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
 
         if user is None:
             await mark_already_resolved(callback_query)

@@ -55,10 +55,18 @@ from bot.validators.validators import SEARCH_NAME_PATTERN
 logger = logging.getLogger(__name__)
 
 
-def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appointment_repo=None):
+def create_admin_client_browser_router(
+    user_repo, staff_repo, clinic_repo, appointment_repo=None, client_clinic_repo=None,
+):
     router = Router()
 
-    cl_mng = ClientManagement(user_repo, staff_repo, clinic_repo, appointment_repo)
+    cl_mng = ClientManagement(
+        user_repository=user_repo,
+        staff_repository=staff_repo,
+        clinic_repository=clinic_repo,
+        appointment_repository=appointment_repo,
+        client_clinic_repository=client_clinic_repo,
+    )
     pagination_service = ClientPaginationService(user_repo)
     appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
@@ -183,7 +191,9 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
             # Поиск по телефону всегда даёт ровно одно совпадение - карточка
             # напрямую, минуя список (возвращаться в "direct"-режиме некуда).
             await state.clear()
-            await render_card(callback_query, state, client_id=found[0].ID, mode="direct", page=1)
+            await render_card(
+                callback_query, state, client_id=found[0].ID, mode="direct", page=1, clinic_id=clinic.clinic_id,
+            )
             return
 
         await state.update_data(search_data=data)
@@ -214,7 +224,13 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
     # --- Card actions ---
     @router.callback_query(ClientActionCB.filter(F.action == "new_appointment"))
     async def new_appointment(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
-        client = await cl_mng.get_client_by_id(callback_data.client_id)
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        client = await cl_mng.get_client_by_id(callback_data.client_id, clinic.clinic_id)
         if client is None:
             await callback_query.answer("Клиент не найден.", show_alert=True)
             return
@@ -255,23 +271,34 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
 
     @router.callback_query(ClientActionCB.filter(F.action == "delete"))
     async def start_delete(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
-        user = await cl_mng.get_client_by_id(callback_data.client_id)
+        try:
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        user = await cl_mng.get_client_by_id(callback_data.client_id, clinic.clinic_id)
         if user is None:
             await callback_query.answer("Клиент не найден.", show_alert=True)
             return
 
-        appointments_count = await cl_mng.count_client_appointments(user.ID, user.clinic_id)
+        appointments_count = await cl_mng.count_client_appointments(user.ID, clinic.clinic_id)
+        is_last_clinic = await cl_mng.is_last_linked_clinic(user.ID, clinic.clinic_id)
 
-        text = f"⚠️ Удалить {user.full_name} безвозвратно?"
-        if appointments_count > 0:
-            text += f"\n\nБудут также удалены все его записи на приём ({appointments_count})."
+        if is_last_clinic:
+            text = f"⚠️ Удалить {user.full_name} безвозвратно?"
+            if appointments_count > 0:
+                text += f"\n\nБудут также удалены все его записи на приём ({appointments_count})."
+        else:
+            text = f"⚠️ Отвязать {user.full_name} от этой клиники?"
+            text += "\n\nПрофиль клиента и его записи на приём не будут удалены — он останется зарегистрирован в других клиниках."
 
         await state.set_state(ClientBrowserStates.confirm_delete)
         await callback_query.answer('')
         await callback_query.message.edit_text(
             text,
             reply_markup=client_delete_confirm_kb(
-                callback_data.client_id, callback_data.mode, callback_data.page,
+                callback_data.client_id, callback_data.mode, callback_data.page, is_last_clinic=is_last_clinic,
             ),
         )
 
@@ -285,29 +312,31 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
     @router.callback_query(ClientActionCB.filter(F.action == "confirm_delete"))
     async def confirm_delete(callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext):
         try:
-            await cl_mng.delete_client(callback_data.client_id)
-        except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
-            return
-
-        if callback_data.mode == "direct":
-            await state.clear()
-            await callback_query.answer("Клиент удалён.", show_alert=True)
-            await callback_query.message.edit_text(
-                "Клиент удалён.", reply_markup=client_browser_search_kb(),
-            )
-            return
-
-        try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
 
+        try:
+            fully_deleted = await cl_mng.delete_client(callback_data.client_id, clinic.clinic_id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        result_text = "Клиент удалён." if fully_deleted else "Клиент отвязан от клиники."
+
+        if callback_data.mode == "direct":
+            await state.clear()
+            await callback_query.answer(result_text, show_alert=True)
+            await callback_query.message.edit_text(
+                result_text, reply_markup=client_browser_search_kb(),
+            )
+            return
+
         await render_list(
             callback_query, state,
             mode=callback_data.mode, page=callback_data.page, clinic_id=clinic.clinic_id,
-            prefix="✅ Клиент удалён.\n\n",
+            prefix=f"✅ {result_text}\n\n",
         )
 
     @router.callback_query(ClientActionCB.filter(F.action == "cancel_edit"))
@@ -351,7 +380,13 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         data = await state.get_data()
 
         try:
-            await cl_mng.update_client_name(callback_data.client_id, data["full_name"])
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        try:
+            await cl_mng.update_client_name(callback_data.client_id, data["full_name"], clinic.clinic_id)
         except (InvalidFullNameError, UserNotFoundError) as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -362,6 +397,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         await render_card(
             callback_query, state,
             client_id=callback_data.client_id, mode=callback_data.mode, page=callback_data.page,
+            clinic_id=clinic.clinic_id,
         )
 
     # --- Collect and confirm new phone ---
@@ -371,8 +407,14 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         data = await state.get_data()
         client_id = data["client_id"]
 
+        try:
+            clinic = await cl_mng.get_admin_clinic(message.from_user.id)
+        except BotException as e:
+            await message.answer(str(e))
+            return
+
         async def validate_update_phone(phone: str):
-            user = await cl_mng.get_client_by_id(client_id)
+            user = await cl_mng.get_client_by_id(client_id, clinic.clinic_id)
             if user is None:
                 raise UserNotFoundError("Клиент не найден.")
             if phone == user.phone:
@@ -410,7 +452,13 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         data = await state.get_data()
 
         try:
-            await cl_mng.update_client_phone(callback_data.client_id, data["phone"])
+            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(str(e), show_alert=True)
+            return
+
+        try:
+            await cl_mng.update_client_phone(callback_data.client_id, data["phone"], clinic.clinic_id)
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -421,6 +469,7 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
         await render_card(
             callback_query, state,
             client_id=callback_data.client_id, mode=callback_data.mode, page=callback_data.page,
+            clinic_id=clinic.clinic_id,
         )
 
     @router.callback_query(F.data == "noop")
@@ -464,8 +513,16 @@ def create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appoi
             await callback_query.answer("Произошла непредвиденная ошибка", show_alert=True)
 
     async def render_card(
-        callback_query: CallbackQuery, state: FSMContext, *, client_id: int, mode: str, page: int,
+        callback_query: CallbackQuery, state: FSMContext, *,
+        client_id: int, mode: str, page: int, clinic_id: int | None = None,
     ) -> None:
-        await render_client_card(cl_mng, callback_query, state, client_id, mode, page)
+        if clinic_id is None:
+            try:
+                clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+            except BotException as e:
+                await callback_query.answer(str(e), show_alert=True)
+                return
+            clinic_id = clinic.clinic_id
+        await render_client_card(cl_mng, callback_query, state, client_id, mode, page, clinic_id)
 
     return router

@@ -122,13 +122,15 @@ async def main():
     dp.include_router(create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, client_clinic_repo))
 
     #browse (view/edit/delete)
-    dp.include_router(create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appointment_repo))
+    dp.include_router(create_admin_client_browser_router(
+        user_repo, staff_repo, clinic_repo, appointment_repo, client_clinic_repo,
+    ))
 
     #name-change approval
-    dp.include_router(create_admin_name_change_router(user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_name_change_router(user_repo, staff_repo, clinic_repo, client_clinic_repo))
 
     #record handlers
-    dp.include_router(create_admin_record_router(user_repo, staff_repo, clinic_repo))
+    dp.include_router(create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic_repo))
     dp.include_router(create_admin_appointment_creation_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service,
         appointment_scheduler, client_clinic_repo,

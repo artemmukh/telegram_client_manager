@@ -7,8 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.client_management.name_change_approval import create_admin_name_change_router
 from bot.keyboards.admin.name_change_cb import NameChangeApprovalCB
+from bot.models.clinic import Clinic
+from bot.models.staff import Staff
 from bot.models.user import User
 from bot.utils.role import Role
+
+ADMIN_TELEGRAM_ID = 999
+CLINIC_ID = 1
 
 
 class FakeUserRepository:
@@ -33,6 +38,25 @@ class FakeUserRepository:
 
     async def get_user_by_id(self, user_id):
         return self.user
+
+    async def get_client_by_id(self, user_id):
+        return self.user if self.user.ID == user_id else None
+
+
+class FakeStaffRepo:
+    def __init__(self, staff):
+        self.staff = staff
+
+    async def get_staff(self, telegram_user_id):
+        return self.staff
+
+
+class FakeClinicRepo:
+    def __init__(self, clinic):
+        self.clinic = clinic
+
+    async def get_clinic_by_id(self, clinic_id):
+        return self.clinic
 
 
 def _get_handler(observer, name):
@@ -62,12 +86,18 @@ def user_repo(client):
 
 
 @pytest.fixture
-def router(user_repo):
-    return create_admin_name_change_router(user_repo, staff_repo=None, clinic_repo=None)
+def router(user_repo, client, fake_client_clinic_repo_factory):
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(client.ID, CLINIC_ID)})
+    staff_repo = FakeStaffRepo(Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="clinic"))
+    clinic_repo = FakeClinicRepo(Clinic(clinic_id=CLINIC_ID, name="Клиника Тест", token="t"))
+    return create_admin_name_change_router(
+        user_repo, staff_repo=staff_repo, clinic_repo=clinic_repo, client_clinic_repo=client_clinic_repo,
+    )
 
 
 def _callback(user_id, action="approve"):
     callback = MagicMock()
+    callback.from_user.id = ADMIN_TELEGRAM_ID
     callback.answer = AsyncMock()
     callback.message = MagicMock()
     callback.message.edit_text = AsyncMock()

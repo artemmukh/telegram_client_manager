@@ -32,6 +32,7 @@ class FakeUserRepository:
         self.linked = []
         self.reminder_updates = []
         self.updated_clients = []
+        self.deleted_clients: list[int] = []
 
     async def phone_exists(self, phone: str) -> bool:
         return phone in self.existing_phones
@@ -88,6 +89,11 @@ class FakeUserRepository:
         user.pending_full_name = None
         return user
 
+    async def delete_client(self, user_id) -> None:
+        self.deleted_clients.append(user_id)
+        self.clients_by_id.pop(user_id, None)
+        self.users_by_id.pop(user_id, None)
+
 
 @pytest.fixture
 def fake_user_repo() -> FakeUserRepository:
@@ -110,3 +116,37 @@ class FakeClinicRepository:
 @pytest.fixture
 def fake_clinic_repo() -> FakeClinicRepository:
     return FakeClinicRepository()
+
+
+class FakeClientClinicRepository:
+    """Drop-in for ClientClinicRepository, matching its method names/signatures
+    (link_client_to_clinic, client_linked_to_clinic, unlink_client_from_clinic,
+    get_client_clinic_ids). Tracks (client_id, clinic_id) links in-memory and
+    records unlink calls so tests can assert the exact rows that were touched."""
+
+    def __init__(self, links=None):
+        self.links = set(links or set())
+        self.unlinked_calls: list[tuple[int, int]] = []
+
+    async def link_client_to_clinic(self, client_id: int, clinic_id: int) -> None:
+        self.links.add((client_id, clinic_id))
+
+    async def client_linked_to_clinic(self, client_id: int, clinic_id: int) -> bool:
+        return (client_id, clinic_id) in self.links
+
+    async def unlink_client_from_clinic(self, client_id: int, clinic_id: int) -> None:
+        self.unlinked_calls.append((client_id, clinic_id))
+        self.links.discard((client_id, clinic_id))
+
+    async def get_client_clinic_ids(self, client_id: int) -> list[int]:
+        return [clinic_id for (cid, clinic_id) in self.links if cid == client_id]
+
+
+@pytest.fixture
+def fake_client_clinic_repo() -> FakeClientClinicRepository:
+    return FakeClientClinicRepository()
+
+
+@pytest.fixture
+def fake_client_clinic_repo_factory():
+    return FakeClientClinicRepository

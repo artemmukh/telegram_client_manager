@@ -286,7 +286,7 @@ async def test_admin_client_management_full_lifecycle(e2e):
 
     # Edit: phone.
     new_phone = "+998933214499"
-    updated = await e2e.client_management.update_client_phone(client.ID, new_phone)
+    updated = await e2e.client_management.update_client_phone(client.ID, new_phone, e2e.admin.clinic_id)
     assert updated.phone == new_phone
 
     # Edit: name-change request approved by the admin.
@@ -294,26 +294,26 @@ async def test_admin_client_management_full_lifecycle(e2e):
     pending_user = await e2e.client_management.request_name_change(client.ID, requested_name)
     assert pending_user.pending_full_name == requested_name
 
-    approved_user = await e2e.client_management.approve_name_change(client.ID)
+    approved_user = await e2e.client_management.approve_name_change(client.ID, e2e.admin.clinic_id)
     assert approved_user.full_name == requested_name
     assert approved_user.pending_full_name is None
 
-    persisted_after_approval = await e2e.client_management.get_client_by_id(client.ID)
+    persisted_after_approval = await e2e.client_management.get_client_by_id(client.ID, e2e.admin.clinic_id)
     assert persisted_after_approval.full_name == requested_name
 
     # Edit: a second name-change request, this time rejected by the admin.
     rejected_name = "Ахмедов Отабек Шерзодович"
     await e2e.client_management.request_name_change(client.ID, rejected_name)
-    rejected_user = await e2e.client_management.reject_name_change(client.ID)
+    rejected_user = await e2e.client_management.reject_name_change(client.ID, e2e.admin.clinic_id)
     assert rejected_user.full_name == requested_name  # unchanged
     assert rejected_user.pending_full_name is None
 
-    persisted_after_rejection = await e2e.client_management.get_client_by_id(client.ID)
+    persisted_after_rejection = await e2e.client_management.get_client_by_id(client.ID, e2e.admin.clinic_id)
     assert persisted_after_rejection.full_name == requested_name
 
     # Delete: client disappears from lookups and from the browser listing.
-    assert await e2e.client_management.delete_client(client.ID) is True
-    assert await e2e.client_management.get_client_by_id(client.ID) is None
+    assert await e2e.client_management.delete_client(client.ID, e2e.admin.clinic_id) is True
+    assert await e2e.client_management.get_client_by_id(client.ID, e2e.admin.clinic_id) is None
 
     listed_after_delete = await e2e.client_pagination.paginate_clients("list", page=1, clinic_id=e2e.admin.clinic_id)
     assert client.ID not in {u.ID for u in listed_after_delete.items}

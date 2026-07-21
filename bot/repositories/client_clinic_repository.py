@@ -46,6 +46,13 @@ class ClientClinicRepository:
         )
         return await cursor.fetchone() is not None
 
+    async def unlink_client_from_clinic(self, client_id: int, clinic_id: int) -> None:
+        await self.connection.execute(
+            "DELETE FROM client_clinics WHERE client_id = ? AND clinic_id = ?",
+            (client_id, clinic_id),
+        )
+        await self.connection.commit()
+
     async def get_client_clinic_ids(self, client_id: int) -> list[int]:
         cursor = await self.connection.execute(
             "SELECT clinic_id FROM client_clinics WHERE client_id = ?",

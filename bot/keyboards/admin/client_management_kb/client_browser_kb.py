@@ -134,11 +134,11 @@ def client_card_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup
     return builder.as_markup()
 
 
-def client_delete_confirm_kb(client_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def client_delete_confirm_kb(client_id: int, mode: str, page: int, is_last_clinic: bool = True) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Да, удалить",
+        text="✅ Да, удалить" if is_last_clinic else "✅ Да, отвязать",
         callback_data=ClientActionCB(action="confirm_delete", client_id=client_id, mode=mode, page=page).pack(),
     )
     builder.button(

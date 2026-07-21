@@ -23,11 +23,14 @@ from bot.handlers.admin.appointment_management.record_menu import create_admin_r
 from bot.handlers.utils.admin_utils.client_browser_helpers import build_client_card_text
 from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
 from bot.keyboards.admin.record_management_kb.record_main_menu_kb import record_keyboard
+from bot.models.clinic import Clinic
+from bot.models.staff import Staff
 from bot.models.user import User
 from bot.utils.role import Role
 
 
 ADMIN_TELEGRAM_ID = 999
+CLINIC_ID = 1
 
 
 class FakeUserRepoForRecordMenu:
@@ -39,11 +42,21 @@ class FakeUserRepoForRecordMenu:
 
 
 class FakeStaffRepo:
-    pass
+    def __init__(self, staff=None):
+        self.staff = staff or Staff(
+            telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="clinic",
+        )
+
+    async def get_staff(self, telegram_user_id):
+        return self.staff
 
 
 class FakeClinicRepo:
-    pass
+    def __init__(self, clinic=None):
+        self.clinic = clinic or Clinic(clinic_id=CLINIC_ID, name="Клиника Тест", token="t")
+
+    async def get_clinic_by_id(self, clinic_id):
+        return self.clinic
 
 
 def _find_callback_handler(router, name):
@@ -70,17 +83,22 @@ def _fsm_context():
     return FSMContext(storage=storage, key=key)
 
 
-def _build_router(clients_by_id=None):
+def _build_router(clients_by_id=None, client_clinic_repo=None):
     user_repo = FakeUserRepoForRecordMenu(clients_by_id=clients_by_id)
-    return create_admin_record_router(user_repo, FakeStaffRepo(), FakeClinicRepo())
+    return create_admin_record_router(
+        user_repo, FakeStaffRepo(), FakeClinicRepo(), client_clinic_repo=client_clinic_repo,
+    )
 
 
 # --- back_to_main with client_preselected: returns to the origin client's card ---
 
 @pytest.mark.asyncio
-async def test_back_to_main_with_client_preselected_renders_origin_card_and_restores_search_data():
+async def test_back_to_main_with_client_preselected_renders_origin_card_and_restores_search_data(
+    fake_client_clinic_repo_factory,
+):
     client = User(ID=5, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-    router = _build_router(clients_by_id={5: client})
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(5, CLINIC_ID)})
+    router = _build_router(clients_by_id={5: client}, client_clinic_repo=client_clinic_repo)
     back_to_main = _find_callback_handler(router, "back_to_main")
 
     state = _fsm_context()
@@ -112,9 +130,12 @@ async def test_back_to_main_with_client_preselected_renders_origin_card_and_rest
 
 
 @pytest.mark.asyncio
-async def test_back_to_main_with_client_preselected_and_no_origin_search_data_does_not_set_search_data():
+async def test_back_to_main_with_client_preselected_and_no_origin_search_data_does_not_set_search_data(
+    fake_client_clinic_repo_factory,
+):
     client = User(ID=5, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
-    router = _build_router(clients_by_id={5: client})
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(5, CLINIC_ID)})
+    router = _build_router(clients_by_id={5: client}, client_clinic_repo=client_clinic_repo)
     back_to_main = _find_callback_handler(router, "back_to_main")
 
     state = _fsm_context()
