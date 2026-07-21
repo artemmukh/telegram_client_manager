@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -33,6 +35,8 @@ from bot.states.admin.record_management.appointment_states import AppointmentCre
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 from bot.validators.validators import SEARCH_NAME_PATTERN
+
+logger = logging.getLogger(__name__)
 
 
 def create_admin_appointment_creation_router(
@@ -230,14 +234,19 @@ def create_admin_appointment_creation_router(
         notification_text = "Запись успешно создана!\n\n" + build_appointment_card(appointment)
         if notification_service:
             use_invite_kb = appointment.status == AppointmentStatus.PENDING
-            message_id = await notification_service.notify_client_appointment_with_buttons(
-                appointment, use_invite_kb=use_invite_kb
-            )
+            try:
+                message_id = await notification_service.notify_client_appointment_with_buttons(
+                    appointment, use_invite_kb=use_invite_kb
+                )
+            except Exception as e:
+                logger.warning(f"Failed to notify client about new appointment {appointment.id}: {e}")
+                message_id = None
+
             if message_id:
                 await appt_mng.update_notification_message_id(appointment.id, message_id)
                 notification_text += "\n✅ Уведомление отправлено клиенту"
             else:
-                notification_text += "\n⚠️ Не удалось отправить уведомление клиенту (нет Telegram ID)"
+                notification_text += "\n⚠️ Не удалось отправить уведомление клиенту"
 
         if scheduler and appointment.status == AppointmentStatus.CONFIRMED:
             notification_text += "\n⏰ Напоминания запланированы (24ч и 2ч перед приемом)"
