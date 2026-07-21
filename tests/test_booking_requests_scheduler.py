@@ -65,6 +65,29 @@ class FakeAppointmentRepository:
     async def update_proposed_by(self, appointment_id, proposed_by):
         self.proposed_by_updates.append((appointment_id, proposed_by))
 
+    async def try_confirm_or_reject_pending(self, appointment_id, new_status, decided_by_user_id, status_updated_at):
+        # Deliberately does not mutate self.appointment -- AppointmentManagement
+        # applies the equivalent field updates itself afterward, mirroring the
+        # real repository which only touches the DB row, never the caller's
+        # Python object.
+        if self.appointment.status != AppointmentStatus.PENDING or self.appointment.proposed_datetime is not None:
+            return False
+
+        self.status_updates.append((appointment_id, new_status))
+        return True
+
+    async def try_propose_new_datetime(
+        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+    ):
+        if self.appointment.status.value != expected_status:
+            return False
+        if self.appointment.proposed_datetime is not None and self.appointment.proposed_by == CreatedBy.ADMIN:
+            return False
+
+        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
+        self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        return True
+
 
 class FakeUserRepo:
     async def get_user_by_telegram_id(self, telegram_user_id):

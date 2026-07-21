@@ -4,12 +4,16 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
+from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError, AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     edit_tracked_message,
     remember_tracked_message,
+)
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    invalidate_actor_stale_message,
+    invalidate_sibling_notifications,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, datetime_processing
 from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
@@ -36,6 +40,37 @@ def create_admin_reschedule_requests_router(
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
+    async def invalidate_reschedule_siblings(callback_query: CallbackQuery, appointment) -> None:
+        if not notification_service:
+            return
+        try:
+            actor = await appt_mng.get_user_by_telegram_id(callback_query.from_user.id)
+            decided_by_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+            outcome_text = appt_mng.resolve_decision_outcome_text(appointment, "reschedule")
+            await invalidate_sibling_notifications(
+                notification_service, appt_mng, appointment.id, "reschedule",
+                callback_query.from_user.id, decided_by_label, outcome_text,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to invalidate sibling reschedule notifications for appointment {appointment.id}: {e}"
+            )
+
+    async def invalidate_own_stale_reschedule_message(
+        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError
+    ) -> None:
+        if not notification_service:
+            return
+        try:
+            await invalidate_actor_stale_message(
+                notification_service, error,
+                callback_query.message.chat.id, callback_query.message.message_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to invalidate own stale reschedule message: {e}"
+            )
+
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "accept"))
     async def accept_reschedule(callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB):
         owned_appointment = await appt_mng.get_appointment_for_admin(
@@ -51,6 +86,10 @@ def create_admin_reschedule_requests_router(
             )
         except AppointmentNotFoundError:
             await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+        except AppointmentAlreadyDecidedError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            await invalidate_own_stale_reschedule_message(callback_query, e)
             return
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
@@ -70,6 +109,7 @@ def create_admin_reschedule_requests_router(
 
         await callback_query.answer("Перенос принят")
         await callback_query.message.edit_text(build_appointment_card(appointment))
+        await invalidate_reschedule_siblings(callback_query, appointment)
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "reject"))
     async def reject_reschedule(callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB):
@@ -86,6 +126,10 @@ def create_admin_reschedule_requests_router(
             )
         except AppointmentNotFoundError:
             await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+        except AppointmentAlreadyDecidedError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            await invalidate_own_stale_reschedule_message(callback_query, e)
             return
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
@@ -105,6 +149,7 @@ def create_admin_reschedule_requests_router(
 
         await callback_query.answer("Перенос отклонён")
         await callback_query.message.edit_text(build_appointment_card(appointment))
+        await invalidate_reschedule_siblings(callback_query, appointment)
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "propose"))
     async def start_propose_datetime(
@@ -183,10 +228,15 @@ def create_admin_reschedule_requests_router(
 
         try:
             appointment = await appt_mng.propose_new_datetime(
-                callback_data.appointment_id, callback_query.from_user.id, db_datetime,
+                callback_data.appointment_id, callback_query.from_user.id, db_datetime, kind="reschedule",
             )
         except AppointmentNotFoundError:
             await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+        except AppointmentAlreadyDecidedError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            await invalidate_own_stale_reschedule_message(callback_query, e)
+            await state.clear()
             return
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
@@ -214,6 +264,7 @@ def create_admin_reschedule_requests_router(
             f"🔁 Клиенту отправлено встречное предложение времени: "
             f"{data.get('appointment_datetime_display')}\nОжидаем ответа клиента."
         )
+        await invalidate_reschedule_siblings(callback_query, appointment)
         await state.clear()
 
     return router

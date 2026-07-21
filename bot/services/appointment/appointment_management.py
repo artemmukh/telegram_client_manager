@@ -6,6 +6,7 @@ from bot.config.booking_config import (
     MAX_PENDING_REQUESTS_PER_CLIENT,
 )
 from bot.exceptions.appointment_exceptions import (
+    AppointmentAlreadyDecidedError,
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
@@ -19,6 +20,7 @@ from bot.exceptions.appointment_exceptions import (
 )
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
@@ -312,6 +314,40 @@ class AppointmentManagement:
 
         return appointment
 
+    async def resolve_decision_label(self, user_id: int | None) -> str:
+        if user_id is None:
+            return "Другой сотрудник"
+
+        user = await self.user_repository.get_user_by_id(user_id)
+        if user is None:
+            return "Другой сотрудник"
+
+        staff_record = await self.staff_repository.get_staff(user.telegram_user_id)
+        role = "Администратор" if staff_record is not None and staff_record.visibility_scope == "clinic" else "Доктор"
+
+        return f"{role} {user.full_name}"
+
+    def resolve_decision_outcome_text(self, appointment: Appointment, kind: str) -> str:
+        if kind == "booking":
+            if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None:
+                return "подтверждена"
+            if appointment.status == AppointmentStatus.CANCELLED:
+                return "отклонена"
+            if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+                return "предложено другое время"
+        elif kind == "reschedule":
+            if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None:
+                return "перенос принят"
+            if appointment.status == AppointmentStatus.CANCELLED:
+                return "перенос отклонён"
+            if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+                return "предложено другое время"
+        elif kind == "completion":
+            if appointment.status == AppointmentStatus.COMPLETED:
+                return "приём завершён"
+
+        return "решение принято"
+
     async def confirm_appointment_by_client(self, appointment_id: int, telegram_user_id: int) -> Appointment:
         appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
         if appointment is None:
@@ -367,7 +403,19 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
 
-        return await self.update_status(appointment, AppointmentStatus.CONFIRMED)
+        acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+        status_updated_at = get_current_tashkent_time()
+        confirmed = await self.appointment_repository.try_confirm_or_reject_pending(
+            appointment_id, AppointmentStatus.CONFIRMED, acting_user_id, status_updated_at
+        )
+        if not confirmed:
+            await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind="booking")
+
+        appointment.status = AppointmentStatus.CONFIRMED
+        appointment.status_updated_at = status_updated_at
+        appointment.decided_by_user_id = acting_user_id
+
+        return appointment
 
     async def reject_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
@@ -380,10 +428,22 @@ class AppointmentManagement:
                 "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
             )
 
-        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
+        acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+        status_updated_at = get_current_tashkent_time()
+        rejected = await self.appointment_repository.try_confirm_or_reject_pending(
+            appointment_id, AppointmentStatus.CANCELLED, acting_user_id, status_updated_at
+        )
+        if not rejected:
+            await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind="booking")
+
+        appointment.status = AppointmentStatus.CANCELLED
+        appointment.status_updated_at = status_updated_at
+        appointment.decided_by_user_id = acting_user_id
+
+        return appointment
 
     async def propose_new_datetime(
-        self, appointment_id: int, staff_telegram_id: int, proposed_datetime: str
+        self, appointment_id: int, staff_telegram_id: int, proposed_datetime: str, kind: str
     ) -> Appointment:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
         if appointment is None:
@@ -400,10 +460,16 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id)
 
-        await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
-        await self.appointment_repository.update_proposed_by(appointment_id, CreatedBy.ADMIN)
+        acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+        proposed = await self.appointment_repository.try_propose_new_datetime(
+            appointment_id, validated, CreatedBy.ADMIN.value, acting_user_id, appointment.status.value
+        )
+        if not proposed:
+            await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind=kind)
+
         appointment.proposed_datetime = validated
         appointment.proposed_by = CreatedBy.ADMIN
+        appointment.decided_by_user_id = acting_user_id
 
         return appointment
 
@@ -422,14 +488,21 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id)
 
+        status_updated_at = get_current_tashkent_time()
+        accepted = await self.appointment_repository.try_resolve_admin_proposal(
+            appointment_id,
+            accept=True,
+            status_updated_at=status_updated_at,
+            new_datetime=appointment.proposed_datetime,
+        )
+        if not accepted:
+            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
-        await self.appointment_repository.update_appointment(appointment_id, appointment)
-
-        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
-        await self.appointment_repository.update_proposed_by(appointment_id, None)
         appointment.proposed_datetime = None
         appointment.proposed_by = None
+        appointment.status_updated_at = status_updated_at
 
         return appointment
 
@@ -446,10 +519,21 @@ class AppointmentManagement:
         if appointment.proposed_by != CreatedBy.ADMIN:
             raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
 
-        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
-        await self.appointment_repository.update_proposed_by(appointment_id, None)
+        status_updated_at = get_current_tashkent_time()
+        rejected = await self.appointment_repository.try_resolve_admin_proposal(
+            appointment_id,
+            accept=False,
+            status_updated_at=status_updated_at,
+        )
+        if not rejected:
+            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
 
-        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
+        appointment.status = AppointmentStatus.CANCELLED
+        appointment.proposed_datetime = None
+        appointment.proposed_by = None
+        appointment.status_updated_at = status_updated_at
+
+        return appointment
 
     async def request_reschedule_by_client(
         self, appointment_id: int, telegram_user_id: int, new_datetime: str
@@ -508,14 +592,24 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id)
 
+        acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+        status_updated_at = get_current_tashkent_time()
+        accepted = await self.appointment_repository.try_resolve_client_reschedule(
+            appointment_id,
+            accept=True,
+            decided_by_user_id=acting_user_id,
+            status_updated_at=status_updated_at,
+            new_datetime=appointment.proposed_datetime,
+        )
+        if not accepted:
+            await self._raise_already_decided(appointment_id, "Заявка на перенос уже обработана", kind="reschedule")
+
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
-        await self.appointment_repository.update_appointment(appointment_id, appointment)
-
-        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
-        await self.appointment_repository.update_proposed_by(appointment_id, None)
         appointment.proposed_datetime = None
         appointment.proposed_by = None
+        appointment.decided_by_user_id = acting_user_id
+        appointment.status_updated_at = status_updated_at
 
         return appointment
 
@@ -528,10 +622,24 @@ class AppointmentManagement:
         if appointment.proposed_by != CreatedBy.CLIENT:
             raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
 
-        await self.appointment_repository.update_proposed_datetime(appointment_id, None)
-        await self.appointment_repository.update_proposed_by(appointment_id, None)
+        acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+        status_updated_at = get_current_tashkent_time()
+        rejected = await self.appointment_repository.try_resolve_client_reschedule(
+            appointment_id,
+            accept=False,
+            decided_by_user_id=acting_user_id,
+            status_updated_at=status_updated_at,
+        )
+        if not rejected:
+            await self._raise_already_decided(appointment_id, "Заявка на перенос уже обработана", kind="reschedule")
 
-        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
+        appointment.status = AppointmentStatus.CANCELLED
+        appointment.proposed_datetime = None
+        appointment.proposed_by = None
+        appointment.decided_by_user_id = acting_user_id
+        appointment.status_updated_at = status_updated_at
+
+        return appointment
 
     async def update_notification_message_id(self, appointment_id: int, message_id: int) -> None:
         await self.appointment_repository.update_notification_message_id(appointment_id, message_id)
@@ -541,6 +649,16 @@ class AppointmentManagement:
 
     async def update_proposal_message_id(self, appointment_id: int, message_id: int | None) -> None:
         await self.appointment_repository.update_proposal_message_id(appointment_id, message_id)
+
+    async def record_notification(self, appointment_id: int, chat_id: int, message_id: int, kind: str) -> None:
+        await self.appointment_repository.add_appointment_notification(appointment_id, chat_id, message_id, kind)
+
+    async def get_invalidation_targets(
+        self, appointment_id: int, kind: str, actor_chat_id: int
+    ) -> list[AppointmentNotification]:
+        notifications = await self.appointment_repository.get_appointment_notifications(appointment_id, kind)
+
+        return [n for n in notifications if n.chat_id != actor_chat_id]
 
     async def delete_appointment(self, appointment: Appointment) -> None:
         if not await self.appointment_repository.appointment_exists(appointment.id):
@@ -553,6 +671,21 @@ class AppointmentManagement:
         await self.appointment_repository.update_appointment_status(appointment.id, status, status_updated_at)
         appointment.status = status
         appointment.status_updated_at = status_updated_at
+
+        return appointment
+
+    async def complete_appointment_by_admin(self, appointment: Appointment, staff_telegram_id: int) -> Appointment:
+        acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+        status_updated_at = get_current_tashkent_time()
+        completed = await self.appointment_repository.try_complete_appointment(
+            appointment.id, acting_user_id, status_updated_at
+        )
+        if not completed:
+            await self._raise_already_decided(appointment.id, "Запись уже обработана", kind="completion")
+
+        appointment.status = AppointmentStatus.COMPLETED
+        appointment.status_updated_at = status_updated_at
+        appointment.decided_by_user_id = acting_user_id
 
         return appointment
 
@@ -663,6 +796,24 @@ class AppointmentManagement:
             raise AppointmentNotFoundError()
 
         return appointment
+
+    async def _resolve_acting_user_id(self, staff_telegram_id: int) -> int:
+        acting_user = await self.user_repository.get_user_by_telegram_id(staff_telegram_id)
+        if acting_user is None:
+            raise UserNotFoundError("Сотрудник не найден.")
+
+        return acting_user.ID
+
+    async def _raise_already_decided(self, appointment_id: int, action_message: str, kind: str) -> None:
+        current = await self.appointment_repository.get_appointment_by_id(appointment_id)
+        decided_by_user_id = current.decided_by_user_id if current is not None else None
+        label = await self.resolve_decision_label(decided_by_user_id)
+        outcome_text = self.resolve_decision_outcome_text(current, kind) if current is not None else "решение принято"
+        raise AppointmentAlreadyDecidedError(
+            f"{action_message}: {label}.",
+            decided_by_label=label,
+            outcome_text=outcome_text,
+        )
 
     def _ensure_not_finalized(self, appointment: Appointment, message: str) -> None:
         if appointment.status in (

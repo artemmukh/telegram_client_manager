@@ -12,6 +12,20 @@ class AppointmentAlreadyFinalizedError(ValidationError):
     pass
 
 
+class AppointmentAlreadyDecidedError(ValidationError):
+    """Заявку уже обработал другой сотрудник, пока текущий принимал решение."""
+
+    def __init__(
+        self,
+        message: str,
+        decided_by_label: str | None = None,
+        outcome_text: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.decided_by_label = decided_by_label
+        self.outcome_text = outcome_text
+
+
 class AwaitingClinicDecisionError(ValidationError):
     """Заявка на самозапись ещё не рассмотрена клиникой."""
     pass

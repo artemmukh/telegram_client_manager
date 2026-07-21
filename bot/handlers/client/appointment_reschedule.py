@@ -246,11 +246,15 @@ def create_client_reschedule_router(
                             current_user.full_name if current_user else "Неизвестный клиент",
                         )
                     else:
-                        await notification_service.notify_staff_reschedule_requested(
+                        message_id = await notification_service.notify_staff_reschedule_requested(
                             recipient.telegram_user_id,
                             appointment,
                             current_user.full_name if current_user else "Неизвестный клиент",
                         )
+                        if message_id is not None:
+                            await appointment_management_service.record_notification(
+                                appointment.id, recipient.telegram_user_id, message_id, kind="reschedule",
+                            )
                 except Exception:
                     pass  # Graceful fail если не получилось отправить
 

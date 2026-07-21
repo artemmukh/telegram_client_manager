@@ -1245,3 +1245,249 @@ async def test_init_skips_index_creation_and_does_not_crash_when_duplicate_confi
         assert "duplicate confirmed appointments" in caplog.text.lower()
     finally:
         await connection.close()
+
+
+# --- Atomic decision guards (try_*): compare-and-set race-closing behavior ---
+#
+# These prove the SQL guard actually closes the race window at the DB level:
+# calling the same atomic method twice on the same row succeeds once and
+# fails the second time, once the row no longer matches the guard condition
+# (this is what makes two staff members racing on the same broadcast unable
+# to both "win" the decision).
+
+
+@pytest.mark.asyncio
+async def test_try_confirm_or_reject_pending_second_call_fails_after_first_succeeds(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    first = await appointment_repo.try_confirm_or_reject_pending(
+        appointment_id, AppointmentStatus.CONFIRMED, user.ID, "2026-07-02 10:00:00"
+    )
+    second = await appointment_repo.try_confirm_or_reject_pending(
+        appointment_id, AppointmentStatus.CANCELLED, user.ID, "2026-07-02 10:05:00"
+    )
+
+    assert first is True
+    assert second is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.decided_by_user_id == user.ID
+
+
+@pytest.mark.asyncio
+async def test_try_propose_new_datetime_second_admin_proposal_fails_after_first_succeeds(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    first = await appointment_repo.try_propose_new_datetime(
+        appointment_id, "2026-07-05 10:00", CreatedBy.ADMIN.value, user.ID, AppointmentStatus.PENDING.value
+    )
+    second = await appointment_repo.try_propose_new_datetime(
+        appointment_id, "2026-07-06 11:00", CreatedBy.ADMIN.value, user.ID, AppointmentStatus.PENDING.value
+    )
+
+    assert first is True
+    assert second is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.proposed_datetime == "2026-07-05 10:00"
+    assert updated.proposed_by is CreatedBy.ADMIN
+
+
+@pytest.mark.asyncio
+async def test_try_complete_appointment_second_call_fails_after_first_succeeds(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+    )
+
+    first = await appointment_repo.try_complete_appointment(appointment_id, user.ID, "2026-07-02 10:00:00")
+    second = await appointment_repo.try_complete_appointment(appointment_id, user.ID, "2026-07-02 10:05:00")
+
+    assert first is True
+    assert second is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.COMPLETED
+    assert updated.decided_by_user_id == user.ID
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_client_reschedule_second_call_fails_after_first_accepted(appointment_setup):
+    """Proves the compare-and-set guard on the client-reschedule accept path:
+    once the first accept clears proposed_by/proposed_datetime, a second
+    (racing) accept on the same appointment finds nothing left to resolve."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+    )
+    await appointment_repo.update_proposed_datetime(appointment_id, "2026-07-11 10:00")
+    await appointment_repo.update_proposed_by(appointment_id, CreatedBy.CLIENT)
+
+    first = await appointment_repo.try_resolve_client_reschedule(
+        appointment_id, accept=True, decided_by_user_id=user.ID,
+        status_updated_at="2026-07-02 10:00:00", new_datetime="2026-07-11 10:00",
+    )
+    second = await appointment_repo.try_resolve_client_reschedule(
+        appointment_id, accept=True, decided_by_user_id=user.ID,
+        status_updated_at="2026-07-02 10:05:00", new_datetime="2026-07-11 10:00",
+    )
+
+    assert first is True
+    assert second is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.datetime == "2026-07-11 10:00"
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_admin_proposal_accept_confirms_new_datetime_and_second_call_fails(appointment_setup):
+    """CAS guard on the accept=True branch: the first client accept of an admin's
+    proposed reschedule confirms the new datetime and clears the proposal; a
+    racing second accept on the same (now-resolved) appointment finds nothing
+    left to resolve."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+    )
+    await appointment_repo.update_proposed_datetime(appointment_id, "2026-07-15 10:00")
+    await appointment_repo.update_proposed_by(appointment_id, CreatedBy.ADMIN)
+
+    first = await appointment_repo.try_resolve_admin_proposal(
+        appointment_id, accept=True, status_updated_at="2026-07-02 10:00:00", new_datetime="2026-07-15 10:00"
+    )
+    second = await appointment_repo.try_resolve_admin_proposal(
+        appointment_id, accept=True, status_updated_at="2026-07-02 10:05:00", new_datetime="2026-07-16 10:00"
+    )
+
+    assert first is True
+    assert second is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.datetime == "2026-07-15 10:00"
+    assert updated.status_updated_at == "2026-07-02 10:00:00"
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
+
+
+@pytest.mark.asyncio
+async def test_try_resolve_admin_proposal_reject_cancels_and_writes_status_updated_at_and_second_call_fails(
+    appointment_setup,
+):
+    """CAS guard on the accept=False branch: this branch originally didn't write
+    status_updated_at at all (fixed mid-implementation), so assert it's now
+    populated on the reject path, and that a racing second reject on the
+    already-cancelled appointment can't re-write it."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+    )
+    await appointment_repo.update_proposed_datetime(appointment_id, "2026-07-15 10:00")
+    await appointment_repo.update_proposed_by(appointment_id, CreatedBy.ADMIN)
+
+    first = await appointment_repo.try_resolve_admin_proposal(
+        appointment_id, accept=False, status_updated_at="2026-07-02 10:00:00"
+    )
+    second = await appointment_repo.try_resolve_admin_proposal(
+        appointment_id, accept=False, status_updated_at="2026-07-02 10:05:00"
+    )
+
+    assert first is True
+    assert second is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CANCELLED
+    assert updated.status_updated_at == "2026-07-02 10:00:00"
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
+
+
+@pytest.mark.asyncio
+async def test_try_propose_new_datetime_blocks_stale_pending_proposal_after_confirm_race(appointment_setup):
+    """Regression test for the reviewed race: Admin A confirms a pending
+    appointment, then Admin B races in with a stale try_propose_new_datetime
+    call that still believes the appointment is 'pending'. Before the
+    expected_status guard was added, this second call silently reopened the
+    just-confirmed appointment; it must now fail and leave Admin A's confirm
+    untouched."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    admin_a = user.ID
+    admin_b = user.ID + 1
+
+    confirmed_by_admin_a = await appointment_repo.try_confirm_or_reject_pending(
+        appointment_id, AppointmentStatus.CONFIRMED, admin_a, "2026-07-02 10:00:00"
+    )
+    stale_propose_by_admin_b = await appointment_repo.try_propose_new_datetime(
+        appointment_id, "2026-07-10 10:00", CreatedBy.ADMIN.value, admin_b, AppointmentStatus.PENDING.value
+    )
+
+    assert confirmed_by_admin_a is True
+    assert stale_propose_by_admin_b is False
+
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
+    assert updated.decided_by_user_id == admin_a
+
+
+@pytest.mark.asyncio
+async def test_try_propose_new_datetime_succeeds_with_expected_status_confirmed_for_admin_initiated_reschedule(
+    appointment_setup,
+):
+    """Companion to the race-blocking test above: proves the legitimate
+    admin-initiated reschedule on an already-confirmed appointment (no
+    outstanding proposal) still works when expected_status matches the
+    appointment's real current status."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.try_confirm_or_reject_pending(
+        appointment_id, AppointmentStatus.CONFIRMED, user.ID, "2026-07-02 10:00:00"
+    )
+
+    result = await appointment_repo.try_propose_new_datetime(
+        appointment_id, "2026-07-10 10:00", CreatedBy.ADMIN.value, user.ID, AppointmentStatus.CONFIRMED.value
+    )
+
+    assert result is True
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.proposed_datetime == "2026-07-10 10:00"
+    assert updated.proposed_by is CreatedBy.ADMIN
+
+
+# --- appointment_notifications (add_appointment_notification / get_appointment_notifications) ---
+
+
+@pytest.mark.asyncio
+async def test_add_and_get_appointment_notifications_filters_by_kind(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=100, message_id=1, kind="booking")
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=200, message_id=2, kind="booking")
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=100, message_id=3, kind="reschedule")
+
+    booking_notifications = await appointment_repo.get_appointment_notifications(appointment_id, "booking")
+    reschedule_notifications = await appointment_repo.get_appointment_notifications(appointment_id, "reschedule")
+
+    assert [n.chat_id for n in booking_notifications] == [100, 200]
+    assert [n.message_id for n in booking_notifications] == [1, 2]
+    assert len(reschedule_notifications) == 1
+    assert reschedule_notifications[0].chat_id == 100
+    assert reschedule_notifications[0].message_id == 3

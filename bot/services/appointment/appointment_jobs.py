@@ -226,9 +226,13 @@ async def complete_appointment(
 
     for recipient in recipients:
         try:
-            await notification_service.notify_admin_completion(
+            message_id = await notification_service.notify_admin_completion(
                 recipient.telegram_user_id, appointment
             )
+            if message_id is not None:
+                await appointment_management.record_notification(
+                    appointment_id, recipient.telegram_user_id, message_id, kind="completion",
+                )
             logger.info(
                 f"Sent completion notification to admin for appointment {appointment_id}"
             )

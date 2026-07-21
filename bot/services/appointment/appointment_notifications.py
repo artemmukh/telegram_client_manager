@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 from aiogram import Bot
@@ -24,6 +25,8 @@ from bot.services.utils.date_parser import (
     format_datetime_for_display,
 )
 from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
+
+logger = logging.getLogger(__name__)
 
 REMINDER_TEXT = "Напоминаем вам о записи."
 
@@ -312,14 +315,19 @@ class AppointmentNotificationService:
             reply_parameters=self._admin_reply_parameters(appointment),
         )
 
-    async def notify_admin_completion(self, admin_telegram_id: int, appointment: Appointment) -> None:
-        """Ask admin whether to make post-appointment corrections before finalizing the status."""
-        await self.bot.send_message(
+    async def notify_admin_completion(self, admin_telegram_id: int, appointment: Appointment) -> int | None:
+        """Ask admin whether to make post-appointment corrections before finalizing the status.
+
+        Returns the sent message's message_id on success.
+        """
+        sent_message = await self.bot.send_message(
             chat_id=admin_telegram_id,
             text="Приём завершён. Внести исправления?",
             reply_markup=completion_followup_kb(appointment.id),
             reply_parameters=self._admin_reply_parameters(appointment),
         )
+
+        return sent_message.message_id
 
     async def notify_staff_new_booking_request(
         self,
@@ -537,6 +545,28 @@ class AppointmentNotificationService:
         """Edit a stale reschedule-proposal message so it no longer looks actionable."""
         await self.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
+    async def invalidate_stale_decision_message(
+        self, chat_id: int, message_id: int, decided_by_label: str, outcome_text: str
+    ) -> None:
+        """Edit a stale staff notification once another recipient has already decided.
+
+        Strips the inline keyboard and replaces the text so the message no longer
+        looks actionable. Never raises — a failed edit (message deleted, bot blocked,
+        "message is not modified") is logged and swallowed so it doesn't abort a loop
+        of invalidation calls across multiple recipients.
+        """
+        try:
+            await self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=f"{decided_by_label} уже принял(а) решение: {outcome_text}.",
+                reply_markup=None,
+            )
+        except TelegramBadRequest as e:
+            logger.warning(
+                f"Failed to invalidate stale decision message {message_id} in chat {chat_id}: {e}"
+            )
+
     async def notify_staff_proposal_accepted(
         self,
         staff_telegram_id: int,
@@ -581,10 +611,11 @@ class AppointmentNotificationService:
         staff_telegram_id: int,
         appointment: Appointment,
         client_name: str,
-    ) -> None:
+    ) -> int | None:
         """Notify staff that a client wants to reschedule a confirmed appointment.
 
         Sends Accept / Reject action buttons.
+        Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
         """
         message_text = (
@@ -597,7 +628,7 @@ class AppointmentNotificationService:
         )
 
         try:
-            await self.bot.send_message(
+            sent_message = await self.bot.send_message(
                 chat_id=staff_telegram_id,
                 text=message_text,
                 reply_markup=reschedule_request_kb(appointment.id),
@@ -606,6 +637,8 @@ class AppointmentNotificationService:
             raise NotificationDeliveryError(
                 f"Не удалось отправить уведомление специалисту {staff_telegram_id}: {e}"
             ) from e
+
+        return sent_message.message_id
 
     async def notify_client_reschedule_accepted(self, appointment: Appointment) -> bool:
         """Notify client that the clinic accepted their reschedule request.

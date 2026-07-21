@@ -471,7 +471,7 @@ def create_admin_appointment_browser_router(
 
         try:
             appointment = await appt_mng.propose_new_datetime(
-                callback_data.appointment_id, callback_query.from_user.id, db_datetime,
+                callback_data.appointment_id, callback_query.from_user.id, db_datetime, kind="reschedule",
             )
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)

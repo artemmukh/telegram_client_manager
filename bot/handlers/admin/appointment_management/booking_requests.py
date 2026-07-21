@@ -5,12 +5,16 @@ from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
+from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError, AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     edit_tracked_message,
     remember_tracked_message,
+)
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    invalidate_actor_stale_message,
+    invalidate_sibling_notifications,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
@@ -47,6 +51,37 @@ def create_admin_booking_requests_router(
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
+    async def invalidate_booking_siblings(callback_query: CallbackQuery, appointment) -> None:
+        if not notification_service:
+            return
+        try:
+            actor = await appt_mng.get_user_by_telegram_id(callback_query.from_user.id)
+            decided_by_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+            outcome_text = appt_mng.resolve_decision_outcome_text(appointment, "booking")
+            await invalidate_sibling_notifications(
+                notification_service, appt_mng, appointment.id, "booking",
+                callback_query.from_user.id, decided_by_label, outcome_text,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to invalidate sibling booking notifications for appointment {appointment.id}: {e}"
+            )
+
+    async def invalidate_own_stale_booking_message(
+        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError
+    ) -> None:
+        if not notification_service:
+            return
+        try:
+            await invalidate_actor_stale_message(
+                notification_service, error,
+                callback_query.message.chat.id, callback_query.message.message_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to invalidate own stale booking message: {e}"
+            )
+
     @router.callback_query(BookingRequestActionCB.filter(F.action == "confirm"))
     async def confirm_request(callback_query: CallbackQuery, callback_data: BookingRequestActionCB):
         owned_appointment = await appt_mng.get_appointment_for_admin(
@@ -63,6 +98,10 @@ def create_admin_booking_requests_router(
         except AppointmentNotFoundError:
             await callback_query.answer("Заявка не найдена", show_alert=True)
             return
+        except AppointmentAlreadyDecidedError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            await invalidate_own_stale_booking_message(callback_query, e)
+            return
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -74,6 +113,7 @@ def create_admin_booking_requests_router(
 
         await callback_query.answer("Заявка подтверждена")
         await callback_query.message.edit_text(build_appointment_card(appointment))
+        await invalidate_booking_siblings(callback_query, appointment)
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "reject"))
     async def reject_request(callback_query: CallbackQuery, callback_data: BookingRequestActionCB):
@@ -90,6 +130,10 @@ def create_admin_booking_requests_router(
             )
         except AppointmentNotFoundError:
             await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+        except AppointmentAlreadyDecidedError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            await invalidate_own_stale_booking_message(callback_query, e)
             return
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
@@ -108,6 +152,7 @@ def create_admin_booking_requests_router(
 
         await callback_query.answer("Заявка отклонена")
         await callback_query.message.edit_text(build_appointment_card(appointment))
+        await invalidate_booking_siblings(callback_query, appointment)
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "propose"))
     async def start_propose_datetime(callback_query: CallbackQuery, callback_data: BookingRequestActionCB, state: FSMContext):
@@ -178,10 +223,15 @@ def create_admin_booking_requests_router(
 
         try:
             appointment = await appt_mng.propose_new_datetime(
-                callback_data.appointment_id, callback_query.from_user.id, db_datetime,
+                callback_data.appointment_id, callback_query.from_user.id, db_datetime, kind="booking",
             )
         except AppointmentNotFoundError:
             await callback_query.answer("Заявка не найдена", show_alert=True)
+            return
+        except AppointmentAlreadyDecidedError as e:
+            await callback_query.answer(str(e), show_alert=True)
+            await invalidate_own_stale_booking_message(callback_query, e)
+            await state.clear()
             return
         except ValidationError as e:
             await callback_query.answer(str(e), show_alert=True)
@@ -208,6 +258,7 @@ def create_admin_booking_requests_router(
             f"🔁 Клиенту предложено новое время: {_format_datetime_value(appointment.proposed_datetime)}\n"
             "Ожидаем ответа клиента."
         )
+        await invalidate_booking_siblings(callback_query, appointment)
         await state.clear()
 
     async def notify_client_confirmed(appointment) -> None:

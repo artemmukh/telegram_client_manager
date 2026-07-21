@@ -234,6 +234,11 @@ def create_client_booking_router(
                             appointment.id, admin_message_id
                         )
                         appointment.admin_notification_message_id = admin_message_id
+
+                    if admin_message_id is not None:
+                        await appointment_management_service.record_notification(
+                            appointment.id, recipient.telegram_user_id, admin_message_id, kind="booking",
+                        )
                 except Exception:
                     pass  # Graceful fail если не получилось отправить
 

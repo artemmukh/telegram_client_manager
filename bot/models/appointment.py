@@ -28,3 +28,4 @@ class Appointment:
     doctor_phone: str | None = None
     doctor_is_doctor: bool | None = None
     price: float | None = None
+    decided_by_user_id: int | None = None

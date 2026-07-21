@@ -52,6 +52,22 @@ class FakeAppointmentRepository:
     async def update_proposal_message_id(self, appointment_id, message_id):
         self.proposal_message_id_updates.append((appointment_id, message_id))
 
+    async def try_propose_new_datetime(
+        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+    ):
+        # Deliberately does not mutate self.appointment -- AppointmentManagement.
+        # propose_new_datetime() applies the equivalent field updates itself
+        # afterward, mirroring the real repository which only touches the DB
+        # row, never the caller's Python object.
+        if self.appointment.status.value != expected_status:
+            return False
+        if self.appointment.proposed_datetime is not None and self.appointment.proposed_by == CreatedBy.ADMIN:
+            return False
+
+        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
+        self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        return True
+
 
 class FakeUserRepo:
     async def get_user_by_telegram_id(self, telegram_user_id):
@@ -64,6 +80,12 @@ class FakeUserRepo:
             clinic_id=1,
             clinic_name="Зуб Мудрости",
         )
+
+    async def get_user_by_id(self, user_id):
+        # Not needed by the happy-path test in this file; only exercised by the
+        # AppointmentAlreadyDecidedError race test below, where the winning
+        # colleague resolves to the generic "Другой сотрудник" fallback label.
+        return None
 
 
 class FakeStaffRepo:
@@ -88,6 +110,34 @@ def _confirmed_appointment_with_client_proposal():
         proposed_datetime="2026-08-03 09:00",
         proposed_by=CreatedBy.CLIENT,
     )
+
+
+class RaceFakeAppointmentRepository:
+    """CAS-flip fake for the lost-race regression test: staff B's ownership
+    check and propose_new_datetime's internal re-read both still show the
+    client's outstanding reschedule proposal (proposed_by=CLIENT), but staff A
+    has already resolved that very request (e.g. rejected it) by the time B's
+    counter-proposal reaches the atomic try_propose_new_datetime call. A single
+    shared object can't represent both states, so try_propose_new_datetime
+    flips self.current to A's already-committed final row at the moment the
+    CAS is (hypothetically) attempted, mirroring the real TOCTOU race against
+    the DB. Same pattern as the flip fakes in test_appointment_decision_conflicts.py."""
+
+    def __init__(self, pre_race, post_race):
+        self.current = pre_race
+        self.post_race = post_race
+
+    async def get_appointment_by_id(self, appointment_id):
+        return self.current
+
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        return []
+
+    async def try_propose_new_datetime(
+        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+    ):
+        self.current = self.post_race
+        return False
 
 
 def _get_approve_propose_datetime_handler(router):
@@ -153,3 +203,62 @@ async def test_approve_propose_datetime_proposes_resyncs_and_notifies():
 
     notification_service.notify_client_appointment_reschedule_proposed.assert_awaited_once_with(appointment)
     assert appt_repo.proposal_message_id_updates == [(1, 654)]
+
+
+@pytest.mark.asyncio
+async def test_approve_propose_datetime_raises_already_decided_with_reschedule_wording():
+    """Regression test for the kind threading bug fixed in AppointmentManagement.
+    propose_new_datetime: it used to hardcode kind="booking" when raising
+    AppointmentAlreadyDecidedError on a lost race, even though this reschedule-
+    negotiation call site (reschedule_requests.py's approve_propose_datetime)
+    shares the same method. Simulates staff B counter-proposing over a client's
+    outstanding reschedule request while staff A has already rejected that same
+    request first: the resulting outcome text must say "перенос отклонён"
+    (the reschedule-flow wording), never the booking-flow "отклонена" that the
+    bug would have silently produced here."""
+    pre_race = _confirmed_appointment_with_client_proposal()
+    post_race = Appointment(
+        clinic_id=1,
+        client_id=7,
+        datetime="2026-08-01 10:00",
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.CANCELLED,
+        id=1,
+        proposed_datetime=None,
+        proposed_by=None,
+        decided_by_user_id=42,
+    )
+    appt_repo = RaceFakeAppointmentRepository(pre_race, post_race)
+
+    notification_service = MagicMock()
+    notification_service.invalidate_stale_decision_message = AsyncMock()
+
+    router = create_admin_reschedule_requests_router(
+        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        notification_service=notification_service,
+    )
+    approve_propose_datetime = _get_approve_propose_datetime_handler(router)
+
+    callback_query = _make_callback_query()
+    callback_query.message.chat.id = 555
+    callback_query.message.message_id = 777
+    state = _make_state()
+
+    await approve_propose_datetime(
+        callback_query,
+        RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=1),
+        state,
+    )
+
+    callback_query.answer.assert_called_once()
+    args, kwargs = callback_query.answer.call_args
+    assert "уже обработана" in args[0]
+    assert kwargs == {"show_alert": True}
+    state.clear.assert_awaited_once()
+
+    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
+        555, 777, "Другой сотрудник", "перенос отклонён"
+    )
+    outcome_text = notification_service.invalidate_stale_decision_message.call_args.args[3]
+    assert outcome_text != "отклонена"

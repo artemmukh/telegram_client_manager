@@ -39,6 +39,23 @@ class FakeAppointmentRepository:
         self.appointment.status = status
         self.status_updates.append((appointment_id, status))
 
+    async def try_complete_appointment(self, appointment_id, decided_by_user_id, status_updated_at):
+        # Deliberately does not mutate self.appointment -- AppointmentManagement.
+        # complete_appointment_by_admin() applies the equivalent field updates
+        # itself afterward, mirroring the real repository which only touches
+        # the DB row, never the caller's Python object.
+        finalized = {
+            AppointmentStatus.CANCELLED,
+            AppointmentStatus.COMPLETED,
+            AppointmentStatus.NO_SHOW,
+            AppointmentStatus.EXPIRED,
+        }
+        if self.appointment.status in finalized:
+            return False
+
+        self.status_updates.append((appointment_id, AppointmentStatus.COMPLETED))
+        return True
+
 
 class FakeUserRepo:
     def __init__(self, admins=None):

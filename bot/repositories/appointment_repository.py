@@ -4,6 +4,7 @@ import aiosqlite
 
 from bot.exceptions.appointment_exceptions import SlotUnavailableError
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ SELECT
     d.full_name AS doctor_full_name,
     d.phone AS doctor_phone,
     a.price,
-    s.is_doctor AS doctor_is_doctor
+    s.is_doctor AS doctor_is_doctor,
+    a.decided_by_user_id
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
@@ -81,6 +83,7 @@ class AppointmentRepository:
                 proposed_by TEXT DEFAULT NULL,
                 admin_notification_message_id INTEGER DEFAULT NULL,
                 price REAL DEFAULT NULL,
+                decided_by_user_id INTEGER DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -144,6 +147,12 @@ class AppointmentRepository:
                 "ALTER TABLE appointments ADD COLUMN price REAL DEFAULT NULL"
             )
 
+        # Ensure decided_by_user_id column exists for existing databases
+        if "decided_by_user_id" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN decided_by_user_id INTEGER DEFAULT NULL"
+            )
+
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_clinic_datetime
             ON appointments(clinic_id, datetime)
@@ -151,6 +160,23 @@ class AppointmentRepository:
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_client
             ON appointments(client_id)
+        """)
+
+        await self.connection.execute("""
+            CREATE TABLE IF NOT EXISTS appointment_notifications(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                appointment_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+            )
+        """)
+        await self.connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_appointment_notifications_appt_kind
+            ON appointment_notifications(appointment_id, kind)
         """)
 
         cursor = await self.connection.execute("""
@@ -220,7 +246,8 @@ class AppointmentRepository:
                 a.notification_message_id, a.proposed_datetime, a.proposal_message_id,
                 a.proposed_by, a.admin_notification_message_id,
                 d.full_name AS doctor_full_name, d.phone AS doctor_phone,
-                a.price, s.is_doctor AS doctor_is_doctor
+                a.price, s.is_doctor AS doctor_is_doctor,
+                a.decided_by_user_id
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -350,6 +377,195 @@ class AppointmentRepository:
             (proposed_by.value if proposed_by else None, appointment_id),
         )
         await self.connection.commit()
+
+    async def try_confirm_or_reject_pending(
+        self,
+        appointment_id: int,
+        new_status: AppointmentStatus,
+        decided_by_user_id: int,
+        status_updated_at: str,
+    ) -> bool:
+        # The status/proposed_datetime guard makes this a compare-and-set: it only
+        # applies while the request is still a fresh pending one, so two staff
+        # members racing to confirm/reject the same broadcast can't both succeed.
+        sql = """
+            UPDATE appointments
+            SET status = ?, decided_by_user_id = ?, status_updated_at = ?
+            WHERE id = ? AND status = 'pending' AND proposed_datetime IS NULL
+        """
+        params = (new_status.value, decided_by_user_id, status_updated_at, appointment_id)
+        try:
+            cursor = await self.connection.execute(sql, params)
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
+
+        return cursor.rowcount > 0
+
+    async def try_propose_new_datetime(
+        self,
+        appointment_id: int,
+        proposed_datetime: str,
+        proposed_by: str,
+        decided_by_user_id: int | None,
+        expected_status: str,
+    ) -> bool:
+        # Covers both a fresh admin proposal on a still-pending booking request and an
+        # admin counter-proposing on an already-confirmed reschedule negotiation, so a
+        # static status blacklist can't tell a legitimate confirmed-appointment
+        # reschedule apart from a stale pending-broadcast race; expected_status pins
+        # the update to the exact prior status the caller observed (true CAS), and the
+        # proposed_datetime/proposed_by check still blocks two admins racing to propose.
+        sql = """
+            UPDATE appointments
+            SET proposed_datetime = ?, proposed_by = ?, decided_by_user_id = ?
+            WHERE id = ?
+                AND status = ?
+                AND NOT (proposed_datetime IS NOT NULL AND proposed_by = 'admin')
+        """
+        params = (proposed_datetime, proposed_by, decided_by_user_id, appointment_id, expected_status)
+        cursor = await self.connection.execute(sql, params)
+        await self.connection.commit()
+
+        return cursor.rowcount > 0
+
+    async def try_resolve_client_reschedule(
+        self,
+        appointment_id: int,
+        accept: bool,
+        decided_by_user_id: int,
+        status_updated_at: str,
+        new_datetime: str | None = None,
+    ) -> bool:
+        # Replaces three separate commits (status, proposed_datetime, proposed_by)
+        # with one atomic compare-and-set update.
+        if accept:
+            sql = """
+                UPDATE appointments
+                SET datetime = ?, status = 'confirmed',
+                    proposed_datetime = NULL, proposed_by = NULL,
+                    decided_by_user_id = ?, status_updated_at = ?
+                WHERE id = ?
+                    AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
+                    AND proposed_by = 'client' AND proposed_datetime IS NOT NULL
+            """
+            params = (new_datetime, decided_by_user_id, status_updated_at, appointment_id)
+        else:
+            sql = """
+                UPDATE appointments
+                SET status = 'cancelled',
+                    proposed_datetime = NULL, proposed_by = NULL,
+                    decided_by_user_id = ?, status_updated_at = ?
+                WHERE id = ?
+                    AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
+                    AND proposed_by = 'client' AND proposed_datetime IS NOT NULL
+            """
+            params = (decided_by_user_id, status_updated_at, appointment_id)
+
+        try:
+            cursor = await self.connection.execute(sql, params)
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
+
+        return cursor.rowcount > 0
+
+    async def try_complete_appointment(
+        self, appointment_id: int, decided_by_user_id: int, status_updated_at: str
+    ) -> bool:
+        # This completion path previously had no guard at all; the status filter
+        # closes that gap by ensuring a finalized appointment can't be re-completed.
+        sql = """
+            UPDATE appointments
+            SET status = 'completed', decided_by_user_id = ?, status_updated_at = ?
+            WHERE id = ? AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
+        """
+        params = (decided_by_user_id, status_updated_at, appointment_id)
+        cursor = await self.connection.execute(sql, params)
+        await self.connection.commit()
+
+        return cursor.rowcount > 0
+
+    async def try_resolve_admin_proposal(
+        self,
+        appointment_id: int,
+        accept: bool,
+        status_updated_at: str,
+        new_datetime: str | None = None,
+    ) -> bool:
+        # Single-recipient client flow (client accepting/rejecting the admin's
+        # proposed datetime), so no decided_by_user_id write here.
+        if accept:
+            sql = """
+                UPDATE appointments
+                SET datetime = ?, status = 'confirmed', status_updated_at = ?,
+                    proposed_datetime = NULL, proposed_by = NULL
+                WHERE id = ?
+                    AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
+                    AND proposed_by = 'admin' AND proposed_datetime IS NOT NULL
+            """
+            params = (new_datetime, status_updated_at, appointment_id)
+        else:
+            sql = """
+                UPDATE appointments
+                SET status = 'cancelled', status_updated_at = ?,
+                    proposed_datetime = NULL, proposed_by = NULL
+                WHERE id = ?
+                    AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
+                    AND proposed_by = 'admin' AND proposed_datetime IS NOT NULL
+            """
+            params = (status_updated_at, appointment_id)
+
+        try:
+            cursor = await self.connection.execute(sql, params)
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
+
+        return cursor.rowcount > 0
+
+    async def add_appointment_notification(
+        self, appointment_id: int, chat_id: int, message_id: int, kind: str
+    ) -> None:
+        await self.connection.execute(
+            """
+            INSERT INTO appointment_notifications(appointment_id, chat_id, message_id, kind)
+            VALUES (?, ?, ?, ?)
+            """,
+            (appointment_id, chat_id, message_id, kind),
+        )
+        await self.connection.commit()
+
+    async def get_appointment_notifications(
+        self, appointment_id: int, kind: str
+    ) -> list[AppointmentNotification]:
+        cursor = await self.connection.execute(
+            """
+            SELECT id, appointment_id, chat_id, message_id, kind, created_at
+            FROM appointment_notifications
+            WHERE appointment_id = ? AND kind = ?
+            ORDER BY id ASC
+            """,
+            (appointment_id, kind),
+        )
+        rows = await cursor.fetchall()
+        return [
+            AppointmentNotification(
+                id=row[0],
+                appointment_id=row[1],
+                chat_id=row[2],
+                message_id=row[3],
+                kind=row[4],
+                created_at=row[5],
+            )
+            for row in rows
+        ]
 
     async def delete_appointment(self, appointment_id: int) -> None:
         await self.connection.execute(
@@ -713,4 +929,5 @@ class AppointmentRepository:
             doctor_phone=row[20],
             price=row[21],
             doctor_is_doctor=bool(row[22]) if row[22] is not None else None,
+            decided_by_user_id=row[23],
         )

@@ -1276,6 +1276,40 @@ async def test_close_reschedule_proposal_message_edits_message():
 
 
 @pytest.mark.asyncio
+async def test_invalidate_stale_decision_message_edits_message():
+    bot = FakeEditBot()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+    await service.invalidate_stale_decision_message(12345, 777, "Доктор Петров", "подтверждена")
+
+    assert len(bot.edited_messages) == 1
+    edited = bot.edited_messages[0]
+    assert edited['chat_id'] == 12345
+    assert edited['message_id'] == 777
+    assert edited['text'] == "Доктор Петров уже принял(а) решение: подтверждена."
+    assert edited['reply_markup'] is None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_stale_decision_message_swallows_telegram_bad_request():
+    """The recipient's message may already be deleted/inaccessible by the time
+    a sibling notification gets invalidated -- this must never blow up the
+    invalidation loop across the rest of the recipients."""
+    bot = FakeEditBot(edit_exception=TelegramBadRequest(method=None, message="message to edit not found"))
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+
+    await service.invalidate_stale_decision_message(12345, 777, "Доктор Петров", "подтверждена")
+
+    assert len(bot.edited_messages) == 0
+
+
+@pytest.mark.asyncio
 async def test_notify_client_appointment_details_edits_existing_message():
     bot = FakeEditBot()
     user_repo = FakeUserRepo(_client())

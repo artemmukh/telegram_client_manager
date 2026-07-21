@@ -346,7 +346,7 @@ async def test_appointment_lifecycle_admin_created_confirm_reschedule_cancel(e2e
     # Admin proposes a different time; client accepts it.
     proposed_time = _future_datetime(days=5)
     proposed = await e2e.appointment_management.propose_new_datetime(
-        appointment.id, ADMIN_TELEGRAM_ID, proposed_time
+        appointment.id, ADMIN_TELEGRAM_ID, proposed_time, kind="reschedule"
     )
     assert proposed.proposed_datetime == proposed_time
 

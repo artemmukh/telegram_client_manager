@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from bot.exceptions.appointment_exceptions import (
+    AppointmentAlreadyDecidedError,
     AppointmentAlreadyFinalizedError,
     AppointmentNotFoundError,
     AwaitingClinicDecisionError,
@@ -21,6 +22,7 @@ from bot.config.booking_config import (
 )
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -29,6 +31,14 @@ from bot.services.client.client_management import ClientManagement
 from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
+
+
+FINALIZED_STATUSES = {
+    AppointmentStatus.CANCELLED,
+    AppointmentStatus.COMPLETED,
+    AppointmentStatus.NO_SHOW,
+    AppointmentStatus.EXPIRED,
+}
 
 
 class FakeAppointmentRepository:
@@ -40,6 +50,7 @@ class FakeAppointmentRepository:
         self.proposed_datetime_updates = []
         self.proposed_by_updates = []
         self.price_updates = []
+        self.notifications: list[AppointmentNotification] = []
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -80,6 +91,104 @@ class FakeAppointmentRepository:
 
     async def get_appointments_by_telegram_id(self, telegram_user_id):
         return list(self.appointments)
+
+    def _find(self, appointment_id):
+        return next((a for a in self.appointments if a.id == appointment_id), None)
+
+    async def try_confirm_or_reject_pending(self, appointment_id, new_status, decided_by_user_id, status_updated_at):
+        # NOTE: deliberately does not mutate the shared Appointment object -- the
+        # real repository only touches DB rows, never the caller's Python object.
+        # AppointmentManagement always applies the equivalent in-memory field
+        # updates itself afterward (using values captured before this call), so
+        # mutating here too would risk clobbering a field the service re-reads
+        # post-call (see accept_proposed_datetime/accept_client_reschedule below).
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status != AppointmentStatus.PENDING or appointment.proposed_datetime is not None:
+            return False
+
+        self.status_updates.append((appointment_id, new_status))
+        return True
+
+    async def try_propose_new_datetime(
+        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+    ):
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status.value != expected_status:
+            return False
+        if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+            return False
+
+        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
+        self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        return True
+
+    async def try_resolve_client_reschedule(
+        self, appointment_id, accept, decided_by_user_id, status_updated_at, new_datetime=None
+    ):
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status in FINALIZED_STATUSES:
+            return False
+        if appointment.proposed_by != CreatedBy.CLIENT or appointment.proposed_datetime is None:
+            return False
+
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
+
+        if accept:
+            self.updated.append((appointment_id, appointment))
+        else:
+            self.status_updates.append((appointment_id, AppointmentStatus.CANCELLED))
+
+        return True
+
+    async def try_complete_appointment(self, appointment_id, decided_by_user_id, status_updated_at):
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status in FINALIZED_STATUSES:
+            return False
+
+        self.status_updates.append((appointment_id, AppointmentStatus.COMPLETED))
+        return True
+
+    async def try_resolve_admin_proposal(self, appointment_id, accept, status_updated_at, new_datetime=None):
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status in FINALIZED_STATUSES:
+            return False
+        if appointment.proposed_by != CreatedBy.ADMIN or appointment.proposed_datetime is None:
+            return False
+
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
+
+        if accept:
+            self.updated.append((appointment_id, appointment))
+        else:
+            self.status_updates.append((appointment_id, AppointmentStatus.CANCELLED))
+
+        return True
+
+    async def add_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        self.notifications.append(
+            AppointmentNotification(
+                id=len(self.notifications) + 1,
+                appointment_id=appointment_id,
+                chat_id=chat_id,
+                message_id=message_id,
+                kind=kind,
+            )
+        )
+
+    async def get_appointment_notifications(self, appointment_id, kind):
+        return [n for n in self.notifications if n.appointment_id == appointment_id and n.kind == kind]
 
 
 class FakeUserRepo:
@@ -1831,7 +1940,9 @@ async def test_propose_new_datetime_sets_proposed_without_touching_status_or_dat
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
     proposed_datetime = _future_datetime(days=3, time_str="10:00")
 
-    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
+    appointment = await service.propose_new_datetime(
+        1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="booking"
+    )
 
     assert appointment.proposed_datetime == proposed_datetime
     assert appointment.proposed_by is CreatedBy.ADMIN
@@ -1853,7 +1964,9 @@ async def test_propose_new_datetime_raises_when_own_proposal_already_outstanding
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(NegotiationInProgressError):
-        await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00")
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00", kind="booking"
+        )
 
     assert appt_repo.proposed_datetime_updates == []
     assert appt_repo.proposed_by_updates == []
@@ -1875,7 +1988,9 @@ async def test_propose_new_datetime_overwrites_when_proposed_by_client():
     admin, staff = _admin_with_scope("clinic")
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
-    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=new_proposed_datetime)
+    appointment = await service.propose_new_datetime(
+        1, staff_telegram_id=999, proposed_datetime=new_proposed_datetime, kind="reschedule"
+    )
 
     assert appointment.proposed_datetime == new_proposed_datetime
     assert appointment.proposed_by is CreatedBy.ADMIN
@@ -1897,7 +2012,9 @@ async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_ou
     admin, staff = _admin_with_scope("clinic")
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
-    appointment = await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
+    appointment = await service.propose_new_datetime(
+        1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="reschedule"
+    )
 
     assert appointment.proposed_datetime == proposed_datetime
     assert appointment.proposed_by is CreatedBy.ADMIN
@@ -1915,7 +2032,9 @@ async def test_propose_new_datetime_raises_when_finalized():
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(AppointmentAlreadyFinalizedError):
-        await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00")
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00", kind="booking"
+        )
 
 
 @pytest.mark.asyncio
@@ -2415,6 +2534,97 @@ async def test_reject_client_reschedule_raises_when_proposed_by_admin():
         await service.reject_client_reschedule(1, staff_telegram_id=999)
 
 
+# --- AppointmentAlreadyDecidedError (atomic race-closing on broadcast decisions) ---
+#
+# Simulates two staff members racing on the same broadcast: by the time this
+# staff's decision reaches the repository, another admin already won the race
+# (status/proposal fields already flipped, decided_by_user_id already
+# recorded). The atomic try_* guard returns False and the service must raise
+# AppointmentAlreadyDecidedError, attributing the decision to whoever
+# actually won via resolve_decision_label.
+
+
+def _winning_admin():
+    return User(
+        full_name="Иванова Анна",
+        phone="+998907654322",
+        role=Role.ADMIN,
+        telegram_user_id=2000,
+        ID=55,
+        clinic_id=1,
+        clinic_name="Зуб Мудрости",
+    )
+
+
+@pytest.mark.asyncio
+async def test_confirm_pending_request_raises_already_decided_when_race_lost():
+    winner = _winning_admin()
+    already_decided = _pending_client_request()
+    already_decided.status = AppointmentStatus.CONFIRMED
+    already_decided.decided_by_user_id = winner.ID
+    appt_repo = FakeAppointmentRepository([already_decided])
+    admin, staff = _admin_with_scope("clinic")
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={winner.ID: winner})
+    staff_repo = FakeStaffRepo({
+        999: staff,
+        winner.telegram_user_id: Staff(telegram_user_id=winner.telegram_user_id, clinic_id=1, visibility_scope="clinic"),
+    })
+    service = AppointmentManagement(appt_repo, user_repo, staff_repo, _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyDecidedError, match="Иванова Анна"):
+        await service.confirm_pending_request(1, staff_telegram_id=999)
+
+
+@pytest.mark.asyncio
+async def test_reject_pending_request_raises_already_decided_when_race_lost():
+    """Status is CONFIRMED (not CANCELLED): reject_pending_request calls
+    _ensure_not_finalized() before ever reaching the atomic repository call,
+    so a CANCELLED row would raise AppointmentAlreadyFinalizedError instead --
+    CONFIRMED is the realistic "someone else already decided it" state that
+    actually reaches and fails the try_confirm_or_reject_pending guard."""
+    winner = _winning_admin()
+    already_decided = _pending_client_request()
+    already_decided.status = AppointmentStatus.CONFIRMED
+    already_decided.decided_by_user_id = winner.ID
+    appt_repo = FakeAppointmentRepository([already_decided])
+    admin, staff = _admin_with_scope("clinic")
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={winner.ID: winner})
+    staff_repo = FakeStaffRepo({
+        999: staff,
+        winner.telegram_user_id: Staff(telegram_user_id=winner.telegram_user_id, clinic_id=1, visibility_scope="own"),
+    })
+    service = AppointmentManagement(appt_repo, user_repo, staff_repo, _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyDecidedError, match="Доктор Иванова Анна"):
+        await service.reject_pending_request(1, staff_telegram_id=999)
+
+
+@pytest.mark.asyncio
+async def test_complete_appointment_by_admin_raises_already_decided_when_race_lost():
+    winner = _winning_admin()
+    already_decided = _appointment_with_doctor(clinic_id=1, doctor_id=42)
+    already_decided.status = AppointmentStatus.COMPLETED
+    already_decided.decided_by_user_id = winner.ID
+    appt_repo = FakeAppointmentRepository([already_decided])
+    admin, staff = _admin_with_scope("own")
+    user_repo = FakeUserRepo(admin=admin, users_by_id={winner.ID: winner})
+    staff_repo = FakeStaffRepo(staff)
+    service = AppointmentManagement(appt_repo, user_repo, staff_repo, _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyDecidedError, match="Иванова Анна"):
+        await service.complete_appointment_by_admin(already_decided, staff_telegram_id=999)
+
+
+@pytest.mark.asyncio
+async def test_resolve_decision_label_falls_back_when_user_id_is_none():
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(FakeAppointmentRepository(), FakeUserRepo(admin=admin), FakeStaffRepo(staff), _clinic_repo())
+
+    label = await service.resolve_decision_label(None)
+
+    assert label == "Другой сотрудник"
+
+
 # --- Slot conflict detection ---
 
 
@@ -2558,7 +2768,9 @@ async def test_propose_new_datetime_raises_when_proposed_slot_already_confirmed(
     service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
 
     with pytest.raises(SlotUnavailableError):
-        await service.propose_new_datetime(1, staff_telegram_id=999, proposed_datetime=proposed_datetime)
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="booking"
+        )
 
     assert appt_repo.proposed_datetime_updates == []
     assert appt_repo.proposed_by_updates == []
