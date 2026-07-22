@@ -78,6 +78,12 @@ class ClientNotificationService:
         """Best-effort broadcast asking clients missing birth date/gender to fill
         them in. Never raises: a failed delivery to one client must not block
         delivery to the others."""
+        # text = (
+        #     "⚠️ Уважаемые пользователи!\n\n"
+        #     "В данный момент в боте могут наблюдаться временные неполадки. "
+        #     "Приношу извинения за неудобства. Работа над исправлением уже ведётся."
+        # )
+
         message_text = (
             "👋 Пожалуйста, заполните дату рождения и пол — это поможет нам вести ваш профиль точнее.\n\n"
             "Нажмите кнопку ниже, чтобы указать данные.\n\n"
@@ -92,6 +98,7 @@ class ClientNotificationService:
                 continue
 
             try:
+                await self.bot.send_message(chat_id=client.telegram_user_id, text=text)
                 await self.bot.send_message(
                     chat_id=client.telegram_user_id,
                     text=message_text,
