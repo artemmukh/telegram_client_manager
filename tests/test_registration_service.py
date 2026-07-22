@@ -1,12 +1,17 @@
+from datetime import datetime, timedelta
+
 import pytest
 
 from bot.exceptions.user_exceptions import (
     ContactOwnershipMismatchError,
+    InvalidBirthDateError,
     PhoneAlreadyExistsError,
     UserAlreadyExistsError,
     UserNotFoundError,
+    ValidationError,
 )
 from bot.models.user import User
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.services.utils.registration import PhoneLookupResult, RegistrationService
 from bot.utils.role import Role
 
@@ -26,6 +31,67 @@ async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo
     assert user.phone == "+998901234567"
     assert user.telegram_user_id == 1001
     assert fake_user_repo.created_users == [user]
+
+
+@pytest.mark.asyncio
+async def test_registration_creates_new_user_with_birth_date_and_gender(fake_user_repo, fake_clinic_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+
+    user = await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="90 123-45-67",
+        role=Role.CLIENT,
+        clinic_id=1,
+        birth_date="05.03.1990",
+        gender="male",
+    )
+
+    assert user.birth_date == "1990-03-05"
+    assert user.gender == "male"
+    assert fake_user_repo.created_users == [user]
+    assert fake_user_repo.created_users[0].birth_date == "1990-03-05"
+    assert fake_user_repo.created_users[0].gender == "male"
+
+
+@pytest.mark.asyncio
+async def test_registration_creates_new_user_without_birth_date_and_gender_defaults_to_none(
+        fake_user_repo, fake_clinic_repo):
+    # Existing (pre-birth_date/gender feature) call sites keep working exactly
+    # as before: both fields default to None and are persisted as None, not
+    # silently coerced into anything else.
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+
+    user = await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="90 123-45-67",
+        role=Role.CLIENT,
+        clinic_id=1,
+    )
+
+    assert user.birth_date is None
+    assert user.gender is None
+    assert fake_user_repo.created_users[0].birth_date is None
+    assert fake_user_repo.created_users[0].gender is None
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_invalid_gender_value(fake_user_repo, fake_clinic_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await service.register(
+            telegram_user_id=1001,
+            full_name="Иванов Иван",
+            phone="90 123-45-67",
+            role=Role.CLIENT,
+            clinic_id=1,
+            gender="other",
+        )
+
+    assert type(exc_info.value) is ValidationError
+    assert fake_user_repo.created_users == []
 
 
 @pytest.mark.asyncio
@@ -178,6 +244,200 @@ async def test_register_with_existing_user_id_skips_write_when_name_unchanged(
     assert user.full_name == "Иванов Иван"
     assert repo.updated_clients == []
     assert repo.linked == [(7, 1001)]
+
+
+@pytest.mark.asyncio
+async def test_register_with_existing_user_id_persists_birth_date_and_gender(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_id={7: existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    user = await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        clinic_id=1,
+        existing_user_id=7,
+        birth_date="05.03.1990",
+        gender="male",
+    )
+
+    assert user.birth_date == "1990-03-05"
+    assert user.gender == "male"
+    assert repo.linked == [(7, 1001)]
+    # update_user_telegram_id must have actually written both fields, not just
+    # the returned User object mirroring them.
+    assert repo.clients_by_id[7].birth_date == "1990-03-05"
+    assert repo.clients_by_id[7].gender == "male"
+
+
+@pytest.mark.asyncio
+async def test_register_with_existing_user_id_without_birth_date_and_gender_persists_none(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_id={7: existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    user = await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        clinic_id=1,
+        existing_user_id=7,
+    )
+
+    assert user.birth_date is None
+    assert user.gender is None
+    assert repo.clients_by_id[7].birth_date is None
+    assert repo.clients_by_id[7].gender is None
+
+
+@pytest.mark.asyncio
+async def test_register_with_existing_user_id_rejects_invalid_birth_date_without_claiming_telegram_id(
+        fake_user_repo_factory, fake_clinic_repo):
+    # birth_date/gender validation runs before either branch of register()
+    # touches the repository, so an invalid birth_date must keep a reclaimed
+    # registration atomic: no telegram_user_id claim happens at all.
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_id={7: existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.register(
+            telegram_user_id=1001,
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            clinic_id=1,
+            existing_user_id=7,
+            birth_date="not-a-date",
+        )
+
+    assert repo.linked == []
+    assert existing.telegram_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_register_with_existing_user_id_rejects_future_birth_date_without_claiming_telegram_id(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_id={7: existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
+    future_date = (now + timedelta(days=1)).strftime("%d.%m.%Y")
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.register(
+            telegram_user_id=1001,
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            clinic_id=1,
+            existing_user_id=7,
+            birth_date=future_date,
+        )
+
+    assert repo.linked == []
+    assert existing.telegram_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_register_with_existing_user_id_rejects_age_over_120_years_without_claiming_telegram_id(
+        fake_user_repo_factory, fake_clinic_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_id={7: existing})
+    service = RegistrationService(repo, fake_clinic_repo)
+
+    now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
+    too_old_date = now.replace(year=now.year - 121).strftime("%d.%m.%Y")
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.register(
+            telegram_user_id=1001,
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            clinic_id=1,
+            existing_user_id=7,
+            birth_date=too_old_date,
+        )
+
+    assert repo.linked == []
+    assert existing.telegram_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_future_birth_date_for_new_user(fake_user_repo, fake_clinic_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+
+    now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
+    future_date = (now + timedelta(days=1)).strftime("%d.%m.%Y")
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.register(
+            telegram_user_id=1001,
+            full_name="Иванов Иван",
+            phone="90 123-45-67",
+            role=Role.CLIENT,
+            clinic_id=1,
+            birth_date=future_date,
+        )
+
+    assert fake_user_repo.created_users == []
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_age_over_120_years_for_new_user(fake_user_repo, fake_clinic_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+
+    now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
+    too_old_date = now.replace(year=now.year - 121).strftime("%d.%m.%Y")
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.register(
+            telegram_user_id=1001,
+            full_name="Иванов Иван",
+            phone="90 123-45-67",
+            role=Role.CLIENT,
+            clinic_id=1,
+            birth_date=too_old_date,
+        )
+
+    assert fake_user_repo.created_users == []
 
 
 @pytest.mark.asyncio

@@ -1,12 +1,14 @@
 import pytest
 
 from bot.exceptions.user_exceptions import (
+    InvalidBirthDateError,
     InvalidFullNameError,
     InvalidPhoneError,
     ValidationError,
 )
 from bot.validators.validators import (
     FULL_NAME_PATTERN,
+    validate_birth_date,
     validate_fields_filled,
     validate_full_name,
     validate_phone,
@@ -84,3 +86,35 @@ def test_validate_fields_filled_accepts_required_registration_data():
 def test_validate_fields_filled_rejects_missing_required_fields(data):
     with pytest.raises(ValidationError):
         validate_fields_filled(data)
+
+
+def test_validate_birth_date_accepts_valid_date_and_normalizes_to_iso():
+    assert validate_birth_date("05.03.1990") == "1990-03-05"
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        "",
+        "1990-03-05",
+        "5.3.1990",
+        "05/03/1990",
+        "05.03.90",
+        "not a date",
+    ],
+)
+def test_validate_birth_date_rejects_malformed_format(raw_value):
+    with pytest.raises(InvalidBirthDateError):
+        validate_birth_date(raw_value)
+
+
+def test_validate_birth_date_rejects_impossible_calendar_date():
+    with pytest.raises(InvalidBirthDateError):
+        validate_birth_date("31.02.1990")
+
+
+def test_validate_birth_date_raises_exact_exception_type():
+    with pytest.raises(InvalidBirthDateError) as exc_info:
+        validate_birth_date("not a date")
+
+    assert type(exc_info.value) is InvalidBirthDateError

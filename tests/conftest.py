@@ -62,8 +62,15 @@ class FakeUserRepository:
     async def get_user_by_id(self, user_id):
         return self.users_by_id.get(user_id)
 
-    async def update_user_telegram_id(self, user_id, telegram_user_id):
+    async def update_user_telegram_id(
+        self, user_id, telegram_user_id, gender: str | None = None, birth_date: str | None = None,
+    ):
         self.linked.append((user_id, telegram_user_id))
+        user = self.users_by_id.get(user_id)
+        if user is not None:
+            user.telegram_user_id = telegram_user_id
+            user.gender = gender
+            user.birth_date = birth_date
 
     async def update_client(self, user_id, user):
         self.updated_clients.append((user_id, user))

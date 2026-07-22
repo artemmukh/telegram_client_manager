@@ -161,16 +161,20 @@ class UserRepository:
                 INSERT INTO users(
                     telegram_user_id,
                     full_name,
+                    gender,
+                    birth_date,
                     phone,
                     clinic_id,
                     role,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.telegram_user_id,
                     user.full_name,
+                    user.gender,
+                    user.birth_date,
                     user.phone,
                     user.clinic_id,
                     user.role.value,
@@ -336,15 +340,20 @@ class UserRepository:
 
         return await self.get_user_by_id(user_id)
 
-    async def update_user_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
+    async def update_user_telegram_id(
+        self, user_id: int, telegram_user_id: int,
+        gender: str | None = None, birth_date: str | None = None,
+    ) -> None:
         try:
             await self.connection.execute(
                 """
                 UPDATE users
-                SET telegram_user_id = ?
+                SET telegram_user_id = ?,
+                    gender = ?,
+                    birth_date = ?
                 WHERE id = ?
                 """,
-                (telegram_user_id, user_id),
+                (telegram_user_id, gender, birth_date, user_id),
             )
             await self.connection.commit()
         except aiosqlite.IntegrityError as error:
