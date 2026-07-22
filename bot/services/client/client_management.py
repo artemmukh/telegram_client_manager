@@ -12,6 +12,7 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.role import Role
@@ -27,12 +28,14 @@ class ClientManagement:
         clinic_repository: ClinicRepository,
         appointment_repository: AppointmentRepository | None = None,
         client_clinic_repository: ClientClinicRepository | None = None,
+        user_settings_repository: UserSettingsRepository | None = None,
     ):
         self.user_repository = user_repository
         self.staff_repository = staff_repository
         self.clinic_repository = clinic_repository
         self.appointment_repository = appointment_repository
         self.client_clinic_repository = client_clinic_repository
+        self.user_settings_repository = user_settings_repository
 
     async def create_client(self, admin_telegram_id: int, data: dict) -> User:
 
@@ -218,7 +221,7 @@ class ClientManagement:
         if user is None:
             raise UserNotFoundError("Пользователь не найден.")
 
-        await self.user_repository.update_reminder_preferences(user_id, reminder_24h, reminder_2h)
+        await self.user_settings_repository.upsert(user_id, reminder_24h, reminder_2h)
         user.reminder_24h = reminder_24h
         user.reminder_2h = reminder_2h
         return user

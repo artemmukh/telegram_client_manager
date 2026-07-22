@@ -31,12 +31,13 @@ class FakeClinicRepo:
         return self.clinic
 
 
-def _service(user_repo, clinic_id=1, client_clinic_repo=None):
+def _service(user_repo, clinic_id=1, client_clinic_repo=None, user_settings_repo=None):
     return ClientManagement(
         user_repo,
         FakeStaffRepo(Staff(telegram_user_id=100, clinic_id=clinic_id)),
         FakeClinicRepo(Clinic(clinic_id=clinic_id, name="Зуб Мудрости", token="t")),
         client_clinic_repository=client_clinic_repo,
+        user_settings_repository=user_settings_repo,
     )
 
 
@@ -114,16 +115,17 @@ def _existing_client(user_id=1):
     ],
 )
 async def test_update_reminder_preferences_maps_preset_to_booleans(
-    fake_user_repo_factory, preset, expected_24h, expected_2h
+    fake_user_repo_factory, fake_user_settings_repo_factory, preset, expected_24h, expected_2h
 ):
     repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
-    service = _service(repo)
+    settings_repo = fake_user_settings_repo_factory()
+    service = _service(repo, user_settings_repo=settings_repo)
 
     user = await service.update_reminder_preferences(1, preset)
 
     assert user.reminder_24h is expected_24h
     assert user.reminder_2h is expected_2h
-    assert repo.reminder_updates == [(1, expected_24h, expected_2h)]
+    assert settings_repo.updates == [(1, expected_24h, expected_2h)]
 
 
 @pytest.mark.asyncio
@@ -166,7 +168,7 @@ def _existing_admin(user_id=2):
     ],
 )
 async def test_update_reminder_preferences_works_for_admin_user_id(
-    fake_user_repo_factory, preset, expected_24h, expected_2h
+    fake_user_repo_factory, fake_user_settings_repo_factory, preset, expected_24h, expected_2h
 ):
     """update_reminder_preferences() now resolves via get_user_by_id(), which is
     role-agnostic, so it must also work for an admin's user_id (not just clients).
@@ -174,14 +176,15 @@ async def test_update_reminder_preferences_works_for_admin_user_id(
     does not go through get_client_by_id."""
     admin = _existing_admin()
     repo = fake_user_repo_factory(users_by_id={2: admin})
-    service = _service(repo)
+    settings_repo = fake_user_settings_repo_factory()
+    service = _service(repo, user_settings_repo=settings_repo)
 
     user = await service.update_reminder_preferences(2, preset)
 
     assert user.role is Role.ADMIN
     assert user.reminder_24h is expected_24h
     assert user.reminder_2h is expected_2h
-    assert repo.reminder_updates == [(2, expected_24h, expected_2h)]
+    assert settings_repo.updates == [(2, expected_24h, expected_2h)]
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ import pytest
 
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError
 from bot.models.user import User
+from bot.models.user_settings import UserSettings
 
 
 class FakeUserRepository:
@@ -31,7 +32,6 @@ class FakeUserRepository:
         self.staff_by_clinic_id = dict(staff_by_clinic_id or {})
         self.created_users: list[User] = []
         self.linked = []
-        self.reminder_updates = []
         self.updated_clients = []
         self.deleted_clients: list[int] = []
 
@@ -64,9 +64,6 @@ class FakeUserRepository:
 
     async def update_user_telegram_id(self, user_id, telegram_user_id):
         self.linked.append((user_id, telegram_user_id))
-
-    async def update_reminder_preferences(self, user_id, reminder_24h, reminder_2h):
-        self.reminder_updates.append((user_id, reminder_24h, reminder_2h))
 
     async def update_client(self, user_id, user):
         self.updated_clients.append((user_id, user))
@@ -107,6 +104,42 @@ def fake_user_repo() -> FakeUserRepository:
 @pytest.fixture
 def fake_user_repo_factory():
     return FakeUserRepository
+
+
+class FakeUserSettingsRepository:
+    """Drop-in for UserSettingsRepository, matching its method names/signatures
+    (init, upsert, get_by_user_id). Tracks every upsert() call in `updates`
+    (mirroring the old FakeUserRepository.reminder_updates convention) so
+    tests can assert exactly which (user_id, reminder_24h, reminder_2h) calls
+    a service made, in addition to reading the resulting state back."""
+
+    def __init__(self, settings_by_user_id=None):
+        self.settings_by_user_id = dict(settings_by_user_id or {})
+        self.updates: list[tuple[int, bool, bool]] = []
+
+    async def init(self) -> None:
+        pass
+
+    async def upsert(self, user_id, reminder_24h, reminder_2h) -> None:
+        self.updates.append((user_id, reminder_24h, reminder_2h))
+        self.settings_by_user_id[user_id] = (reminder_24h, reminder_2h)
+
+    async def get_by_user_id(self, user_id):
+        settings = self.settings_by_user_id.get(user_id)
+        if settings is None:
+            return None
+        reminder_24h, reminder_2h = settings
+        return UserSettings(user_id=user_id, reminder_24h=reminder_24h, reminder_2h=reminder_2h)
+
+
+@pytest.fixture
+def fake_user_settings_repo() -> FakeUserSettingsRepository:
+    return FakeUserSettingsRepository()
+
+
+@pytest.fixture
+def fake_user_settings_repo_factory():
+    return FakeUserSettingsRepository
 
 
 class FakeClinicRepository:

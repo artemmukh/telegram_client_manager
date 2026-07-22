@@ -4,11 +4,75 @@ import pytest_asyncio
 
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserAlreadyExistsError, ValidationError
 from bot.models.user import User
+from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.utils.role import Role
+
+# Phase 1 of REFACTOR_DB_PROMPT.md target column order for the users-rebuild
+# path (a pre-Phase-1 table that still physically carries reminder_24h/
+# reminder_2h) -- gender and birth_date must sit right after full_name.
+# Hardcoded here so any future drift in the rebuild's target order is caught
+# by a failing assertion.
+TARGET_USERS_COLUMN_ORDER = [
+    "id", "telegram_user_id", "full_name", "gender", "birth_date",
+    "phone", "clinic_id", "role", "created_at",
+    "reminder_24h", "reminder_2h", "pending_full_name",
+]
+
+# Phase 2 (REFACTOR_DB_PROMPT.md): a brand-new database's CREATE TABLE no
+# longer includes reminder_24h/reminder_2h at all -- those now live only in
+# user_settings, created separately by UserSettingsRepository.
+FRESH_DB_USERS_COLUMN_ORDER = [
+    "id", "telegram_user_id", "full_name", "gender", "birth_date",
+    "phone", "clinic_id", "role", "created_at", "pending_full_name",
+]
+
+
+class _ExecCallRecordingConnection:
+    """Wraps an aiosqlite.Connection and records every SQL string passed to
+    execute(), so tests can prove whether the users-table rebuild actually
+    ran -- schema equality alone can't tell "rebuilt" apart from "already
+    correct", since a rebuild produces an identical schema either way."""
+
+    def __init__(self, connection: aiosqlite.Connection):
+        self._connection = connection
+        self.executed_sql: list[str] = []
+
+    async def execute(self, sql, *args, **kwargs):
+        self.executed_sql.append(sql)
+        return await self._connection.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def rebuild_call_count(self) -> int:
+        return sum(1 for sql in self.executed_sql if "users_new" in sql)
+
+
+async def _create_pre_phase1_users_table(connection: aiosqlite.Connection) -> None:
+    """Simulate a users table as it existed before Phase 1 (no gender/birth_date),
+    already carrying pending_full_name and the reminder columns from earlier
+    migrations, matching the schema real production databases would have."""
+    await connection.execute("""
+        CREATE TABLE users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_user_id INTEGER UNIQUE,
+            full_name TEXT NOT NULL,
+            phone TEXT UNIQUE NOT NULL,
+            clinic_id INTEGER DEFAULT NULL,
+            role TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            reminder_24h INTEGER DEFAULT 1,
+            reminder_2h INTEGER DEFAULT 1,
+            pending_full_name TEXT DEFAULT NULL,
+
+            FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE
+        )
+    """)
 
 
 @pytest_asyncio.fixture
@@ -18,6 +82,10 @@ async def user_repo(tmp_path):
     repo = UserRepository(connection)
     await clinic_repo.init()
     await repo.init()
+    # Matches bot/run.py's boot sequence: user_settings_repo.init() must run
+    # immediately after user_repo.init() so USER_SELECT's LEFT JOIN user_settings
+    # has a table to join against.
+    await UserSettingsRepository(connection).init()
 
     yield repo
 
@@ -215,6 +283,7 @@ async def test_get_clients_by_exact_name_matches_exact_name_within_clinic():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
@@ -259,6 +328,7 @@ async def test_get_clients_by_name_in_clinic_excludes_other_clinics():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
@@ -288,6 +358,7 @@ async def test_get_clients_by_name_in_clinic_finds_client_linked_to_multiple_cli
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
@@ -315,6 +386,7 @@ async def test_get_clients_by_name_page_in_clinic_and_count_exclude_other_clinic
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         full_name = "Иванов Иван"
@@ -345,6 +417,7 @@ async def test_get_client_by_phone_in_clinic_excludes_other_clinics():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
@@ -367,6 +440,7 @@ async def test_get_clients_page_in_clinic_and_count_exclude_other_clinics():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         client_in_clinic_1 = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
@@ -396,6 +470,7 @@ async def test_get_clients_page_in_clinic_and_count_include_client_linked_to_mul
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
@@ -444,6 +519,7 @@ async def test_get_clients_by_name_page_empty_full_name_is_defensive_guard():
     try:
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(
@@ -468,6 +544,10 @@ async def test_get_clients_by_name_page_empty_full_name_is_defensive_guard():
 
 @pytest.mark.asyncio
 async def test_reminder_preferences_default_true_and_persist_updates():
+    """reminder_24h/reminder_2h no longer live on `users` -- they're read via
+    USER_SELECT's COALESCE(us.reminder_24h, 1) against user_settings, and
+    written through UserSettingsRepository.upsert() (UserRepository itself
+    has no reminder-writing method anymore)."""
     connection = await aiosqlite.connect(":memory:")
     try:
         await connection.execute(
@@ -475,6 +555,8 @@ async def test_reminder_preferences_default_true_and_persist_updates():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        user_settings_repo = UserSettingsRepository(connection)
+        await user_settings_repo.init()
 
         await user_repo.create_user(
             User(
@@ -486,14 +568,21 @@ async def test_reminder_preferences_default_true_and_persist_updates():
         )
 
         user = await user_repo.get_user_by_telegram_id(1001)
+        # No row in user_settings yet for this user -- COALESCE(..., 1) defaults
+        # both flags to true.
         assert user.reminder_24h is True
         assert user.reminder_2h is True
+        assert await user_settings_repo.get_by_user_id(user.ID) is None
 
-        await user_repo.update_reminder_preferences(user.ID, False, True)
+        await user_settings_repo.upsert(user.ID, False, True)
 
         updated = await user_repo.get_user_by_telegram_id(1001)
         assert updated.reminder_24h is False
         assert updated.reminder_2h is True
+
+        settings = await user_settings_repo.get_by_user_id(user.ID)
+        assert settings.reminder_24h is False
+        assert settings.reminder_2h is True
     finally:
         await connection.close()
 
@@ -507,6 +596,7 @@ async def test_set_pending_full_name_stores_pending_value():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(
@@ -536,6 +626,7 @@ async def test_resolve_pending_full_name_approve_applies_change():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(
@@ -570,6 +661,7 @@ async def test_resolve_pending_full_name_reject_clears_pending_value():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(
@@ -600,6 +692,7 @@ async def test_resolve_pending_full_name_returns_none_when_no_pending_request():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(
@@ -647,6 +740,7 @@ async def test_pending_full_name_migration_adds_column_for_existing_rows():
 
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         user = await user_repo.get_user_by_telegram_id(2002)
         assert user.pending_full_name is None
@@ -681,6 +775,7 @@ async def test_reminder_columns_migration_backfills_existing_rows():
 
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         user = await user_repo.get_user_by_telegram_id(2002)
         assert user.reminder_24h is True
@@ -698,6 +793,7 @@ async def test_create_user_persists_explicit_tashkent_created_at():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         tashkent_time = get_current_tashkent_time()
         await user_repo.create_user(
@@ -731,6 +827,7 @@ async def test_create_user_without_created_at_stores_null_not_sql_default():
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(
@@ -767,6 +864,7 @@ async def test_get_staff_users_by_clinic_id_still_includes_clinic_scope_admins()
         )
         user_repo = UserRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
 
         await user_repo.create_user(
             User(full_name="Елена Врач", phone="+998901111111", role=Role.ADMIN, telegram_user_id=226655040, clinic_id=1)
@@ -778,5 +876,278 @@ async def test_get_staff_users_by_clinic_id_still_includes_clinic_scope_admins()
         staff = await user_repo.get_staff_users_by_clinic_id(1)
 
         assert {member.telegram_user_id for member in staff} == {226655040, 685889801}
+    finally:
+        await connection.close()
+
+
+# --- Phase 1 (REFACTOR_DB_PROMPT.md): gender/birth_date rebuild ---
+
+@pytest.mark.asyncio
+async def test_users_rebuild_places_gender_and_birth_date_right_after_full_name():
+    """Q1(b): gender/birth_date must be positioned right after full_name, not
+    appended at the end -- this requires a full table rebuild rather than a
+    plain ALTER ADD COLUMN. Assert the exact ordered column list, not just
+    presence, so the target position is actually locked in."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        await _create_pre_phase1_users_table(connection)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, role) VALUES (?, ?, ?, ?)",
+            (3001, "Мигрант Мигрантович", "+998901234501", Role.CLIENT.value),
+        )
+        await connection.commit()
+
+        user_repo = UserRepository(connection)
+        # Intentionally NOT followed by UserSettingsRepository(connection).init()
+        # here: this test asserts the users-table column order immediately
+        # after the Phase 1 rebuild, before UserSettingsRepository's own
+        # backfill+drop step would remove reminder_24h/reminder_2h from users.
+        await user_repo.init()
+
+        cursor = await connection.execute("PRAGMA table_info(users)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+
+        assert current_order == TARGET_USERS_COLUMN_ORDER
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_users_rebuild_round_trips_all_existing_user_fields():
+    """Sквозной риск №1 regression lock: the rebuild's INSERT INTO users_new
+    SELECT ... FROM users must carry every pre-existing field across without
+    any positional shift. Uses asymmetric, non-default values for every field
+    (distinct reminder flags, non-null pending_full_name, explicit created_at,
+    a real clinic_id/role) so a positional index slip in _row_to_user would
+    make this test fail instead of passing by coincidence."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        await connection.execute(
+            "INSERT INTO clinics(id, name, token) VALUES (1, 'Клиника 1', 'tok-1')"
+        )
+        await _create_pre_phase1_users_table(connection)
+        await connection.execute(
+            """
+            INSERT INTO users(
+                telegram_user_id, full_name, phone, clinic_id, role,
+                created_at, reminder_24h, reminder_2h, pending_full_name
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                4001,
+                "Иванов Иван",
+                "+998901234502",
+                1,
+                Role.ADMIN.value,
+                "2026-07-20 10:15:00",
+                0,
+                1,
+                "Петров Петр",
+            ),
+        )
+        await connection.commit()
+
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        user = await user_repo.get_user_by_id(1)
+
+        assert user is not None
+        assert user.telegram_user_id == 4001
+        assert user.full_name == "Иванов Иван"
+        assert user.gender is None
+        assert user.birth_date is None
+        assert user.phone == "+998901234502"
+        assert user.clinic_id == 1
+        assert user.role == Role.ADMIN
+        assert user.created_at == "2026-07-20 10:15:00"
+        assert user.reminder_24h is False
+        assert user.reminder_2h is True
+        assert user.pending_full_name == "Петров Петр"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_user_by_id_reads_gender_and_birth_date_written_directly():
+    """Phase 1 ships schema + read support only (no writer method yet), so
+    gender/birth_date are written via direct SQL here to prove _row_to_user
+    reads indices 3/4 correctly."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        await user_repo.create_user(
+            User(
+                full_name="Иванов Иван",
+                phone="+998901234503",
+                role=Role.CLIENT,
+                telegram_user_id=5001,
+            )
+        )
+        created = await user_repo.get_user_by_telegram_id(5001)
+
+        await connection.execute(
+            "UPDATE users SET gender = ?, birth_date = ? WHERE id = ?",
+            ("male", "1990-05-14", created.ID),
+        )
+        await connection.commit()
+
+        user = await user_repo.get_user_by_id(created.ID)
+
+        assert user.gender == "male"
+        assert user.birth_date == "1990-05-14"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_users_rebuild_is_idempotent_second_init_does_not_rebuild_again():
+    """init() runs on every bot start. Without an idempotency guard, the
+    rebuild would re-run (and re-scan/copy the whole table) on every restart.
+    Schema equality before/after can't detect this (a rebuild's output schema
+    is identical to a skipped rebuild's), so this instruments execute() calls
+    directly to prove the second init() issues zero CREATE TABLE users_new /
+    INSERT INTO users_new statements."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        await _create_pre_phase1_users_table(connection)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, role) VALUES (?, ?, ?, ?)",
+            (6001, "Иванов Иван", "+998901234504", Role.CLIENT.value),
+        )
+        await connection.commit()
+
+        recorder = _ExecCallRecordingConnection(connection)
+        user_repo = UserRepository(recorder)
+
+        # Intentionally NOT paired with UserSettingsRepository(connection).init()
+        # here: this test asserts users-table column order right after the
+        # rebuild, before UserSettingsRepository would drop reminder_24h/
+        # reminder_2h from users.
+        await user_repo.init()
+        assert recorder.rebuild_call_count() > 0, "first init() on a stale schema must rebuild"
+
+        recorder.executed_sql.clear()
+        await user_repo.init()
+        assert recorder.rebuild_call_count() == 0, "second init() must be a no-op rebuild-wise"
+
+        cursor = await connection.execute("PRAGMA table_info(users)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+        assert current_order == TARGET_USERS_COLUMN_ORDER
+
+        # Only now bring user_settings into existence (matching bot/run.py's
+        # boot order), so USER_SELECT's LEFT JOIN has a table to join against.
+        await UserSettingsRepository(connection).init()
+        user = await user_repo.get_user_by_telegram_id(6001)
+        assert user.full_name == "Иванов Иван"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_fresh_db_creates_users_in_target_order_without_rebuild():
+    """On a brand-new database, CREATE TABLE already produces the target
+    column order, so the rebuild guard must skip entirely (no users_new
+    CREATE/INSERT), not just leave the schema looking correct afterwards."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+
+        recorder = _ExecCallRecordingConnection(connection)
+        user_repo = UserRepository(recorder)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        assert recorder.rebuild_call_count() == 0, "fresh DB must not trigger a rebuild"
+
+        cursor = await connection.execute("PRAGMA table_info(users)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+        assert current_order == FRESH_DB_USERS_COLUMN_ORDER
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_users_rebuild_preserves_foreign_keys_from_appointments_and_client_clinics():
+    """The users rebuild (DROP + rename) must not orphan rows in tables that
+    hold a FOREIGN KEY on users(id) -- appointments (client_id/admin_id) and
+    client_clinics (client_id). Populate both against a pre-Phase-1 users
+    table, then run user_repo.init() (which triggers the rebuild) and assert
+    PRAGMA foreign_key_check is empty and every relation still resolves."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        await connection.execute(
+            "INSERT INTO clinics(id, name, token) VALUES (1, 'Клиника 1', 'tok-1')"
+        )
+        await _create_pre_phase1_users_table(connection)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, clinic_id, role) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (7001, "Клиент Клиентович", "+998901234505", 1, Role.CLIENT.value),
+        )
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, clinic_id, role) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (7002, "Доктор Докторович", "+998901234506", 1, Role.ADMIN.value),
+        )
+        await connection.commit()
+
+        appointment_repo = AppointmentRepository(connection)
+        await appointment_repo.init()
+        client_clinic_repo = ClientClinicRepository(connection)
+        await client_clinic_repo.init()
+
+        await connection.execute(
+            """
+            INSERT INTO appointments(clinic_id, client_id, admin_id, datetime, created_by, status)
+            VALUES (1, 1, 2, '2026-08-01 10:00:00', 'client', 'pending')
+            """
+        )
+        await connection.commit()
+
+        # Backfilled by client_clinic_repo.init() from role='client' + clinic_id.
+        assert await client_clinic_repo.client_linked_to_clinic(1, 1) is True
+
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        fk_cursor = await connection.execute("PRAGMA foreign_key_check")
+        violations = await fk_cursor.fetchall()
+        assert violations == []
+
+        client = await user_repo.get_user_by_id(1)
+        admin = await user_repo.get_user_by_id(2)
+        assert client is not None and client.telegram_user_id == 7001
+        assert admin is not None and admin.telegram_user_id == 7002
+        assert await client_clinic_repo.client_linked_to_clinic(1, 1) is True
+
+        appointment_cursor = await connection.execute(
+            "SELECT client_id, admin_id FROM appointments WHERE clinic_id = 1"
+        )
+        appointment_row = await appointment_cursor.fetchone()
+        assert appointment_row == (1, 2)
     finally:
         await connection.close()

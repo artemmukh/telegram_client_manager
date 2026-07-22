@@ -303,7 +303,6 @@ async def test_handle_appointment_confirm_handler_does_not_notify_admin():
     itself. The 2h-reminder handler must leave notification_service alone."""
     confirmed_appointment = _appointment()
     confirmed_appointment.status = AppointmentStatus.CONFIRMED
-    confirmed_appointment.created_by_telegram_id = 54321
 
     appointment_management_service = MagicMock()
     appointment_management_service.confirm_appointment_by_client = AsyncMock(return_value=confirmed_appointment)

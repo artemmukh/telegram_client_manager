@@ -932,7 +932,6 @@ async def test_create_self_booking_creates_pending_client_appointment():
     assert appointment.clinic_id == client.clinic_id
     assert appointment.client_id == client.ID
     assert appointment.doctor_id == staff.ID
-    assert appointment.created_by_telegram_id == staff.telegram_user_id
     assert appointment.created_by is CreatedBy.CLIENT
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.purpose == "Болит зуб"
@@ -3107,7 +3106,7 @@ async def test_cancellation_cutoff_stays_1h_independent_of_2h30_booking_threshol
 # admin of the appointment's clinic, deduplicated by telegram_user_id. Every
 # admin/staff-facing notification call site (12 across appointment_jobs.py and
 # the client handlers) now fans out through this single method instead of
-# targeting appointment.created_by_telegram_id alone.
+# targeting a single admin telegram id alone.
 
 
 class FakeRecipientUserRepo:

@@ -1691,7 +1691,6 @@ async def test_notify_admin_proposal_reminder_ignores_created_by_telegram_id():
 
     service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.created_by_telegram_id = 11111
 
     await service.notify_admin_proposal_reminder(54321, appointment)
 

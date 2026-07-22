@@ -110,7 +110,6 @@ class AppointmentManagement:
             created_by=CreatedBy.ADMIN,
             status=status,
             clinic_name=clinic.name,
-            created_by_telegram_id=doctor_telegram_id,
             created_at=get_current_tashkent_time(),
         )
 
@@ -176,7 +175,6 @@ class AppointmentManagement:
             created_by=CreatedBy.CLIENT,
             status=AppointmentStatus.PENDING,
             clinic_name=client.clinic_name,
-            created_by_telegram_id=staff.telegram_user_id,
             created_at=get_current_tashkent_time(),
         )
 

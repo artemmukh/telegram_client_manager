@@ -11,6 +11,7 @@ from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
@@ -27,6 +28,7 @@ async def appointment_setup(tmp_path):
 
     await clinic_repo.init()
     await user_repo.init()
+    await UserSettingsRepository(connection).init()
     await staff_repo.init()
     await appointment_repo.init()
 
@@ -113,6 +115,7 @@ async def _in_memory_repos():
 
     await clinic_repo.init()
     await user_repo.init()
+    await UserSettingsRepository(connection).init()
     await staff_repo.init()
     await appointment_repo.init()
 
@@ -124,6 +127,19 @@ async def _seed_client(user_repo: UserRepository, full_name: str, phone: str) ->
         User(full_name=full_name, phone=phone, role=Role.CLIENT)
     )
     return await user_repo.get_client_by_phone(phone)
+
+
+async def _seed_doctor(user_repo: UserRepository, full_name: str, phone: str, telegram_user_id: int) -> User:
+    """Seed a real admin/doctor user so admin_id can reference a row that
+    actually exists in users(id) -- appointments.admin_id has a FOREIGN KEY
+    on users(id), enforced now that AppointmentRepository.init() runs on a
+    connection with PRAGMA foreign_keys = ON (production behavior).
+    get_client_by_phone() filters role='client', so lookup goes through
+    get_user_by_telegram_id() instead."""
+    await user_repo.create_user(
+        User(full_name=full_name, phone=phone, role=Role.ADMIN, telegram_user_id=telegram_user_id)
+    )
+    return await user_repo.get_user_by_telegram_id(telegram_user_id)
 
 
 def _appointment_for(client_id: int, created_at: str) -> Appointment:
@@ -704,36 +720,43 @@ async def test_get_appointments_by_date_and_status_page_filters_exact_day_sorted
 async def test_get_appointments_by_date_and_status_page_respects_clinic_and_doctor_scope():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
+        await connection.execute(
+            "INSERT INTO clinics (id, name, token) VALUES (2, 'Клиника 2', 'tok2')"
+        )
+        await connection.commit()
+
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor_a = await _seed_doctor(user_repo, "Доктор Первый", "+998900000100", telegram_user_id=100100)
+        doctor_b = await _seed_doctor(user_repo, "Доктор Второй", "+998900000200", telegram_user_id=100200)
 
         own_doctor = await appointment_repo.create_appointment(
             Appointment(
-                clinic_id=1, client_id=client.ID, doctor_id=100,
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_a.ID,
                 datetime="2026-07-10 10:00", purpose="Consultation",
                 created_by=CreatedBy.ADMIN, status=AppointmentStatus.CONFIRMED,
             )
         )
         await appointment_repo.create_appointment(
             Appointment(
-                clinic_id=1, client_id=client.ID, doctor_id=200,
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_b.ID,
                 datetime="2026-07-10 11:00", purpose="Consultation",
                 created_by=CreatedBy.ADMIN, status=AppointmentStatus.CONFIRMED,
             )
         )
         await appointment_repo.create_appointment(
             Appointment(
-                clinic_id=2, client_id=client.ID, doctor_id=100,
+                clinic_id=2, client_id=client.ID, doctor_id=doctor_a.ID,
                 datetime="2026-07-10 12:00", purpose="Consultation",
                 created_by=CreatedBy.ADMIN, status=AppointmentStatus.CONFIRMED,
             )
         )
 
         by_doctor = await appointment_repo.get_appointments_by_date_and_status_page(
-            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, doctor_id=100, per_page=10
+            "2026-07-10", AppointmentStatus.CONFIRMED, 1, clinic_id=1, doctor_id=doctor_a.ID, per_page=10
         )
         assert [a.id for a in by_doctor] == [own_doctor.id]
         assert await appointment_repo.count_appointments_by_date_and_status(
-            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1, doctor_id=100
+            "2026-07-10", AppointmentStatus.CONFIRMED, clinic_id=1, doctor_id=doctor_a.ID
         ) == 1
 
         clinic_wide = await appointment_repo.get_appointments_by_date_and_status_page(
@@ -785,32 +808,34 @@ async def test_clinic_and_doctor_filters_exclude_other_clinics_and_other_doctors
         await connection.commit()
 
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor_a = await _seed_doctor(user_repo, "Доктор Первый", "+998900000100", telegram_user_id=100100)
+        doctor_b = await _seed_doctor(user_repo, "Доктор Второй", "+998900000200", telegram_user_id=100200)
 
         own_doctor = await appointment_repo.create_appointment(
             Appointment(
-                clinic_id=1, client_id=client.ID, doctor_id=100,
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_a.ID,
                 datetime="2026-07-01 10:00", purpose="Consultation",
                 created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
             )
         )
         other_doctor = await appointment_repo.create_appointment(
             Appointment(
-                clinic_id=1, client_id=client.ID, doctor_id=200,
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_b.ID,
                 datetime="2026-07-02 10:00", purpose="Consultation",
                 created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
             )
         )
         other_clinic = await appointment_repo.create_appointment(
             Appointment(
-                clinic_id=2, client_id=client.ID, doctor_id=100,
+                clinic_id=2, client_id=client.ID, doctor_id=doctor_a.ID,
                 datetime="2026-07-03 10:00", purpose="Consultation",
                 created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
             )
         )
 
-        own_only = await appointment_repo.get_appointments_page(1, clinic_id=1, doctor_id=100, per_page=10)
+        own_only = await appointment_repo.get_appointments_page(1, clinic_id=1, doctor_id=doctor_a.ID, per_page=10)
         assert [a.id for a in own_only] == [own_doctor.id]
-        assert await appointment_repo.count_appointments(clinic_id=1, doctor_id=100) == 1
+        assert await appointment_repo.count_appointments(clinic_id=1, doctor_id=doctor_a.ID) == 1
 
         clinic_wide = await appointment_repo.get_appointments_page(1, clinic_id=1, per_page=10)
         assert {a.id for a in clinic_wide} == {own_doctor.id, other_doctor.id}
@@ -820,19 +845,19 @@ async def test_clinic_and_doctor_filters_exclude_other_clinics_and_other_doctors
         assert await appointment_repo.count_appointments(clinic_id=2) == 1
 
         by_status = await appointment_repo.get_appointments_by_status_page(
-            AppointmentStatus.PENDING, 1, clinic_id=1, doctor_id=100, per_page=10
+            AppointmentStatus.PENDING, 1, clinic_id=1, doctor_id=doctor_a.ID, per_page=10
         )
         assert [a.id for a in by_status] == [own_doctor.id]
         assert await appointment_repo.count_appointments_by_status(
-            AppointmentStatus.PENDING, clinic_id=1, doctor_id=100
+            AppointmentStatus.PENDING, clinic_id=1, doctor_id=doctor_a.ID
         ) == 1
 
         by_name = await appointment_repo.get_appointments_by_name_and_status_page(
-            "Иванов", AppointmentStatus.PENDING, 1, clinic_id=1, doctor_id=100, per_page=10
+            "Иванов", AppointmentStatus.PENDING, 1, clinic_id=1, doctor_id=doctor_a.ID, per_page=10
         )
         assert [a.id for a in by_name] == [own_doctor.id]
 
-        by_client = await appointment_repo.get_appointments_by_client_id(client.ID, clinic_id=1, doctor_id=100)
+        by_client = await appointment_repo.get_appointments_by_client_id(client.ID, clinic_id=1, doctor_id=doctor_a.ID)
         assert [a.id for a in by_client] == [own_doctor.id]
     finally:
         await connection.close()
@@ -969,7 +994,8 @@ async def test_get_appointments_by_doctor_and_date_returns_only_confirmed_for_th
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
 
         confirmed = await appointment_repo.create_appointment(
             _appointment_with_status(client.ID, "2026-07-10 10:00", AppointmentStatus.CONFIRMED, "2026-07-01 10:00:00")
@@ -1071,7 +1097,8 @@ async def test_create_appointment_raises_slot_unavailable_for_second_confirmed_s
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
         slot = "2026-07-10 10:00"
 
         first = await appointment_repo.create_appointment(
@@ -1096,7 +1123,8 @@ async def test_create_appointment_allows_two_pending_appointments_for_same_slot(
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
         slot = "2026-07-10 10:00"
 
         first = await appointment_repo.create_appointment(
@@ -1119,7 +1147,8 @@ async def test_update_appointment_status_raises_slot_unavailable_when_confirming
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
         slot = "2026-07-10 10:00"
 
         first = await appointment_repo.create_appointment(
@@ -1150,7 +1179,8 @@ async def test_update_appointment_raises_slot_unavailable_when_confirming_into_o
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
         slot = "2026-07-10 10:00"
 
         first = await appointment_repo.create_appointment(
@@ -1180,7 +1210,8 @@ async def test_update_appointment_allows_in_place_edit_of_already_confirmed_row(
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
         slot = "2026-07-10 10:00"
 
         confirmed = await appointment_repo.create_appointment(
@@ -1217,7 +1248,8 @@ async def test_init_skips_index_creation_and_does_not_crash_when_duplicate_confi
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
-        doctor_id = 100
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
         slot = "2026-07-15 10:00"
 
         # The index already exists from the first init() call above (no duplicates
@@ -1491,3 +1523,426 @@ async def test_add_and_get_appointment_notifications_filters_by_kind(appointment
     assert len(reschedule_notifications) == 1
     assert reschedule_notifications[0].chat_id == 100
     assert reschedule_notifications[0].message_id == 3
+
+
+# --- Phase 3 (REFACTOR_DB_PROMPT.md): price-after-purpose rebuild ---
+#
+# Target column order after the rebuild in AppointmentRepository (and what a
+# fresh init() must converge to as well, even though the fresh CREATE TABLE
+# above deliberately keeps the legacy order/admin_tg_id so both fresh and
+# legacy databases flow through the same single rebuild path).
+TARGET_APPOINTMENTS_COLUMN_ORDER = [
+    "id", "clinic_id", "client_id", "admin_id", "datetime", "purpose", "price",
+    "created_by", "status", "created_at", "status_updated_at",
+    "notification_message_id", "proposed_datetime", "proposal_message_id",
+    "proposed_by", "admin_notification_message_id", "decided_by_user_id",
+]
+
+
+async def _create_pre_phase3_appointments_table(connection: aiosqlite.Connection) -> None:
+    """Simulate the appointments table as it existed before Phase 3 (price
+    appended at the very end, admin_tg_id still present) -- matches a real
+    pre-migration production database, so the rebuild guard (full column
+    order mismatch) actually triggers."""
+    await connection.execute("""
+        CREATE TABLE appointments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            clinic_id INTEGER NOT NULL,
+            client_id INTEGER NOT NULL,
+            admin_id INTEGER DEFAULT NULL,
+            datetime TIMESTAMP NOT NULL,
+            purpose TEXT,
+            created_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status_updated_at TIMESTAMP DEFAULT NULL,
+            admin_tg_id INTEGER DEFAULT NULL,
+            notification_message_id INTEGER DEFAULT NULL,
+            proposed_datetime TIMESTAMP DEFAULT NULL,
+            proposal_message_id INTEGER DEFAULT NULL,
+            proposed_by TEXT DEFAULT NULL,
+            admin_notification_message_id INTEGER DEFAULT NULL,
+            price REAL DEFAULT NULL,
+            decided_by_user_id INTEGER DEFAULT NULL,
+
+            FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
+            FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(admin_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+
+
+async def _create_pre_admin_tg_id_appointments_table(connection: aiosqlite.Connection) -> None:
+    """An even older schema than _create_pre_phase3_appointments_table: never
+    carried admin_tg_id, notification_message_id, proposed_datetime,
+    proposal_message_id, proposed_by, admin_notification_message_id, price,
+    or decided_by_user_id at all. init()'s legacy ALTER ADD COLUMN guards
+    backfill these by appending them at the end (in the order those guards
+    run), never in the target position -- this is what proves the rebuild's
+    staleness check must key on the full column order, not merely
+    admin_tg_id's presence."""
+    await connection.execute("""
+        CREATE TABLE appointments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            clinic_id INTEGER NOT NULL,
+            client_id INTEGER NOT NULL,
+            admin_id INTEGER DEFAULT NULL,
+            datetime TIMESTAMP NOT NULL,
+            purpose TEXT,
+            created_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
+            FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(admin_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    """)
+
+
+class _ExecCallRecordingConnection:
+    """Wraps an aiosqlite.Connection and records every SQL string passed to
+    execute(), so tests can prove whether the appointments-table rebuild
+    actually ran -- schema equality alone can't tell "rebuilt" apart from
+    "already correct", since a rebuild produces an identical schema either
+    way. Mirrors the equivalent helper in test_user_repository.py."""
+
+    def __init__(self, connection: aiosqlite.Connection):
+        self._connection = connection
+        self.executed_sql: list[str] = []
+
+    async def execute(self, sql, *args, **kwargs):
+        self.executed_sql.append(sql)
+        return await self._connection.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+    def rebuild_call_count(self) -> int:
+        return sum(1 for sql in self.executed_sql if "appointments_new" in sql)
+
+
+@pytest.mark.asyncio
+async def test_appointments_rebuild_places_price_right_after_purpose_and_drops_admin_tg_id():
+    """A fresh database's CREATE TABLE deliberately still carries admin_tg_id
+    in legacy order (single rebuild path for fresh + legacy databases), so
+    the very first init() must rebuild it into the target order."""
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        cursor = await connection.execute("PRAGMA table_info(appointments)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+
+        assert current_order == TARGET_APPOINTMENTS_COLUMN_ORDER
+        assert "admin_tg_id" not in current_order
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_appointments_rebuild_triggers_even_without_admin_tg_id_on_ancient_schema():
+    """Regression lock for the staleness-check redesign: a genuinely ancient
+    database that never carried admin_tg_id at all (so a presence-only check
+    would wrongly conclude "already rebuilt") must still be detected as
+    stale once init()'s legacy ALTER ADD COLUMN guards have appended the
+    missing columns in the wrong order, and still get rebuilt into the
+    target layout."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        clinic_repo = ClinicRepository(connection)
+        user_repo = UserRepository(connection)
+        await clinic_repo.init()
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+        await StaffRepository(connection).init()
+
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        await _create_pre_admin_tg_id_appointments_table(connection)
+        await connection.execute(
+            "INSERT INTO appointments(clinic_id, client_id, datetime, purpose, created_by, status) "
+            "VALUES (1, ?, '2026-08-01 10:00:00', 'Consultation', 'client', 'pending')",
+            (client.ID,),
+        )
+        await connection.commit()
+
+        cursor = await connection.execute("PRAGMA table_info(appointments)")
+        pre_columns = [row[1] for row in await cursor.fetchall()]
+        assert "admin_tg_id" not in pre_columns
+
+        appointment_repo = AppointmentRepository(connection)
+        await appointment_repo.init()
+
+        cursor = await connection.execute("PRAGMA table_info(appointments)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+        assert current_order == TARGET_APPOINTMENTS_COLUMN_ORDER
+
+        appointment = await appointment_repo.get_appointment_by_id(1)
+        assert appointment is not None
+        assert appointment.purpose == "Consultation"
+        assert appointment.status is AppointmentStatus.PENDING
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_appointments_rebuild_round_trips_all_existing_fields_and_preserves_fk():
+    """Сквозной риск №1 regression lock: the rebuild's INSERT INTO
+    appointments_new SELECT ... FROM appointments must carry every
+    pre-existing field across without any positional shift, and
+    PRAGMA foreign_key_check must stay clean afterwards. Uses asymmetric,
+    non-default values for every field so a positional index slip in
+    _row_to_appointment / APPOINTMENT_SELECT would fail this instead of
+    passing by coincidence."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        clinic_repo = ClinicRepository(connection)
+        user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        await clinic_repo.init()
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+        await staff_repo.init()
+
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+
+        await _create_pre_phase3_appointments_table(connection)
+        await connection.execute(
+            """
+            INSERT INTO appointments(
+                clinic_id, client_id, admin_id, datetime, purpose, created_by,
+                status, created_at, status_updated_at, admin_tg_id,
+                notification_message_id, proposed_datetime, proposal_message_id,
+                proposed_by, admin_notification_message_id, price, decided_by_user_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                1, client.ID, doctor.ID, "2026-08-01 10:00:00", "Consultation",
+                CreatedBy.CLIENT.value, AppointmentStatus.CONFIRMED.value,
+                "2026-07-20 09:00:00", "2026-07-21 09:00:00", 999999,
+                1111, "2026-08-05 11:00:00", 2222, CreatedBy.ADMIN.value,
+                3333, 150000.5, client.ID,
+            ),
+        )
+        await connection.commit()
+
+        appointment_repo = AppointmentRepository(connection)
+        await appointment_repo.init()
+
+        fk_cursor = await connection.execute("PRAGMA foreign_key_check")
+        assert await fk_cursor.fetchall() == []
+
+        appointment = await appointment_repo.get_appointment_by_id(1)
+
+        assert appointment is not None
+        assert appointment.clinic_id == 1
+        assert appointment.client_id == client.ID
+        assert appointment.doctor_id == doctor.ID
+        assert appointment.datetime == "2026-08-01 10:00:00"
+        assert appointment.purpose == "Consultation"
+        assert appointment.created_by is CreatedBy.CLIENT
+        assert appointment.status is AppointmentStatus.CONFIRMED
+        assert appointment.created_at == "2026-07-20 09:00:00"
+        assert appointment.status_updated_at == "2026-07-21 09:00:00"
+        assert appointment.notification_message_id == 1111
+        assert appointment.proposed_datetime == "2026-08-05 11:00:00"
+        assert appointment.proposal_message_id == 2222
+        assert appointment.proposed_by is CreatedBy.ADMIN
+        assert appointment.admin_notification_message_id == 3333
+        assert appointment.price == 150000.5
+        assert appointment.decided_by_user_id == client.ID
+
+        cursor = await connection.execute("PRAGMA table_info(appointments)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+        assert current_order == TARGET_APPOINTMENTS_COLUMN_ORDER
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_appointments_rebuild_is_idempotent_second_init_does_not_rebuild_again():
+    """init() runs on every bot start. Without an idempotency guard, the
+    rebuild would re-run (and re-scan/copy the whole table) on every
+    restart. Schema equality before/after can't detect this (a rebuild's
+    output schema is identical to a skipped rebuild's), so this instruments
+    execute() calls directly to prove the second init() issues zero
+    CREATE TABLE appointments_new / INSERT INTO appointments_new statements.
+    Runs against a populated pre-Phase-3 (legacy) table, matching the
+    equivalent users-table idempotency test's use of a populated table
+    rather than an empty one."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        clinic_repo = ClinicRepository(connection)
+        user_repo = UserRepository(connection)
+        await clinic_repo.init()
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+        await StaffRepository(connection).init()
+
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        await _create_pre_phase3_appointments_table(connection)
+        await connection.execute(
+            "INSERT INTO appointments(clinic_id, client_id, datetime, purpose, created_by, status) "
+            "VALUES (1, ?, '2026-08-01 10:00:00', 'Consultation', 'client', 'pending')",
+            (client.ID,),
+        )
+        await connection.commit()
+
+        recorder = _ExecCallRecordingConnection(connection)
+        appointment_repo = AppointmentRepository(recorder)
+
+        await appointment_repo.init()
+        assert recorder.rebuild_call_count() > 0, "first init() on a stale/legacy schema must rebuild"
+
+        recorder.executed_sql.clear()
+        await appointment_repo.init()
+        assert recorder.rebuild_call_count() == 0, "second init() must be a no-op rebuild-wise"
+
+        cursor = await connection.execute("PRAGMA table_info(appointments)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+        assert current_order == TARGET_APPOINTMENTS_COLUMN_ORDER
+
+        appointment = await appointment_repo.get_appointment_by_id(1)
+        assert appointment is not None
+        assert appointment.purpose == "Consultation"
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_appointments_rebuild_preserves_appointment_notifications_fk():
+    """appointment_notifications has a FOREIGN KEY on appointments(id) ON
+    DELETE CASCADE. The rebuild (DROP + RENAME) must preserve appointment
+    ids exactly, or pre-existing notification rows would be silently
+    orphaned."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        clinic_repo = ClinicRepository(connection)
+        user_repo = UserRepository(connection)
+        await clinic_repo.init()
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+
+        await _create_pre_phase3_appointments_table(connection)
+        await connection.execute(
+            """
+            INSERT INTO appointments(clinic_id, client_id, datetime, purpose, created_by, status)
+            VALUES (1, ?, '2026-08-01 10:00:00', 'Consultation', 'client', 'pending')
+            """,
+            (client.ID,),
+        )
+        # appointment_notifications is only created inside
+        # AppointmentRepository.init(), so build it manually here to attach a
+        # notification row to the pre-rebuild appointment before the rebuild runs.
+        await connection.execute(
+            """
+            CREATE TABLE appointment_notifications(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                appointment_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+            )
+            """
+        )
+        await connection.execute(
+            "INSERT INTO appointment_notifications(appointment_id, chat_id, message_id, kind) "
+            "VALUES (1, 555, 777, 'booking')"
+        )
+        await connection.commit()
+
+        appointment_repo = AppointmentRepository(connection)
+        await appointment_repo.init()
+
+        fk_cursor = await connection.execute("PRAGMA foreign_key_check")
+        assert await fk_cursor.fetchall() == []
+
+        notifications = await appointment_repo.get_appointment_notifications(1, "booking")
+        assert len(notifications) == 1
+        assert notifications[0].appointment_id == 1
+        assert notifications[0].chat_id == 555
+        assert notifications[0].message_id == 777
+    finally:
+        await connection.close()
+
+
+# --- get_appointments_by_telegram_id: standalone inline SELECT must stay in
+# sync with APPOINTMENT_SELECT/_row_to_appointment (sквозной риск №1) ---
+
+@pytest.mark.asyncio
+async def test_get_appointments_by_telegram_id_returns_every_field_matching_get_by_id():
+    """get_appointments_by_telegram_id runs its own inline SELECT (not
+    APPOINTMENT_SELECT), so its column list/order must independently stay in
+    sync with _row_to_appointment. Populates every readable field with
+    distinct, non-default values and asserts each one individually on both
+    read paths -- a coincidental None == None match (as in the minimal
+    fixtures used elsewhere in this file) could mask an index shift."""
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        await user_repo.create_user(
+            User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, telegram_user_id=3001)
+        )
+        client = await user_repo.get_user_by_telegram_id(3001)
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        await connection.execute(
+            "INSERT INTO staff(telegram_user_id, clinic_id, is_doctor) VALUES (?, 1, 1)",
+            (doctor.telegram_user_id,),
+        )
+        await connection.commit()
+
+        created = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=doctor.ID,
+                datetime="2026-08-01 10:00:00", purpose="Consultation",
+                created_by=CreatedBy.CLIENT, status=AppointmentStatus.PENDING,
+            )
+        )
+        await appointment_repo.try_confirm_or_reject_pending(
+            created.id, AppointmentStatus.CONFIRMED, client.ID, "2026-08-01 09:00:00"
+        )
+        await appointment_repo.update_notification_message_id(created.id, 1111)
+        await appointment_repo.update_proposed_datetime(created.id, "2026-08-05 11:00:00")
+        await appointment_repo.update_proposal_message_id(created.id, 2222)
+        await appointment_repo.update_proposed_by(created.id, CreatedBy.ADMIN)
+        await appointment_repo.update_admin_notification_message_id(created.id, 3333)
+        await appointment_repo.update_appointment_price(created.id, 150000.5)
+
+        by_id = await appointment_repo.get_appointment_by_id(created.id)
+        by_telegram_list = await appointment_repo.get_appointments_by_telegram_id(3001)
+        assert len(by_telegram_list) == 1
+        by_telegram = by_telegram_list[0]
+
+        for appointment in (by_id, by_telegram):
+            assert appointment.id == created.id
+            assert appointment.clinic_id == 1
+            assert appointment.client_id == client.ID
+            assert appointment.doctor_id == doctor.ID
+            assert appointment.datetime == "2026-08-01 10:00:00"
+            assert appointment.purpose == "Consultation"
+            assert appointment.created_by is CreatedBy.CLIENT
+            assert appointment.status is AppointmentStatus.CONFIRMED
+            assert appointment.status_updated_at == "2026-08-01 09:00:00"
+            assert appointment.clinic_name == "Зуб Мудрости"
+            assert appointment.client_full_name == "Иванов Иван"
+            assert appointment.client_phone == "+998901111111"
+            assert appointment.notification_message_id == 1111
+            assert appointment.proposed_datetime == "2026-08-05 11:00:00"
+            assert appointment.proposal_message_id == 2222
+            assert appointment.proposed_by is CreatedBy.ADMIN
+            assert appointment.admin_notification_message_id == 3333
+            assert appointment.doctor_full_name == "Доктор Докторович"
+            assert appointment.doctor_phone == "+998900000100"
+            assert appointment.price == 150000.5
+            assert appointment.doctor_is_doctor is True
+            assert appointment.decided_by_user_id == client.ID
+
+        assert by_id == by_telegram
+    finally:
+        await connection.close()

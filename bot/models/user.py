@@ -15,5 +15,7 @@ class User:
     reminder_2h: bool = True
     pending_full_name: str | None = None
     created_at: str | None = None
+    gender: str | None = None
+    birth_date: str | None = None
 
 

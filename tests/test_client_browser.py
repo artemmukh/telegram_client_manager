@@ -24,6 +24,7 @@ from bot.models.user import User
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
@@ -92,6 +93,7 @@ async def test_get_clients_page_orders_deterministically_for_same_full_name():
         await ClinicRepository(connection).init()
         repo = UserRepository(connection)
         await repo.init()
+        await UserSettingsRepository(connection).init()
 
         same_name = "Артем Артем"
         first = User(full_name=same_name, phone="+998900000001", role=Role.CLIENT)
@@ -124,6 +126,7 @@ async def test_search_paginate_update_delete_flow_composes():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         clinic_id = 1
@@ -183,6 +186,7 @@ async def test_search_client_by_name_excludes_clients_from_other_clinics():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         client_in_clinic_1 = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
@@ -213,6 +217,7 @@ async def test_search_client_by_phone_excludes_clients_from_other_clinics():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         client = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)
@@ -238,6 +243,7 @@ async def test_paginate_clients_list_mode_excludes_other_clinics():
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
+        await UserSettingsRepository(connection).init()
         await client_clinic_repo.init()
 
         client_in_clinic_1 = User(full_name="Иванов Иван", phone="+998901111111", role=Role.CLIENT, clinic_id=1)

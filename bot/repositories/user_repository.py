@@ -15,17 +15,21 @@ SELECT
     u.id,
     u.telegram_user_id,
     u.full_name,
+    u.gender,
+    u.birth_date,
     u.phone,
     u.clinic_id,
     c.name AS clinic_name,
     u.role,
-    u.reminder_24h,
-    u.reminder_2h,
+    COALESCE(us.reminder_24h, 1),
+    COALESCE(us.reminder_2h, 1),
     u.pending_full_name,
     u.created_at
 FROM users u
 LEFT JOIN clinics c
 ON u.clinic_id = c.id
+LEFT JOIN user_settings us
+ON us.user_id = u.id
 """
 
 class UserRepository:
@@ -38,12 +42,12 @@ class UserRepository:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_user_id INTEGER UNIQUE,
                 full_name TEXT NOT NULL,
+                gender TEXT DEFAULT NULL,
+                birth_date TEXT DEFAULT NULL,
                 phone TEXT UNIQUE NOT NULL,
                 clinic_id INTEGER DEFAULT NULL,
                 role TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                reminder_24h INTEGER DEFAULT 1,
-                reminder_2h INTEGER DEFAULT 1,
                 pending_full_name TEXT DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
@@ -52,22 +56,94 @@ class UserRepository:
         cursor = await self.connection.execute("PRAGMA table_info(users)")
         columns = {row[1] for row in await cursor.fetchall()}
 
-        if "reminder_24h" not in columns:
-            await self.connection.execute(
-                "ALTER TABLE users ADD COLUMN reminder_24h INTEGER DEFAULT 1"
-            )
-
-        if "reminder_2h" not in columns:
-            await self.connection.execute(
-                "ALTER TABLE users ADD COLUMN reminder_2h INTEGER DEFAULT 1"
-            )
-
         if "pending_full_name" not in columns:
             await self.connection.execute(
                 "ALTER TABLE users ADD COLUMN pending_full_name TEXT DEFAULT NULL"
             )
 
+        await self._rebuild_users_if_column_order_stale()
+
         await self.connection.commit()
+
+    async def _rebuild_users_if_column_order_stale(self) -> None:
+        # gender/birth_date must sit right after full_name (confirmed layout),
+        # which SQLite's ADD COLUMN cannot express — it only appends columns
+        # at the end. A full table rebuild is the only way to reorder them.
+        # This guard makes the rebuild idempotent by checking presence rather
+        # than an exact column list: gender/birth_date only ever appear via a
+        # fresh CREATE TABLE or this rebuild's own CREATE TABLE, both already
+        # placing them right after full_name. Presence alone is therefore
+        # sufficient proof that the rebuild already ran, so init() stays a
+        # no-op on every later start — including after reminder_24h/reminder_2h
+        # are dropped from users by UserSettingsRepository, which a stale
+        # exact-list comparison would otherwise try to re-select and crash on.
+        cursor = await self.connection.execute("PRAGMA table_info(users)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "gender" in columns and "birth_date" in columns:
+            return
+
+        # reminder_24h/reminder_2h were dropped from the CREATE TABLE / ALTER
+        # TABLE path above once reminder settings moved to UserSettingsRepository,
+        # but this rebuild still targets a users_new schema that carries them
+        # (so a mid-migration DB that has old reminder columns but not yet
+        # gender/birth_date keeps them, ready for UserSettingsRepository's own
+        # backfill+drop step). A genuinely legacy users table that predates the
+        # reminder columns entirely (never had them) won't have them to select,
+        # so fall back to the same literal default (1/true) the column
+        # definitions themselves use.
+        reminder_24h_select = "reminder_24h" if "reminder_24h" in columns else "1 AS reminder_24h"
+        reminder_2h_select = "reminder_2h" if "reminder_2h" in columns else "1 AS reminder_2h"
+
+        await self.connection.commit()
+        await self.connection.execute("PRAGMA foreign_keys = OFF")
+
+        try:
+            await self.connection.execute("BEGIN")
+
+            await self.connection.execute("""
+                CREATE TABLE users_new(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_user_id INTEGER UNIQUE,
+                    full_name TEXT NOT NULL,
+                    gender TEXT DEFAULT NULL,
+                    birth_date TEXT DEFAULT NULL,
+                    phone TEXT UNIQUE NOT NULL,
+                    clinic_id INTEGER DEFAULT NULL,
+                    role TEXT DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reminder_24h INTEGER DEFAULT 1,
+                    reminder_2h INTEGER DEFAULT 1,
+                    pending_full_name TEXT DEFAULT NULL,
+
+                    FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE)
+            """)
+
+            await self.connection.execute(f"""
+                INSERT INTO users_new (
+                    id, telegram_user_id, full_name, phone, clinic_id,
+                    role, created_at, reminder_24h, reminder_2h, pending_full_name
+                )
+                SELECT
+                    id, telegram_user_id, full_name, phone, clinic_id,
+                    role, created_at, {reminder_24h_select}, {reminder_2h_select}, pending_full_name
+                FROM users
+            """)
+
+            await self.connection.execute("DROP TABLE users")
+            await self.connection.execute("ALTER TABLE users_new RENAME TO users")
+
+            fk_cursor = await self.connection.execute("PRAGMA foreign_key_check")
+            violations = await fk_cursor.fetchall()
+            if violations:
+                raise RuntimeError(f"users rebuild produced FK violations: {violations}")
+
+            await self.connection.commit()
+        except Exception:
+            await self.connection.execute("ROLLBACK")
+            raise
+        finally:
+            await self.connection.execute("PRAGMA foreign_keys = ON")
 
     async def get_user_by_telegram_id(self, telegram_user_id: int) -> User | None:
         cursor = await self.connection.execute(
@@ -227,13 +303,6 @@ class UserRepository:
         message = str(error)
         return "UNIQUE constraint failed" in message and "phone" in message
 
-    async def update_reminder_preferences(self, user_id: int, reminder_24h: bool, reminder_2h: bool) -> None:
-        await self.connection.execute(
-            "UPDATE users SET reminder_24h = ?, reminder_2h = ? WHERE id = ?",
-            (int(reminder_24h), int(reminder_2h), user_id),
-        )
-        await self.connection.commit()
-
     async def set_pending_full_name(self, user_id: int, new_full_name: str) -> None:
         await self.connection.execute(
             "UPDATE users SET pending_full_name = ? WHERE id = ?",
@@ -333,14 +402,16 @@ class UserRepository:
             ID=row[0],
             telegram_user_id=row[1],
             full_name=row[2],
-            phone=row[3],
-            clinic_id=row[4],
-            clinic_name=row[5],
-            role=Role(row[6]) if row[6] else None,
-            reminder_24h=bool(row[7]),
-            reminder_2h=bool(row[8]),
-            pending_full_name=row[9],
-            created_at=row[10],
+            gender=row[3],
+            birth_date=row[4],
+            phone=row[5],
+            clinic_id=row[6],
+            clinic_name=row[7],
+            role=Role(row[8]) if row[8] else None,
+            reminder_24h=bool(row[9]),
+            reminder_2h=bool(row[10]),
+            pending_full_name=row[11],
+            created_at=row[12],
         )
 
     async def phone_exists(self, phone: str) -> bool:

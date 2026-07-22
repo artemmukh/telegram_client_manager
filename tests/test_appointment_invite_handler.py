@@ -41,7 +41,6 @@ def _appointment(status=AppointmentStatus.PENDING):
         created_by=CreatedBy.ADMIN,
         status=status,
         id=1,
-        created_by_telegram_id=999,
     )
 
 

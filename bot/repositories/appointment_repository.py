@@ -24,7 +24,6 @@ SELECT
     a.created_at,
     a.status_updated_at,
     c.name AS clinic_name,
-    a.admin_tg_id,
     u.full_name AS client_full_name,
     u.phone AS client_phone,
     a.notification_message_id,
@@ -91,16 +90,16 @@ class AppointmentRepository:
             )
         """)
 
-        # Ensure admin_tg_id column exists for existing databases
-        # (covers very old databases that predate this column entirely)
+        # admin_tg_id is intentionally NOT re-added here: it is dead (never
+        # read anywhere) and _rebuild_appointments_if_column_order_stale()
+        # below drops it permanently. Re-adding it on every init() would
+        # defeat that rebuild's idempotency guard (it keys on the full
+        # column order, and a resurrected admin_tg_id would make every
+        # subsequent init() look stale again).
         cursor = await self.connection.execute(
             "PRAGMA table_info(appointments)"
         )
         columns = {row[1] for row in await cursor.fetchall()}
-        if "admin_tg_id" not in columns:
-            await self.connection.execute(
-                "ALTER TABLE appointments ADD COLUMN admin_tg_id INTEGER DEFAULT NULL"
-            )
 
         # Ensure notification_message_id column exists for existing databases
         if "notification_message_id" not in columns:
@@ -153,6 +152,8 @@ class AppointmentRepository:
                 "ALTER TABLE appointments ADD COLUMN decided_by_user_id INTEGER DEFAULT NULL"
             )
 
+        await self._rebuild_appointments_if_column_order_stale()
+
         await self.connection.execute("""
             CREATE INDEX IF NOT EXISTS idx_appointments_clinic_datetime
             ON appointments(clinic_id, datetime)
@@ -204,6 +205,104 @@ class AppointmentRepository:
 
         await self.connection.commit()
 
+    # Target column order after rebuild (and already the order the fresh
+    # CREATE TABLE above should produce, except it deliberately keeps
+    # admin_tg_id and the legacy order so both fresh and legacy databases
+    # flow through this single rebuild path).
+    # ⚠️  CRITICAL: Any future phase that drops message_id columns
+    # (notification_message_id, admin_notification_message_id, proposal_message_id)
+    # must UPDATE this _TARGET_COLUMN_ORDER and all CREATE/INSERT/SELECT lists in
+    # _rebuild_appointments_if_column_order_stale() synchronously in the same PR,
+    # or the rebuild's staleness check will trigger on every startup and crash
+    # trying to SELECT a non-existent column.
+    _TARGET_COLUMN_ORDER = [
+        "id", "clinic_id", "client_id", "admin_id", "datetime", "purpose", "price",
+        "created_by", "status", "created_at", "status_updated_at",
+        "notification_message_id", "proposed_datetime", "proposal_message_id",
+        "proposed_by", "admin_notification_message_id", "decided_by_user_id",
+    ]
+
+    async def _rebuild_appointments_if_column_order_stale(self) -> None:
+        # price must sit right after purpose (confirmed layout), and admin_tg_id
+        # is dead (never read for production decisions) and must be dropped —
+        # SQLite's ADD COLUMN cannot express either change, it only appends
+        # columns at the end and cannot drop columns pre-3.35. A full table
+        # rebuild is the only way to reorder/drop them. The staleness check
+        # compares the full ordered column list against the target layout,
+        # not just admin_tg_id's presence: admin_tg_id is no longer re-added
+        # anywhere in init(), so a presence-only check would incorrectly skip
+        # the rebuild for a genuinely ancient database that never carried
+        # admin_tg_id at all, yet still has price appended at the end instead
+        # of right after purpose (via the legacy ALTER ADD COLUMN guards
+        # above, which can only append, never reorder).
+        cursor = await self.connection.execute("PRAGMA table_info(appointments)")
+        current_order = [row[1] for row in await cursor.fetchall()]
+
+        if current_order == self._TARGET_COLUMN_ORDER:
+            return
+
+        await self.connection.commit()
+        await self.connection.execute("PRAGMA foreign_keys = OFF")
+
+        try:
+            await self.connection.execute("BEGIN")
+
+            await self.connection.execute("""
+                CREATE TABLE appointments_new(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clinic_id INTEGER NOT NULL,
+                    client_id INTEGER NOT NULL,
+                    admin_id INTEGER DEFAULT NULL,
+                    datetime TIMESTAMP NOT NULL,
+                    purpose TEXT,
+                    price REAL DEFAULT NULL,
+                    created_by TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status_updated_at TIMESTAMP DEFAULT NULL,
+                    notification_message_id INTEGER DEFAULT NULL,
+                    proposed_datetime TIMESTAMP DEFAULT NULL,
+                    proposal_message_id INTEGER DEFAULT NULL,
+                    proposed_by TEXT DEFAULT NULL,
+                    admin_notification_message_id INTEGER DEFAULT NULL,
+                    decided_by_user_id INTEGER DEFAULT NULL,
+
+                    FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
+                    FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(admin_id) REFERENCES users(id) ON DELETE SET NULL
+                )
+            """)
+
+            await self.connection.execute("""
+                INSERT INTO appointments_new (
+                    id, clinic_id, client_id, admin_id, datetime, purpose, price,
+                    created_by, status, created_at, status_updated_at,
+                    notification_message_id, proposed_datetime, proposal_message_id,
+                    proposed_by, admin_notification_message_id, decided_by_user_id
+                )
+                SELECT
+                    id, clinic_id, client_id, admin_id, datetime, purpose, price,
+                    created_by, status, created_at, status_updated_at,
+                    notification_message_id, proposed_datetime, proposal_message_id,
+                    proposed_by, admin_notification_message_id, decided_by_user_id
+                FROM appointments
+            """)
+
+            await self.connection.execute("DROP TABLE appointments")
+            await self.connection.execute("ALTER TABLE appointments_new RENAME TO appointments")
+
+            fk_cursor = await self.connection.execute("PRAGMA foreign_key_check")
+            violations = await fk_cursor.fetchall()
+            if violations:
+                raise RuntimeError(f"appointments rebuild produced FK violations: {violations}")
+
+            await self.connection.commit()
+        except Exception:
+            await self.connection.execute("ROLLBACK")
+            raise
+        finally:
+            await self.connection.execute("PRAGMA foreign_keys = ON")
+
     async def get_appointment_by_id(self, appointment_id: int) -> Appointment | None:
         cursor = await self.connection.execute(
             APPOINTMENT_SELECT + "\nWHERE a.id = ?",
@@ -241,7 +340,7 @@ class AppointmentRepository:
                 a.id, a.clinic_id, a.client_id, a.admin_id,
                 a.datetime, a.purpose, a.created_by, a.status, a.created_at,
                 a.status_updated_at,
-                c.name AS clinic_name, a.admin_tg_id,
+                c.name AS clinic_name,
                 u.full_name AS client_full_name, u.phone AS client_phone,
                 a.notification_message_id, a.proposed_datetime, a.proposal_message_id,
                 a.proposed_by, a.admin_notification_message_id,
@@ -267,10 +366,10 @@ class AppointmentRepository:
                 """
                 INSERT INTO appointments(
                     clinic_id, client_id, admin_id,
-                    datetime, purpose, created_by, status, admin_tg_id, created_at,
+                    datetime, purpose, created_by, status, created_at,
                     status_updated_at, notification_message_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     appointment.clinic_id,
@@ -280,7 +379,6 @@ class AppointmentRepository:
                     appointment.purpose,
                     appointment.created_by.value,
                     appointment.status.value,
-                    appointment.created_by_telegram_id,
                     appointment.created_at,
                     appointment.created_at,
                     appointment.notification_message_id,
@@ -917,17 +1015,16 @@ class AppointmentRepository:
             created_at=row[8],
             status_updated_at=row[9],
             clinic_name=row[10],
-            created_by_telegram_id=row[11],
-            client_full_name=row[12],
-            client_phone=row[13],
-            notification_message_id=row[14],
-            proposed_datetime=row[15],
-            proposal_message_id=row[16],
-            proposed_by=CreatedBy(row[17]) if row[17] else None,
-            admin_notification_message_id=row[18],
-            doctor_full_name=row[19],
-            doctor_phone=row[20],
-            price=row[21],
-            doctor_is_doctor=bool(row[22]) if row[22] is not None else None,
-            decided_by_user_id=row[23],
+            client_full_name=row[11],
+            client_phone=row[12],
+            notification_message_id=row[13],
+            proposed_datetime=row[14],
+            proposal_message_id=row[15],
+            proposed_by=CreatedBy(row[16]) if row[16] else None,
+            admin_notification_message_id=row[17],
+            doctor_full_name=row[18],
+            doctor_phone=row[19],
+            price=row[20],
+            doctor_is_doctor=bool(row[21]) if row[21] is not None else None,
+            decided_by_user_id=row[22],
         )

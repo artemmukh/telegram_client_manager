@@ -46,7 +46,6 @@ def _appointment(status):
         created_by=CreatedBy.CLIENT,
         status=status,
         id=1,
-        created_by_telegram_id=999,
     )
 
 

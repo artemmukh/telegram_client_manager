@@ -36,6 +36,7 @@ from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.appointment.appointment_jobs import complete_appointment
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
@@ -82,12 +83,14 @@ async def e2e(tmp_path):
 
     clinic_repo = ClinicRepository(connection)
     user_repo = UserRepository(connection)
+    user_settings_repo = UserSettingsRepository(connection)
     staff_repo = StaffRepository(connection)
     appointment_repo = AppointmentRepository(connection)
     client_clinic_repo = ClientClinicRepository(connection)
 
     await clinic_repo.init()
     await user_repo.init()
+    await user_settings_repo.init()
     await staff_repo.init()
     await appointment_repo.init()
     await client_clinic_repo.init()
@@ -108,6 +111,7 @@ async def e2e(tmp_path):
 
     client_management = ClientManagement(
         user_repo, staff_repo, clinic_repo, client_clinic_repository=client_clinic_repo,
+        user_settings_repository=user_settings_repo,
     )
     notification_service = AppointmentNotificationService(fake_bot, user_repo, appointment_repo)
     appointment_management = AppointmentManagement(
@@ -118,6 +122,7 @@ async def e2e(tmp_path):
         connection=connection,
         clinic_repo=clinic_repo,
         user_repo=user_repo,
+        user_settings_repo=user_settings_repo,
         staff_repo=staff_repo,
         appointment_repo=appointment_repo,
         admin=admin,

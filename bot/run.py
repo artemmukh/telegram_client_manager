@@ -35,6 +35,7 @@ from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
@@ -56,6 +57,10 @@ async def main():
     client_clinic_repo = ClientClinicRepository(connection)
 
     await user_repo.init()
+
+    user_settings_repo = UserSettingsRepository(connection)
+    await user_settings_repo.init()
+
     await appointment_repo.init()
     await clinic_repo.init()
     await staff_repo.init()
@@ -76,6 +81,7 @@ async def main():
     # Create services
     client_management_service = ClientManagement(
         user_repo, staff_repo, clinic_repo, client_clinic_repository=client_clinic_repo,
+        user_settings_repository=user_settings_repo,
     )
     appointment_management_service = AppointmentManagement(
         appointment_repo, user_repo, staff_repo, clinic_repo,
