@@ -34,6 +34,7 @@ class FakeUserRepository:
         self.linked = []
         self.updated_clients = []
         self.deleted_clients: list[int] = []
+        self.updated_personal_data: list[tuple[int, str | None, str | None]] = []
 
     async def phone_exists(self, phone: str) -> bool:
         return phone in self.existing_phones
@@ -101,6 +102,13 @@ class FakeUserRepository:
         self.deleted_clients.append(user_id)
         self.clients_by_id.pop(user_id, None)
         self.users_by_id.pop(user_id, None)
+
+    async def update_personal_data(self, user_id, *, gender, birth_date) -> None:
+        self.updated_personal_data.append((user_id, gender, birth_date))
+        user = self.users_by_id.get(user_id)
+        if user is not None:
+            user.gender = gender
+            user.birth_date = birth_date
 
 
 @pytest.fixture

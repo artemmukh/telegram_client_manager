@@ -1,8 +1,7 @@
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
 
-from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, InvalidBirthDateError, PhoneAlreadyExistsError, UserAlreadyExistsError, UserNotFoundError, ValidationError
+from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, UserAlreadyExistsError, UserNotFoundError
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.utils.role import Role
@@ -11,7 +10,8 @@ from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
-from bot.validators.validators import validate_birth_date, validate_full_name, validate_phone, SEARCH_NAME_PATTERN
+from bot.services.utils.personal_data import validate_and_normalize_personal_data
+from bot.validators.validators import validate_full_name, validate_phone, SEARCH_NAME_PATTERN
 
 
 @dataclass
@@ -87,21 +87,7 @@ class RegistrationService:
         validate_full_name(full_name, SEARCH_NAME_PATTERN)
         validate_phone(phone)
 
-        if birth_date is not None:
-            birth_date = validate_birth_date(birth_date)
-
-            now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
-            parsed_birth_date = datetime.strptime(birth_date, "%Y-%m-%d")
-
-            if parsed_birth_date > now:
-                raise InvalidBirthDateError("Дата рождения не может быть в будущем.")
-
-            age_years = (now - parsed_birth_date).days / 365.25
-            if age_years > 120:
-                raise InvalidBirthDateError("Проверьте дату рождения.")
-
-        if gender is not None and gender not in {"male", "female"}:
-            raise ValidationError("Некорректное значение пола.")
+        birth_date, gender = validate_and_normalize_personal_data(birth_date, gender)
 
         if existing_user_id is not None:
             user = await self.user_repository.get_client_by_id(existing_user_id)

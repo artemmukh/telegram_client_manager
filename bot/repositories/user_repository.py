@@ -366,6 +366,13 @@ class UserRepository:
         message = str(error)
         return "UNIQUE constraint failed" in message and "telegram_user_id" in message
 
+    async def update_personal_data(self, user_id: int, *, gender: str | None, birth_date: str | None) -> None:
+        await self.connection.execute(
+            "UPDATE users SET gender = ?, birth_date = ? WHERE id = ?",
+            (gender, birth_date, user_id),
+        )
+        await self.connection.commit()
+
     async def delete_client(self, user_id: int) -> None:
         await self.connection.execute(
             """

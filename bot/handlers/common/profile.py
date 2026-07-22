@@ -1,9 +1,12 @@
-﻿from aiogram import F, Router
+﻿from datetime import datetime
+
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 
 from bot.exceptions.exceptions import BotException
+from bot.handlers.utils.admin_utils.confirmations import GENDER_LABELS
 from bot.keyboards.admin.admin_reminder_cb import AdminReminderPresetCB
 from bot.keyboards.admin.admin_reminder_kb import admin_reminder_settings_kb
 from bot.keyboards.client.reminder_cb import ClientReminderPresetCB
@@ -12,6 +15,26 @@ from bot.keyboards.common.profile_kb import profile_menu_kb
 from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.utils.role import Role, RoleFilter
+
+
+def build_profile_text(user: User) -> str:
+    role = "администратор" if user.role == Role.ADMIN else "клиент"
+
+    lines = [
+        "Профиль\n",
+        f"ФИ: {user.full_name}",
+        f"Номер телефона: {user.phone}",
+        f"Тип пользователя: {role}",
+        f"Клиника: {user.clinic_name}",
+    ]
+
+    if user.birth_date:
+        display_birth_date = datetime.strptime(user.birth_date, "%Y-%m-%d").strftime("%d.%m.%Y")
+        lines.append(f"Дата рождения: {display_birth_date}")
+    if user.gender:
+        lines.append(f"Пол: {GENDER_LABELS.get(user.gender, user.gender)}")
+
+    return "\n".join(lines)
 
 
 def create_profile_router(client_management_service: ClientManagement = None):
@@ -25,17 +48,6 @@ def create_profile_router(client_management_service: ClientManagement = None):
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="profile_back")]
         )
         return reply_markup
-
-    def build_profile_text(user: User) -> str:
-        role = "администратор" if user.role == Role.ADMIN else "клиент"
-
-        return (
-            "Профиль\n\n"
-            f"ФИ: {user.full_name}\n"
-            f"Номер телефона: {user.phone}\n"
-            f"Тип пользователя: {role}\n"
-            f"Клиника: {user.clinic_name}"
-        )
 
     @router.message(F.text.in_({"/profile", "⚙️ Мой профиль", "👤 Профиль"}), RoleFilter("*"))
     async def profile(message: Message, current_user: User | None = None):

@@ -1041,6 +1041,54 @@ async def test_update_user_telegram_id_persists_gender_and_birth_date(user_repo)
 
 
 @pytest.mark.asyncio
+async def test_update_personal_data_persists_gender_and_birth_date(user_repo):
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+        )
+    )
+    created = await user_repo.get_user_by_telegram_id(1001)
+    assert created.gender is None
+    assert created.birth_date is None
+
+    await user_repo.update_personal_data(created.ID, gender="female", birth_date="1985-11-12")
+
+    updated = await user_repo.get_user_by_id(created.ID)
+    assert updated.gender == "female"
+    assert updated.birth_date == "1985-11-12"
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_with_both_none_overwrites_existing_values(user_repo):
+    """update_personal_data always overwrites both columns unconditionally --
+    there is no partial-update support. Seed non-None values first so this
+    actually demonstrates the unconditional overwrite, rather than just
+    'passing None doesn't crash'."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+            gender="male",
+            birth_date="1990-03-05",
+        )
+    )
+    created = await user_repo.get_user_by_telegram_id(1001)
+    assert created.gender == "male"
+    assert created.birth_date == "1990-03-05"
+
+    await user_repo.update_personal_data(created.ID, gender=None, birth_date=None)
+
+    updated = await user_repo.get_user_by_id(created.ID)
+    assert updated.gender is None
+    assert updated.birth_date is None
+
+
+@pytest.mark.asyncio
 async def test_get_user_by_id_reads_gender_and_birth_date_written_directly():
     """Phase 1 ships schema + read support only (no writer method yet), so
     gender/birth_date are written via direct SQL here to prove _row_to_user
