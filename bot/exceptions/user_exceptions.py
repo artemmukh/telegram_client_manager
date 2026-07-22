@@ -46,4 +46,9 @@ class InvalidPhoneError(ValidationError):
     pass
 
 
+class InvalidBirthDateError(ValidationError):
+    """Некорректная дата рождения."""
+    pass
+
+
 

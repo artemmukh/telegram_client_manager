@@ -4,9 +4,11 @@ from aiogram.types import Message, CallbackQuery
 from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, UserAlreadyExistsError
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
-    edit_full_name, full_name_processing
+    birth_date_processing, edit_full_name, full_name_processing
 
 )
+from bot.keyboards.utils.gender_cb import GenderCB
+from bot.keyboards.utils.gender_kb import gender_kb
 from bot.keyboards.utils.utils_kb import (
     cancel_kb,
     contact_keyboard,
@@ -28,6 +30,8 @@ from aiogram.filters import CommandStart, CommandObject
 from bot.utils.role import RoleFilter, Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import FULL_NAME_PATTERN
+
+BIRTH_DATE_PROMPT = "Введите дату рождения в формате ДД.ММ.ГГГГ, например 05.03.1990:"
 
 
 def create_reg_router(
@@ -128,7 +132,7 @@ def create_reg_router(
     async def get_full_name(message: Message, state: FSMContext):
 
         if not await full_name_processing(
-                message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
+                message, state, next_state=RegisterStates.birth_date, re_pattern=FULL_NAME_PATTERN):
             return
 
         data = await state.get_data()
@@ -141,7 +145,7 @@ def create_reg_router(
                 data["clinic_id"], data["existing_full_name"], data["full_name"], data["phone"],
             )
 
-        await show_confirmation(message, state, reg_confirm_kb())
+        await message.answer(BIRTH_DATE_PROMPT)
 
     @router.callback_query(RegisterStates.name_conflict, F.data == "reg_name_conflict_yes")
     async def confirm_name_conflict_yes(callback: CallbackQuery, state: FSMContext):
@@ -158,6 +162,19 @@ def create_reg_router(
         data = await state.get_data()
 
         await state.update_data(full_name=data["existing_full_name"])
+        await state.set_state(RegisterStates.birth_date)
+        await callback.answer('')
+        await callback.message.answer(BIRTH_DATE_PROMPT)
+
+    @router.message(RegisterStates.birth_date)
+    async def get_birth_date(message: Message, state: FSMContext):
+        if not await birth_date_processing(message, state, next_state=RegisterStates.gender):
+            return
+        await message.answer("Укажите пол:", reply_markup=gender_kb())
+
+    @router.callback_query(RegisterStates.gender, GenderCB.filter())
+    async def choose_gender(callback: CallbackQuery, callback_data: GenderCB, state: FSMContext):
+        await state.update_data(gender=callback_data.value)
         await state.set_state(RegisterStates.confirm_register)
         await callback.answer('')
         await show_confirmation(callback.message, state, reg_confirm_kb())
@@ -196,6 +213,8 @@ def create_reg_router(
                 role=role,
                 clinic_id=data["clinic_id"],
                 existing_user_id=data.get("existing_user_id"),
+                birth_date=data.get("birth_date"),
+                gender=data.get("gender"),
             )
         except UserAlreadyExistsError:
             await callback.message.answer("Вы уже зарегистрированы.")
