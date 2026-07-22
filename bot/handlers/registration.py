@@ -128,7 +128,7 @@ def create_reg_router(
             "Они будут отображаться врачу во время записи на приём."
         )
 
-    @router.message(RegisterStates.full_name)
+    @router.message(RegisterStates.full_name, F.text)
     async def get_full_name(message: Message, state: FSMContext):
 
         if not await full_name_processing(
@@ -166,7 +166,7 @@ def create_reg_router(
         await callback.answer('')
         await callback.message.answer(BIRTH_DATE_PROMPT)
 
-    @router.message(RegisterStates.birth_date)
+    @router.message(RegisterStates.birth_date, F.text)
     async def get_birth_date(message: Message, state: FSMContext):
         if not await birth_date_processing(message, state, next_state=RegisterStates.gender):
             return
