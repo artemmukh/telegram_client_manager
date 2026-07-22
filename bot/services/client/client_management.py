@@ -15,6 +15,7 @@ from bot.repositories.user_repository import UserRepository
 from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import get_current_tashkent_time
+from bot.services.utils.personal_data import validate_and_normalize_personal_data
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
@@ -224,4 +225,16 @@ class ClientManagement:
         await self.user_settings_repository.upsert(user_id, reminder_24h, reminder_2h)
         user.reminder_24h = reminder_24h
         user.reminder_2h = reminder_2h
+        return user
+
+    async def update_personal_data(self, user_id: int, *, birth_date: str | None, gender: str | None) -> User:
+        birth_date, gender = validate_and_normalize_personal_data(birth_date, gender)
+
+        user = await self.user_repository.get_user_by_id(user_id)
+        if user is None:
+            raise UserNotFoundError("Пользователь не найден.")
+
+        await self.user_repository.update_personal_data(user_id, gender=gender, birth_date=birth_date)
+        user.gender = gender
+        user.birth_date = birth_date
         return user

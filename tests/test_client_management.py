@@ -1,13 +1,17 @@
+from datetime import datetime, timedelta
+
 import pytest
 
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import (
+    InvalidBirthDateError,
     InvalidFullNameError,
     PhoneAlreadyExistsError,
     RoleError,
     UserNotFoundError,
     ValidationError,
 )
+from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -307,3 +311,85 @@ async def test_count_client_appointments_raises_when_repository_not_wired(fake_u
 
     with pytest.raises(BotException):
         await service.count_client_appointments(1, 1)
+
+
+# --- update_personal_data ---
+
+@pytest.mark.asyncio
+async def test_update_personal_data_persists_and_returns_updated_user(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    user = await service.update_personal_data(1, birth_date="05.03.1990", gender="male")
+
+    assert user.birth_date == "1990-03-05"
+    assert user.gender == "male"
+    assert repo.updated_personal_data == [(1, "male", "1990-03-05")]
+    assert repo.users_by_id[1].birth_date == "1990-03-05"
+    assert repo.users_by_id[1].gender == "male"
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_works_for_admin_user_id(fake_user_repo_factory):
+    """update_personal_data() resolves via get_user_by_id(), which is
+    role-agnostic, so it must also work for an admin's user_id (not just
+    clients). The admin is intentionally absent from clients_by_id to prove
+    the lookup does not go through get_client_by_id, mirroring
+    test_update_reminder_preferences_works_for_admin_user_id."""
+    admin = _existing_admin()
+    repo = fake_user_repo_factory(users_by_id={2: admin})
+    service = _service(repo)
+
+    user = await service.update_personal_data(2, birth_date="12.11.1985", gender="female")
+
+    assert user.role is Role.ADMIN
+    assert user.birth_date == "1985-11-12"
+    assert user.gender == "female"
+    assert repo.updated_personal_data == [(2, "female", "1985-11-12")]
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_raises_if_user_not_found(fake_user_repo):
+    service = _service(fake_user_repo)
+
+    with pytest.raises(UserNotFoundError) as exc_info:
+        await service.update_personal_data(999, birth_date="05.03.1990", gender="male")
+
+    assert str(exc_info.value) == "Пользователь не найден."
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_rejects_invalid_birth_date_without_writing(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.update_personal_data(1, birth_date="not-a-date", gender="male")
+
+    assert repo.updated_personal_data == []
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_rejects_future_birth_date_without_writing(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
+    future_date = (now + timedelta(days=1)).strftime("%d.%m.%Y")
+
+    with pytest.raises(InvalidBirthDateError):
+        await service.update_personal_data(1, birth_date=future_date, gender="male")
+
+    assert repo.updated_personal_data == []
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_rejects_invalid_gender_without_writing(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    with pytest.raises(ValidationError) as exc_info:
+        await service.update_personal_data(1, birth_date="05.03.1990", gender="other")
+
+    assert type(exc_info.value) is ValidationError
+    assert repo.updated_personal_data == []
