@@ -10,9 +10,9 @@ from bot.handlers.utils.admin_utils.input_helpers import (
 from bot.keyboards.utils.gender_cb import GenderCB
 from bot.keyboards.utils.gender_kb import gender_kb
 from bot.keyboards.utils.utils_kb import (
-    cancel_kb,
     contact_keyboard,
     reg_confirm_kb,
+    reg_edit_name_back_kb,
     reg_guide_kb,
     reg_name_conflict_kb,
 )
@@ -184,7 +184,7 @@ def create_reg_router(
         F.data == "reg_edit"
     )
     async def edit_name(callback: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback, state, RegisterStates.edit_full_name, reply_markup=cancel_kb())
+        await edit_full_name(callback, state, RegisterStates.edit_full_name, reply_markup=reg_edit_name_back_kb())
 
     @router.message(
         RegisterStates.edit_full_name, F.text)
@@ -194,6 +194,12 @@ def create_reg_router(
                 message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
             return
         await show_confirmation(message, state, reg_confirm_kb())
+
+    @router.callback_query(RegisterStates.edit_full_name, F.data == "reg_edit_name_back")
+    async def back_from_full_name_edition(callback: CallbackQuery, state: FSMContext):
+        await state.set_state(RegisterStates.confirm_register)
+        await callback.answer('')
+        await show_confirmation(callback.message, state, reg_confirm_kb())
 
     @router.callback_query(RegisterStates.confirm_register, F.data == "reg_confirm")
     async def final_reg(callback: CallbackQuery, state: FSMContext):

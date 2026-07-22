@@ -22,7 +22,6 @@ from bot.handlers.client.appointment_invite import create_client_appointment_inv
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.client.name_change_request import create_name_change_request_router
-from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
 from bot.handlers.common.personal_data import create_personal_data_router
 from bot.handlers.common.profile import create_profile_router
@@ -117,7 +116,6 @@ async def main():
     #common handlers
     dp.include_router(create_start_router())
     dp.include_router(create_help_router())
-    dp.include_router(create_cancel_router())
     dp.include_router(create_profile_router(client_management_service))
     dp.include_router(create_personal_data_router(client_management_service))
     dp.include_router(create_name_change_request_router(client_management_service, client_notification_service))
