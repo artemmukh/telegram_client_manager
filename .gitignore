@@ -48,3 +48,6 @@ CLAUDE.md
 .agents/!/data/data_base.db
 .claude
 .codex
+
+# Scripts
+scripts
