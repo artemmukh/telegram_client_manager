@@ -22,11 +22,15 @@ class FakeBot:
 
 
 class FakeUserRepo:
-    def __init__(self, staff):
+    def __init__(self, staff, clients_missing_personal_data=None):
         self.staff = staff
+        self.clients_missing_personal_data = clients_missing_personal_data or []
 
     async def get_staff_users_by_clinic_id(self, clinic_id):
         return self.staff
+
+    async def get_clients_missing_personal_data(self):
+        return self.clients_missing_personal_data
 
 
 def _admin(telegram_user_id, ID):
@@ -35,6 +39,16 @@ def _admin(telegram_user_id, ID):
         full_name="Админов Админ",
         phone="+998900000000",
         role=Role.ADMIN,
+        telegram_user_id=telegram_user_id,
+    )
+
+
+def _client(telegram_user_id, ID):
+    return User(
+        ID=ID,
+        full_name="Клиентов Клиент",
+        phone="+998900000001",
+        role=Role.CLIENT,
         telegram_user_id=telegram_user_id,
     )
 
@@ -83,3 +97,70 @@ async def test_notify_admins_name_change_request_sends_with_keyboard_and_survive
     assert len(bot.sent_messages) == 1
     assert bot.sent_messages[0]['chat_id'] == 200
     assert bot.sent_messages[0]['reply_markup'] is keyboard
+
+
+@pytest.mark.asyncio
+async def test_broadcast_personal_data_request_sends_to_every_client_with_telegram_id():
+    clients = [
+        _client(telegram_user_id=100, ID=1),
+        _client(telegram_user_id=200, ID=2),
+    ]
+    bot = FakeBot()
+    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    service = ClientNotificationService(bot, repo)
+    keyboard = object()
+
+    await service.broadcast_personal_data_request(reply_markup=keyboard)
+
+    assert {message['chat_id'] for message in bot.sent_messages} == {100, 200}
+
+
+@pytest.mark.asyncio
+async def test_broadcast_personal_data_request_skips_client_without_telegram_id():
+    """Defensive check: even though the repository query already filters out
+    telegram_user_id IS NULL rows, the service must not crash or send if the
+    repository ever returns one anyway."""
+    clients = [
+        _client(telegram_user_id=None, ID=1),
+        _client(telegram_user_id=200, ID=2),
+    ]
+    bot = FakeBot()
+    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    service = ClientNotificationService(bot, repo)
+
+    await service.broadcast_personal_data_request(reply_markup=object())
+
+    assert len(bot.sent_messages) == 1
+    assert bot.sent_messages[0]['chat_id'] == 200
+
+
+@pytest.mark.asyncio
+async def test_broadcast_personal_data_request_continues_past_per_recipient_failure():
+    clients = [
+        _client(telegram_user_id=100, ID=1),
+        _client(telegram_user_id=200, ID=2),
+        _client(telegram_user_id=300, ID=3),
+    ]
+    bot = FakeBot(fail_for={200})
+    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    service = ClientNotificationService(bot, repo)
+
+    await service.broadcast_personal_data_request(reply_markup=object())
+
+    assert {message['chat_id'] for message in bot.sent_messages} == {100, 300}
+
+
+@pytest.mark.asyncio
+async def test_broadcast_personal_data_request_sends_exact_reply_markup_and_fallback_text():
+    clients = [_client(telegram_user_id=100, ID=1)]
+    bot = FakeBot()
+    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    service = ClientNotificationService(bot, repo)
+    keyboard = object()
+
+    await service.broadcast_personal_data_request(reply_markup=keyboard)
+
+    assert len(bot.sent_messages) == 1
+    sent = bot.sent_messages[0]
+    assert sent['reply_markup'] is keyboard
+    assert "Профиль → Изменить личные данные → Добавить дату рождения и пол" in sent['text']

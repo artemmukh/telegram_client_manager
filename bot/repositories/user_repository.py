@@ -487,6 +487,19 @@ class UserRepository:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def get_clients_missing_personal_data(self) -> list[User]:
+        """Клиенты без даты рождения или пола, доступные для рассылки"""
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.telegram_user_id IS NOT NULL
+            AND (u.birth_date IS NULL OR u.gender IS NULL)
+            ORDER BY u.full_name, u.id
+            """
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_user(row) for row in rows]
+
     async def get_clients_by_name_page(
         self, full_name: str, page: int, per_page: int = 10
     ) -> list[User]:

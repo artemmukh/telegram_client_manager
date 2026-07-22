@@ -27,6 +27,7 @@ from bot.handlers.common.help import create_help_router
 from bot.handlers.common.profile import create_profile_router
 from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
+from bot.keyboards.common.profile_kb import personal_data_broadcast_kb
 from bot.middlewares.error import ErrorMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.user import UserContextMiddleware
@@ -173,6 +174,9 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot with appointment reminders enabled")
+        dp["personal_data_broadcast_task"] = asyncio.create_task(
+            client_notification_service.broadcast_personal_data_request(personal_data_broadcast_kb())
+        )
         await dp.start_polling(bot)
     finally:
         # Graceful shutdown of scheduler

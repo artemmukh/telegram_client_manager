@@ -1,4 +1,5 @@
-﻿import logging
+﻿import asyncio
+import logging
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
@@ -72,3 +73,33 @@ class ClientNotificationService:
                 logger.warning(
                     f"Failed to notify admin {admin.telegram_user_id} about name change request: {e}"
                 )
+
+    async def broadcast_personal_data_request(self, reply_markup: InlineKeyboardMarkup) -> None:
+        """Best-effort broadcast asking clients missing birth date/gender to fill
+        them in. Never raises: a failed delivery to one client must not block
+        delivery to the others."""
+        message_text = (
+            "👋 Пожалуйста, заполните дату рождения и пол — это поможет нам вести ваш профиль точнее.\n\n"
+            "Нажмите кнопку ниже, чтобы указать данные.\n\n"
+            "Если кнопка не срабатывает, вы всегда можете сделать это через:\n"
+            "Профиль → Изменить личные данные → Добавить дату рождения и пол"
+        )
+
+        clients = await self.user_repository.get_clients_missing_personal_data()
+
+        for client in clients:
+            if client.telegram_user_id is None:
+                continue
+
+            try:
+                await self.bot.send_message(
+                    chat_id=client.telegram_user_id,
+                    text=message_text,
+                    reply_markup=reply_markup,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to send personal-data request to client {client.telegram_user_id}: {e}"
+                )
+
+            await asyncio.sleep(0.05)
