@@ -141,9 +141,15 @@ def create_client_booking_router(
 
         await callback_query.message.edit_text(
             f"Выберите время на {day.strftime('%d.%m.%Y')}:",
-            reply_markup=booking_slot_kb(slots),
+            reply_markup=booking_slot_kb(slots, cancel_callback_data="client_book_back_to_day"),
         )
         await callback_query.answer()
+
+    @router.callback_query(F.data == "client_book_back_to_day")
+    async def back_to_day_selection(callback_query: CallbackQuery, state: FSMContext) -> None:
+        data = await state.get_data()
+        week_offset = data.get("week_offset", 0)
+        await render_day_selection(callback_query, state, week_offset)
 
     @router.callback_query(ClientBookSlotCB.filter())
     async def pick_slot(callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext) -> None:
@@ -161,7 +167,7 @@ def create_client_booking_router(
 
         await callback_query.message.edit_text(
             "Опишите жалобу или причину визита (от 2 до 100 символов):",
-            reply_markup=booking_cancel_kb(),
+            reply_markup=booking_cancel_kb(cancel_callback_data="client_book_back_to_day"),
         )
         await callback_query.answer()
 
