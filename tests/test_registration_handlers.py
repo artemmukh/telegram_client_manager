@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.handlers.registration import create_reg_router
+from bot.keyboards.utils.gender_cb import GenderCB
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.states.register_states import RegisterStates
@@ -38,8 +39,11 @@ class FakeUserRepository:
     async def update_client(self, user_id, user):
         self.users_by_id[user_id] = user
 
-    async def update_user_telegram_id(self, user_id, telegram_user_id):
-        self.users_by_id[user_id].telegram_user_id = telegram_user_id
+    async def update_user_telegram_id(self, user_id, telegram_user_id, gender=None, birth_date=None):
+        user = self.users_by_id[user_id]
+        user.telegram_user_id = telegram_user_id
+        user.gender = gender
+        user.birth_date = birth_date
 
     async def create_user(self, user):
         user.ID = self.next_id
@@ -241,6 +245,8 @@ async def test_get_full_name_with_existing_user_applies_new_name_and_notifies_ad
         fsm_context, existing_client, notification_service):
     router, user_repo = _build_router(existing_clients=[existing_client], notification_service=notification_service)
     get_full_name = _get_handler(router.message, "get_full_name")
+    get_birth_date = _get_handler(router.message, "get_birth_date")
+    choose_gender = _get_handler(router.callback_query, "choose_gender")
     original_full_name = existing_client.full_name
 
     await fsm_context.set_state(RegisterStates.full_name)
@@ -255,7 +261,7 @@ async def test_get_full_name_with_existing_user_applies_new_name_and_notifies_ad
 
     await get_full_name(message, fsm_context)
 
-    assert await fsm_context.get_state() == RegisterStates.confirm_register
+    assert await fsm_context.get_state() == RegisterStates.birth_date
     data = await fsm_context.get_data()
     assert data["full_name"] == "Петр Петров"
     assert user_repo.users_by_id[existing_client.ID].full_name == "Петр Петров"
@@ -263,11 +269,24 @@ async def test_get_full_name_with_existing_user_applies_new_name_and_notifies_ad
         (1, original_full_name, "Петр Петров", existing_client.phone)
     ]
 
+    # Drive the rest of the new birth_date -> gender -> confirm_register path.
+    await get_birth_date(_message(text="05.03.1990"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.gender
+    data = await fsm_context.get_data()
+    assert data["birth_date"] == "05.03.1990"
+
+    await choose_gender(_callback(data="reg_gender:male"), GenderCB(value="male"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.confirm_register
+    data = await fsm_context.get_data()
+    assert data["gender"] == "male"
+
 
 @pytest.mark.asyncio
 async def test_get_full_name_without_existing_user_skips_service_calls(fsm_context, notification_service):
     router, user_repo = _build_router(existing_clients=[], notification_service=notification_service)
     get_full_name = _get_handler(router.message, "get_full_name")
+    get_birth_date = _get_handler(router.message, "get_birth_date")
+    choose_gender = _get_handler(router.callback_query, "choose_gender")
 
     await fsm_context.set_state(RegisterStates.full_name)
     await fsm_context.update_data(clinic_id=1, phone="+998901234567")
@@ -276,16 +295,29 @@ async def test_get_full_name_without_existing_user_skips_service_calls(fsm_conte
 
     await get_full_name(message, fsm_context)
 
-    assert await fsm_context.get_state() == RegisterStates.confirm_register
+    assert await fsm_context.get_state() == RegisterStates.birth_date
     data = await fsm_context.get_data()
     assert data["full_name"] == "Иван Иванов"
     assert notification_service.registration_name_changes == []
+
+    # Drive the rest of the new birth_date -> gender -> confirm_register path.
+    await get_birth_date(_message(text="12.11.1985"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.gender
+    data = await fsm_context.get_data()
+    assert data["birth_date"] == "12.11.1985"
+
+    await choose_gender(_callback(data="reg_gender:female"), GenderCB(value="female"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.confirm_register
+    data = await fsm_context.get_data()
+    assert data["gender"] == "female"
 
 
 @pytest.mark.asyncio
 async def test_name_conflict_no_reverts_to_existing_name(fsm_context, existing_client, notification_service):
     router, _ = _build_router(existing_clients=[existing_client], notification_service=notification_service)
     confirm_no = _get_handler(router.callback_query, "confirm_name_conflict_no")
+    get_birth_date = _get_handler(router.message, "get_birth_date")
+    choose_gender = _get_handler(router.callback_query, "choose_gender")
 
     await fsm_context.set_state(RegisterStates.name_conflict)
     await fsm_context.update_data(
@@ -300,9 +332,20 @@ async def test_name_conflict_no_reverts_to_existing_name(fsm_context, existing_c
 
     await confirm_no(callback, fsm_context)
 
-    assert await fsm_context.get_state() == RegisterStates.confirm_register
+    assert await fsm_context.get_state() == RegisterStates.birth_date
     data = await fsm_context.get_data()
     assert data["full_name"] == existing_client.full_name
+
+    # Drive the rest of the new birth_date -> gender -> confirm_register path.
+    await get_birth_date(_message(text="01.01.2000"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.gender
+    data = await fsm_context.get_data()
+    assert data["birth_date"] == "01.01.2000"
+
+    await choose_gender(_callback(data="reg_gender:male"), GenderCB(value="male"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.confirm_register
+    data = await fsm_context.get_data()
+    assert data["gender"] == "male"
 
 
 @pytest.mark.asyncio
@@ -528,4 +571,81 @@ async def test_rescanning_qr_clears_stale_fsm_data_before_new_registration(
     data = await fsm_context.get_data()
     assert "existing_user_id" not in data
     assert "existing_full_name" not in data
+
+
+# --- reclaimed user, full end-to-end path through the new birth_date/gender
+# states (Option A: reclaimed users are also prompted for both) ---
+
+@pytest.mark.asyncio
+async def test_reclaimed_user_conflict_yes_full_flow_persists_birth_date_and_gender(
+        fsm_context, existing_client, notification_service):
+    router, user_repo = _build_router(existing_clients=[existing_client], notification_service=notification_service)
+    confirm_yes = _get_handler(router.callback_query, "confirm_name_conflict_yes")
+    get_full_name = _get_handler(router.message, "get_full_name")
+    get_birth_date = _get_handler(router.message, "get_birth_date")
+    choose_gender = _get_handler(router.callback_query, "choose_gender")
+    final_reg = _get_handler(router.callback_query, "final_reg")
+
+    await fsm_context.set_state(RegisterStates.name_conflict)
+    await fsm_context.update_data(
+        clinic_id=1,
+        phone=existing_client.phone,
+        existing_user_id=existing_client.ID,
+        existing_full_name=existing_client.full_name,
+    )
+
+    await confirm_yes(_callback(data="reg_name_conflict_yes"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.full_name
+
+    await get_full_name(_message(text="Петр Петров"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.birth_date
+
+    await get_birth_date(_message(text="05.03.1990"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.gender
+
+    await choose_gender(_callback(data="reg_gender:male"), GenderCB(value="male"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.confirm_register
+
+    await final_reg(_callback(data="reg_confirm"), fsm_context)
+
+    stored = user_repo.users_by_id[existing_client.ID]
+    assert stored.full_name == "Петр Петров"
+    assert stored.telegram_user_id == 999
+    assert stored.birth_date == "1990-03-05"
+    assert stored.gender == "male"
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_user_conflict_no_full_flow_persists_birth_date_and_gender(
+        fsm_context, existing_client, notification_service):
+    router, user_repo = _build_router(existing_clients=[existing_client], notification_service=notification_service)
+    confirm_no = _get_handler(router.callback_query, "confirm_name_conflict_no")
+    get_birth_date = _get_handler(router.message, "get_birth_date")
+    choose_gender = _get_handler(router.callback_query, "choose_gender")
+    final_reg = _get_handler(router.callback_query, "final_reg")
+
+    await fsm_context.set_state(RegisterStates.name_conflict)
+    await fsm_context.update_data(
+        clinic_id=1,
+        phone=existing_client.phone,
+        existing_user_id=existing_client.ID,
+        existing_full_name=existing_client.full_name,
+    )
+
+    await confirm_no(_callback(data="reg_name_conflict_no"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.birth_date
+
+    await get_birth_date(_message(text="12.11.1985"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.gender
+
+    await choose_gender(_callback(data="reg_gender:female"), GenderCB(value="female"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.confirm_register
+
+    await final_reg(_callback(data="reg_confirm"), fsm_context)
+
+    stored = user_repo.users_by_id[existing_client.ID]
+    assert stored.full_name == existing_client.full_name
+    assert stored.telegram_user_id == 999
+    assert stored.birth_date == "1985-11-12"
+    assert stored.gender == "female"
 
