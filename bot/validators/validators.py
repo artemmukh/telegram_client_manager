@@ -33,7 +33,7 @@ def validate_full_name(full_name: str, pattern) -> str:
         raise InvalidFullNameError(
             "Введите ФИ корректно (до 50 символов).\n\n"
             "Например:\n"
-            "Иван, Иван Иванов, Иван Иванов Иванович."
+            "Иванов Иван, Иванов Иван Иванович."
         )
     return full_name
 
