@@ -14,9 +14,9 @@ from bot.models.user import User
 _WEEKDAY_LABELS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
 
-def booking_cancel_kb() -> InlineKeyboardMarkup:
+def booking_cancel_kb(cancel_callback_data: str = "client_appointment_menu") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data="client_appointment_menu")
+    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
     return builder.as_markup()
 
 
@@ -75,7 +75,9 @@ def booking_day_kb(
     return builder.as_markup()
 
 
-def booking_slot_kb(slots: list[str]) -> InlineKeyboardMarkup:
+def booking_slot_kb(
+    slots: list[str], cancel_callback_data: str = "client_appointment_menu"
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for slot in slots:
@@ -85,7 +87,7 @@ def booking_slot_kb(slots: list[str]) -> InlineKeyboardMarkup:
     if len(slots) % 4:
         rows.append(len(slots) % 4)
 
-    builder.button(text="❌ Отмена", callback_data="client_appointment_menu")
+    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)
