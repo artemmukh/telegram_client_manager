@@ -13,7 +13,7 @@ from bot.utils.role import RoleFilter
 from bot.validators.validators import FULL_NAME_PATTERN
 
 _BACK_TO_PROFILE_KB = InlineKeyboardMarkup(
-    inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="profile_back")]]
+    inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="profile_personal_data")]]
 )
 
 

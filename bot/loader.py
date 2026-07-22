@@ -1,4 +1,6 @@
 from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+
 from bot.config.config import load_config
 
 _bot: Bot | None = None
@@ -13,5 +15,5 @@ def get_bot() -> Bot:
     global _bot
     if _bot is None:
         config = load_config()
-        _bot = Bot(token=config.bot_token)
+        _bot = Bot(token=config.bot_token, default=DefaultBotProperties( parse_mode="HTML"))
     return _bot

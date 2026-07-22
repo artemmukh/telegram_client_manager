@@ -4,8 +4,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import Message, CallbackQuery
 
-from bot.exceptions.user_exceptions import InvalidFullNameError, ValidationError
-from bot.validators.validators import validate_phone, validate_full_name
+from bot.exceptions.user_exceptions import InvalidBirthDateError, InvalidFullNameError, ValidationError
+from bot.validators.validators import validate_phone, validate_full_name, validate_birth_date
 
 
 async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup):
@@ -36,6 +36,20 @@ async def full_name_processing(message: Message, state: FSMContext, next_state: 
         return False
 
     await state.update_data(full_name=client_full_name)
+    await state.set_state(next_state)
+    return True
+
+
+async def birth_date_processing(message: Message, state: FSMContext, next_state: State) -> bool:
+    birth_date = message.text.strip()
+
+    try:
+        validate_birth_date(birth_date)
+    except InvalidBirthDateError as e:
+        await message.answer(str(e))
+        return False
+
+    await state.update_data(birth_date=birth_date)
     await state.set_state(next_state)
     return True
 

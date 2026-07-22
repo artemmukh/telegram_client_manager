@@ -39,13 +39,13 @@ def back_to_help_kb():
     ])
 
 
-def cancel_kb() -> InlineKeyboardMarkup:
+def reg_edit_name_back_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="❌ Отменить",
-                    callback_data="cancel"
+                    text="⬅️ Назад",
+                    callback_data="reg_edit_name_back"
                 )
             ]
         ]

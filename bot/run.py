@@ -22,11 +22,12 @@ from bot.handlers.client.appointment_invite import create_client_appointment_inv
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.client.name_change_request import create_name_change_request_router
-from bot.handlers.common.cancel import create_cancel_router
 from bot.handlers.common.help import create_help_router
+from bot.handlers.common.personal_data import create_personal_data_router
 from bot.handlers.common.profile import create_profile_router
 from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
+from bot.keyboards.common.profile_kb import personal_data_broadcast_kb
 from bot.middlewares.error import ErrorMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.user import UserContextMiddleware
@@ -115,8 +116,8 @@ async def main():
     #common handlers
     dp.include_router(create_start_router())
     dp.include_router(create_help_router())
-    dp.include_router(create_cancel_router())
     dp.include_router(create_profile_router(client_management_service))
+    dp.include_router(create_personal_data_router(client_management_service))
     dp.include_router(create_name_change_request_router(client_management_service, client_notification_service))
 
     #admin handlers
@@ -173,6 +174,9 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot with appointment reminders enabled")
+        # dp["personal_data_broadcast_task"] = asyncio.create_task(
+        #     client_notification_service.broadcast_personal_data_request(personal_data_broadcast_kb())
+        # )
         await dp.start_polling(bot)
     finally:
         # Graceful shutdown of scheduler

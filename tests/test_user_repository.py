@@ -977,6 +977,118 @@ async def test_users_rebuild_round_trips_all_existing_user_fields():
 
 
 @pytest.mark.asyncio
+async def test_create_user_persists_gender_and_birth_date(user_repo):
+    """Phase 3 (registration flow): create_user's INSERT now includes
+    gender/birth_date directly, no longer requiring the direct-SQL workaround
+    used by test_get_user_by_id_reads_gender_and_birth_date_written_directly."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+            gender="male",
+            birth_date="1990-03-05",
+        )
+    )
+
+    user = await user_repo.get_user_by_telegram_id(1001)
+
+    assert user.gender == "male"
+    assert user.birth_date == "1990-03-05"
+
+
+@pytest.mark.asyncio
+async def test_create_user_without_gender_and_birth_date_persists_none(user_repo):
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+        )
+    )
+
+    user = await user_repo.get_user_by_telegram_id(1001)
+
+    assert user.gender is None
+    assert user.birth_date is None
+
+
+@pytest.mark.asyncio
+async def test_update_user_telegram_id_persists_gender_and_birth_date(user_repo):
+    """Registration reclaim path: update_user_telegram_id's SET clause now
+    also writes gender/birth_date in the same statement as the telegram_user_id
+    claim."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+        )
+    )
+    unclaimed = await user_repo.get_client_by_phone("+998901234567")
+    assert unclaimed.telegram_user_id is None
+
+    await user_repo.update_user_telegram_id(
+        unclaimed.ID, 1001, gender="female", birth_date="1985-11-12",
+    )
+
+    claimed = await user_repo.get_user_by_telegram_id(1001)
+    assert claimed.telegram_user_id == 1001
+    assert claimed.gender == "female"
+    assert claimed.birth_date == "1985-11-12"
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_persists_gender_and_birth_date(user_repo):
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+        )
+    )
+    created = await user_repo.get_user_by_telegram_id(1001)
+    assert created.gender is None
+    assert created.birth_date is None
+
+    await user_repo.update_personal_data(created.ID, gender="female", birth_date="1985-11-12")
+
+    updated = await user_repo.get_user_by_id(created.ID)
+    assert updated.gender == "female"
+    assert updated.birth_date == "1985-11-12"
+
+
+@pytest.mark.asyncio
+async def test_update_personal_data_with_both_none_overwrites_existing_values(user_repo):
+    """update_personal_data always overwrites both columns unconditionally --
+    there is no partial-update support. Seed non-None values first so this
+    actually demonstrates the unconditional overwrite, rather than just
+    'passing None doesn't crash'."""
+    await user_repo.create_user(
+        User(
+            full_name="Иванов Иван",
+            phone="+998901234567",
+            role=Role.CLIENT,
+            telegram_user_id=1001,
+            gender="male",
+            birth_date="1990-03-05",
+        )
+    )
+    created = await user_repo.get_user_by_telegram_id(1001)
+    assert created.gender == "male"
+    assert created.birth_date == "1990-03-05"
+
+    await user_repo.update_personal_data(created.ID, gender=None, birth_date=None)
+
+    updated = await user_repo.get_user_by_id(created.ID)
+    assert updated.gender is None
+    assert updated.birth_date is None
+
+
+@pytest.mark.asyncio
 async def test_get_user_by_id_reads_gender_and_birth_date_written_directly():
     """Phase 1 ships schema + read support only (no writer method yet), so
     gender/birth_date are written via direct SQL here to prove _row_to_user
@@ -1082,6 +1194,106 @@ async def test_fresh_db_creates_users_in_target_order_without_rebuild():
         cursor = await connection.execute("PRAGMA table_info(users)")
         current_order = [row[1] for row in await cursor.fetchall()]
         assert current_order == FRESH_DB_USERS_COLUMN_ORDER
+    finally:
+        await connection.close()
+
+
+async def _set_personal_data(connection, user_id, gender=None, birth_date=None):
+    """Phase 1 ships schema + read support only (no writer method for
+    gender/birth_date yet), so tests must write them via direct SQL --
+    mirrors test_get_user_by_id_reads_gender_and_birth_date_written_directly."""
+    await connection.execute(
+        "UPDATE users SET gender = ?, birth_date = ? WHERE id = ?",
+        (gender, birth_date, user_id),
+    )
+    await connection.commit()
+
+
+# --- get_clients_missing_personal_data (startup broadcast feature) ---
+
+@pytest.mark.asyncio
+async def test_get_clients_missing_personal_data_returns_exactly_the_qualifying_clients():
+    """Seeds every relevant shape in one test so inclusion and exclusion act
+    as mutual controls: a query that silently returned nothing (or everything)
+    for the wrong reason would fail this exact-set assertion, unlike isolated
+    pure-negative assertions."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        missing_birth_date = User(
+            full_name="Клиент Один", phone="+998901111101", role=Role.CLIENT, telegram_user_id=1001
+        )
+        await user_repo.create_user(missing_birth_date)
+        await _set_personal_data(connection, missing_birth_date.ID, gender="male", birth_date=None)
+
+        missing_gender = User(
+            full_name="Клиент Два", phone="+998901111102", role=Role.CLIENT, telegram_user_id=1002
+        )
+        await user_repo.create_user(missing_gender)
+        await _set_personal_data(connection, missing_gender.ID, gender=None, birth_date="1990-01-01")
+
+        missing_both = User(
+            full_name="Клиент Три", phone="+998901111103", role=Role.CLIENT, telegram_user_id=1003
+        )
+        await user_repo.create_user(missing_both)
+
+        has_both = User(
+            full_name="Клиент Четыре", phone="+998901111104", role=Role.CLIENT, telegram_user_id=1004
+        )
+        await user_repo.create_user(has_both)
+        await _set_personal_data(connection, has_both.ID, gender="female", birth_date="1985-03-02")
+
+        no_telegram_link = User(
+            full_name="Клиент Пять", phone="+998901111105", role=Role.CLIENT, telegram_user_id=None
+        )
+        await user_repo.create_user(no_telegram_link)
+
+        admin_missing_both = User(
+            full_name="Админ Один", phone="+998901111106", role=Role.ADMIN, telegram_user_id=1006
+        )
+        await user_repo.create_user(admin_missing_both)
+
+        results = await user_repo.get_clients_missing_personal_data()
+
+        assert {user.ID for user in results} == {
+            missing_birth_date.ID, missing_gender.ID, missing_both.ID,
+        }
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_get_clients_missing_personal_data_orders_by_full_name_then_id():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        # Inserted in reverse-alphabetical order so a passing order assertion
+        # actually proves ORDER BY full_name is applied, not just insertion order.
+        yakovlev = User(
+            full_name="Яковлев Яков", phone="+998901111201", role=Role.CLIENT, telegram_user_id=2001
+        )
+        await user_repo.create_user(yakovlev)
+
+        ivanov = User(
+            full_name="Иванов Иван", phone="+998901111202", role=Role.CLIENT, telegram_user_id=2002
+        )
+        await user_repo.create_user(ivanov)
+
+        results = await user_repo.get_clients_missing_personal_data()
+
+        assert [user.ID for user in results] == [ivanov.ID, yakovlev.ID]
     finally:
         await connection.close()
 

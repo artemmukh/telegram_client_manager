@@ -2,10 +2,12 @@
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPriceError, InvalidPurposeError
-from bot.exceptions.user_exceptions import InvalidFullNameError, InvalidPhoneError, ValidationError
+from bot.exceptions.user_exceptions import InvalidBirthDateError, InvalidFullNameError, InvalidPhoneError, ValidationError
 from bot.utils.tools import normalize_phone
 
 DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+
+BIRTH_DATE_PATTERN = re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
 
 FULL_NAME_PATTERN = re.compile(
     r"^[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?"
@@ -33,7 +35,7 @@ def validate_full_name(full_name: str, pattern) -> str:
         raise InvalidFullNameError(
             "Введите ФИ корректно (до 50 символов).\n\n"
             "Например:\n"
-            "Иван, Иван Иванов, Иван Иванов Иванович."
+            "Иванов Иван, Иванов Иван Иванович."
         )
     return full_name
 
@@ -53,6 +55,22 @@ def validate_phone(phone: str) -> str:
         )
 
     return phone
+
+
+def validate_birth_date(value: str) -> str:
+    value = value.strip()
+
+    if not BIRTH_DATE_PATTERN.fullmatch(value):
+        raise InvalidBirthDateError(
+            "Неверный формат даты. Используйте ДД.ММ.ГГГГ, например 05.03.1990."
+        )
+
+    try:
+        birth_date = datetime.strptime(value, "%d.%m.%Y")
+    except ValueError:
+        raise InvalidBirthDateError("Такой даты не существует. Проверьте ввод.")
+
+    return birth_date.strftime("%Y-%m-%d")
 
 
 def validate_fields_filled(data):

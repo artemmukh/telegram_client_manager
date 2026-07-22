@@ -161,16 +161,20 @@ class UserRepository:
                 INSERT INTO users(
                     telegram_user_id,
                     full_name,
+                    gender,
+                    birth_date,
                     phone,
                     clinic_id,
                     role,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user.telegram_user_id,
                     user.full_name,
+                    user.gender,
+                    user.birth_date,
                     user.phone,
                     user.clinic_id,
                     user.role.value,
@@ -336,15 +340,20 @@ class UserRepository:
 
         return await self.get_user_by_id(user_id)
 
-    async def update_user_telegram_id(self, user_id: int, telegram_user_id: int) -> None:
+    async def update_user_telegram_id(
+        self, user_id: int, telegram_user_id: int,
+        gender: str | None = None, birth_date: str | None = None,
+    ) -> None:
         try:
             await self.connection.execute(
                 """
                 UPDATE users
-                SET telegram_user_id = ?
+                SET telegram_user_id = ?,
+                    gender = ?,
+                    birth_date = ?
                 WHERE id = ?
                 """,
-                (telegram_user_id, user_id),
+                (telegram_user_id, gender, birth_date, user_id),
             )
             await self.connection.commit()
         except aiosqlite.IntegrityError as error:
@@ -356,6 +365,13 @@ class UserRepository:
     def _is_telegram_id_unique_violation(error: aiosqlite.IntegrityError) -> bool:
         message = str(error)
         return "UNIQUE constraint failed" in message and "telegram_user_id" in message
+
+    async def update_personal_data(self, user_id: int, *, gender: str | None, birth_date: str | None) -> None:
+        await self.connection.execute(
+            "UPDATE users SET gender = ?, birth_date = ? WHERE id = ?",
+            (gender, birth_date, user_id),
+        )
+        await self.connection.commit()
 
     async def delete_client(self, user_id: int) -> None:
         await self.connection.execute(
@@ -486,6 +502,19 @@ class UserRepository:
         )
         row = await cursor.fetchone()
         return row[0] if row else 0
+
+    async def get_clients_missing_personal_data(self) -> list[User]:
+        """Клиенты без даты рождения или пола, доступные для рассылки"""
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            WHERE u.role = 'client'
+            AND u.telegram_user_id IS NOT NULL
+            AND (u.birth_date IS NULL OR u.gender IS NULL)
+            ORDER BY u.full_name, u.id
+            """
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_user(row) for row in rows]
 
     async def get_clients_by_name_page(
         self, full_name: str, page: int, per_page: int = 10
