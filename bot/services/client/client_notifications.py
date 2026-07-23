@@ -98,7 +98,7 @@ class ClientNotificationService:
                 continue
 
             try:
-                await self.bot.send_message(chat_id=client.telegram_user_id, text=text)
+                # await self.bot.send_message(chat_id=client.telegram_user_id, text=text)
                 await self.bot.send_message(
                     chat_id=client.telegram_user_id,
                     text=message_text,
