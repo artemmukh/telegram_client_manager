@@ -8,11 +8,11 @@ def completion_followup_kb(appointment_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Да",
+        text="✅ Да, завершить",
         callback_data=CompletionFollowupCB(action="edit", appointment_id=appointment_id).pack(),
     )
     builder.button(
-        text="❌ Нет",
+        text="❌ Нет, всё верно",
         callback_data=CompletionFollowupCB(action="skip", appointment_id=appointment_id).pack(),
     )
 

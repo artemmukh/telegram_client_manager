@@ -38,12 +38,20 @@ _PENDING_ACTION_BUTTONS = [
 _POST_APPT_STATUS_BUTTONS = [
     (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
     (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
+    (AppointmentStatus.COMPLETED, "✔️ Завершена"),
+]
+
+_STATUS_CHANGE_MENU_BUTTONS = [
+    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
+    (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
+    (AppointmentStatus.COMPLETED, "✔️ Завершена"),
 ]
 
 _STATUS_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}
 _SERVICE_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED}
 _PRICE_EDITABLE_STATUSES = {AppointmentStatus.COMPLETED}
 _TIME_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}
+_STATUS_CHANGE_MENU_STATUSES = {AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED}
 
 
 def appointment_browser_back_to_search_kb() -> InlineKeyboardMarkup:
@@ -191,21 +199,24 @@ def appointment_calendar_kb(year: int, month: int) -> InlineKeyboardMarkup:
 
 def appointment_card_kb(
     appointment_id: int, mode: str, page: int, status: AppointmentStatus, tab: str = "",
-    post_appt: bool = False,
+    post_appt: bool = False, selected_status: AppointmentStatus | None = None,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     rows = []
 
     if post_appt:
+        effective_selected = selected_status or status
+
         for button_status, text in _POST_APPT_STATUS_BUTTONS:
+            label = f"☑️ {text}" if button_status == effective_selected else text
             builder.button(
-                text=text,
+                text=label,
                 callback_data=ApptActionCB(
-                    action="set_status", appointment_id=appointment_id, mode=mode, page=page,
+                    action="select_status", appointment_id=appointment_id, mode=mode, page=page,
                     value=button_status.value, post_appt=True,
                 ).pack(),
             )
-        rows.append(2)
+        rows.append(3)
 
         builder.button(
             text="📝 Изменить услугу",
@@ -225,6 +236,7 @@ def appointment_card_kb(
             text="✅ Завершить приём",
             callback_data=ApptActionCB(
                 action="finish_appointment", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
+                value=effective_selected.value,
             ).pack(),
         )
         rows.append(1)
@@ -281,9 +293,44 @@ def appointment_card_kb(
         )
         rows.append(1)
 
+    if status in _STATUS_CHANGE_MENU_STATUSES:
+        builder.button(
+            text="🔁 Изменить статус",
+            callback_data=ApptActionCB(action="status_menu", appointment_id=appointment_id, mode=mode, page=page).pack(),
+        )
+        rows.append(1)
+
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ApptPageCB(mode=mode, page=page, tab=tab).pack(),
+    )
+    rows.append(1)
+
+    builder.adjust(*rows)
+    return builder.as_markup()
+
+
+def appointment_status_menu_kb(
+    appointment_id: int, mode: str, page: int, tab: str, status: AppointmentStatus,
+) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    rows = []
+
+    for button_status, text in _STATUS_CHANGE_MENU_BUTTONS:
+        if button_status == status:
+            continue
+
+        builder.button(
+            text=text,
+            callback_data=ApptActionCB(
+                action="set_status", appointment_id=appointment_id, mode=mode, page=page, value=button_status.value,
+            ).pack(),
+        )
+    rows.append(2)
+
+    builder.button(
+        text="⬅️ Назад",
+        callback_data=ApptCardCB(appointment_id=appointment_id, mode=mode, page=page, tab=tab).pack(),
     )
     rows.append(1)
 

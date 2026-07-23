@@ -1,8 +1,12 @@
 """Tests for the post-appointment follow-up handlers (Да/Нет prompt).
 
-"Да" opens the same appointment card in the post-appointment editing window
-(status stays CONFIRMED). "Нет" finalizes the appointment as COMPLETED
-immediately, since the auto-completion job no longer does this itself.
+Both "Да" and "Нет" now atomically finalize the appointment as COMPLETED via
+AppointmentManagement.complete_appointment_by_admin() before doing anything
+else. "Да" then re-opens the post-appointment editing window (status/service/
+price corrections) on top of the now-COMPLETED appointment; "Нет" just closes
+out the follow-up prompt. If another staff member's decision already landed
+first (AppointmentAlreadyDecidedError), both branches show the same fixed
+alert and skip their normal success rendering.
 """
 
 import pytest
@@ -13,6 +17,7 @@ from bot.handlers.admin.appointment_management.appointment_completion import (
 )
 from bot.keyboards.admin.record_management_kb.completion_followup_cb import CompletionFollowupCB
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -23,11 +28,14 @@ from bot.utils.role import Role
 ADMIN_TELEGRAM_ID = 999
 OTHER_ADMIN_TELEGRAM_ID = 1000
 
+ALREADY_DECIDED_ALERT = "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»"
+
 
 class FakeAppointmentRepository:
-    def __init__(self, appointment):
+    def __init__(self, appointment, notifications=None):
         self.appointment = appointment
         self.status_updates = []
+        self.notifications = list(notifications or [])
 
     async def get_appointment_by_id(self, appointment_id):
         return self.appointment
@@ -56,6 +64,9 @@ class FakeAppointmentRepository:
         self.status_updates.append((appointment_id, AppointmentStatus.COMPLETED))
         return True
 
+    async def get_appointment_notifications(self, appointment_id, kind):
+        return self.notifications
+
 
 class FakeUserRepo:
     def __init__(self, admins=None):
@@ -79,9 +90,13 @@ class FakeUserRepo:
                 clinic_name="Зуб Мудрости",
             ),
         }
+        self.by_id = {user.ID: user for user in self.admins.values()}
 
     async def get_user_by_telegram_id(self, telegram_user_id):
         return self.admins.get(telegram_user_id)
+
+    async def get_user_by_id(self, user_id):
+        return self.by_id.get(user_id)
 
 
 class FakeStaffRepo:
@@ -122,14 +137,15 @@ def _callback_query(telegram_user_id=ADMIN_TELEGRAM_ID):
     return callback_query
 
 
-def _router(appointment_repo, appointment_scheduler=None):
+def _router(appointment_repo, appointment_scheduler=None, notification_service=None):
     return create_admin_completion_router(
-        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), appointment_scheduler,
+        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        appointment_scheduler, notification_service,
     )
 
 
 @pytest.mark.asyncio
-async def test_open_edit_keeps_status_confirmed_and_renders_post_appt_card():
+async def test_open_edit_completes_appointment_and_renders_post_appt_card():
     appointment_repo = FakeAppointmentRepository(_appointment())
     router = _router(appointment_repo)
     open_edit = _find_handler(router, "open_edit")
@@ -139,12 +155,78 @@ async def test_open_edit_keeps_status_confirmed_and_renders_post_appt_card():
 
     await open_edit(callback_query, callback_data, AsyncMock())
 
-    assert appointment_repo.appointment.status is AppointmentStatus.CONFIRMED
-    assert appointment_repo.status_updates == []
+    assert appointment_repo.appointment.status is AppointmentStatus.COMPLETED
+    assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
 
     reply_markup = callback_query.message.edit_text.call_args.kwargs["reply_markup"]
     callback_datas = [button.callback_data for row in reply_markup.inline_keyboard for button in row]
     assert any("finish_appointment" in cb for cb in callback_datas)
+
+
+@pytest.mark.asyncio
+async def test_open_edit_resyncs_jobs_when_scheduler_provided():
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+    router = _router(appointment_repo, appointment_scheduler)
+    open_edit = _find_handler(router, "open_edit")
+
+    callback_query = _callback_query()
+    callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
+
+    await open_edit(callback_query, callback_data, AsyncMock())
+
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
+    resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
+    assert resynced_appointment.status is AppointmentStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_open_edit_invalidates_sibling_notifications_on_success():
+    appointment_repo = FakeAppointmentRepository(
+        _appointment(),
+        notifications=[
+            AppointmentNotification(appointment_id=1, chat_id=555, message_id=777, kind="completion"),
+        ],
+    )
+    notification_service = MagicMock()
+    notification_service.invalidate_stale_decision_message = AsyncMock()
+    router = _router(appointment_repo, notification_service=notification_service)
+    open_edit = _find_handler(router, "open_edit")
+
+    callback_query = _callback_query()
+    callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
+
+    await open_edit(callback_query, callback_data, AsyncMock())
+
+    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
+        555, 777, "Доктор Петров Петр", "приём завершён",
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_edit_shows_alert_and_does_not_render_card_when_already_decided():
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.COMPLETED
+    appointment_repo = FakeAppointmentRepository(appointment)
+    notification_service = MagicMock()
+    notification_service.invalidate_stale_decision_message = AsyncMock()
+    router = _router(appointment_repo, notification_service=notification_service)
+    open_edit = _find_handler(router, "open_edit")
+
+    callback_query = _callback_query()
+    callback_query.message.chat.id = 111
+    callback_query.message.message_id = 222
+    callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
+
+    await open_edit(callback_query, callback_data, AsyncMock())
+
+    callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    assert appointment_repo.status_updates == []
+    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
+        111, 222, "Другой сотрудник", "приём завершён",
+    )
 
 
 @pytest.mark.asyncio
@@ -211,3 +293,28 @@ async def test_skip_edit_denies_access_to_other_doctors_appointment():
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appointment_repo.appointment.status is AppointmentStatus.CONFIRMED
     assert appointment_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided():
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.COMPLETED
+    appointment_repo = FakeAppointmentRepository(appointment)
+    notification_service = MagicMock()
+    notification_service.invalidate_stale_decision_message = AsyncMock()
+    router = _router(appointment_repo, notification_service=notification_service)
+    skip_edit = _find_handler(router, "skip_edit")
+
+    callback_query = _callback_query()
+    callback_query.message.chat.id = 111
+    callback_query.message.message_id = 222
+    callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
+
+    await skip_edit(callback_query, callback_data)
+
+    callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    assert appointment_repo.status_updates == []
+    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
+        111, 222, "Другой сотрудник", "приём завершён",
+    )

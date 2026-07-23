@@ -308,7 +308,9 @@ async def test_notify_admin_completion_sends_followup_prompt_with_keyboard():
     assert len(bot.sent_messages) == 1
     msg = bot.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "Приём завершён. Внести исправления?"
+    assert msg['text'] == (
+        "Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?"
+    )
     assert msg['reply_markup'] is not None
 
 
