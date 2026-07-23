@@ -14,6 +14,7 @@ class Database:
 
         await self.connection.execute("PRAGMA foreign_keys = ON")
         await self.connection.execute("PRAGMA journal_mode = WAL")
+        await self.connection.execute("PRAGMA busy_timeout = 5000")
         await self.connection.commit()
 
         return self.connection

@@ -34,6 +34,18 @@ class RegistrationService:
     async def get_clinic_by_token(self, token: str) -> Clinic | None:
         return await self.clinic_repository.get_clinic_by_token(token)
 
+    async def resolve_start_clinic(self, token: str | None) -> Clinic | None:
+        # Each bot instance now runs its own single-clinic database, so a
+        # QR code / invite link with an outdated or missing token can still
+        # be resolved: fall back to "the" clinic in this database instead of
+        # rejecting the user. A token that matches is still honored first.
+        if token:
+            clinic = await self.clinic_repository.get_clinic_by_token(token)
+            if clinic is not None:
+                return clinic
+
+        return await self.clinic_repository.get_only_clinic()
+
     async def check_phone(
         self, phone: str, telegram_user_id: int, contact_user_id: int | None = None,
     ) -> PhoneLookupResult:

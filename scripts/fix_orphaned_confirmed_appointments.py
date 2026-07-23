@@ -46,7 +46,8 @@ async def _get_clinic_ids(clinic_repository: ClinicRepository) -> list[int]:
 
 
 async def fix_orphaned_confirmed_appointments() -> None:
-    db = Database(load_config().database_path)
+    config = load_config()
+    db = Database(config.database_path)
     connection = await db.connect()
 
     try:
@@ -58,8 +59,8 @@ async def fix_orphaned_confirmed_appointments() -> None:
 
         await appointment_repo.init()
         await user_repo.init()
-        await staff_repo.init()
-        await clinic_repo.init()
+        await staff_repo.init(config.instance)
+        await clinic_repo.init(config.instance)
         await client_clinic_repo.init()
 
         appointment_management = AppointmentManagement(
