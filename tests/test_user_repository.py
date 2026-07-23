@@ -80,7 +80,7 @@ async def user_repo(tmp_path):
     connection = await aiosqlite.connect(tmp_path / "test.db")
     clinic_repo = ClinicRepository(connection)
     repo = UserRepository(connection)
-    await clinic_repo.init()
+    await clinic_repo.init("zb")
     await repo.init()
     # Matches bot/run.py's boot sequence: user_settings_repo.init() must run
     # immediately after user_repo.init() so USER_SELECT's LEFT JOIN user_settings

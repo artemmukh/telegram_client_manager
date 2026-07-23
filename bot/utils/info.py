@@ -12,9 +12,9 @@ async def show_main_admin_menu(message: Message, full_name: str):
     await message.answer(text='Выберите вариант: ', reply_markup=start_admin_keyboard())
 
 
-async def show_main_client_menu(message: Message, full_name: str):
+async def show_main_client_menu(message: Message, full_name: str, clinic_name: str):
     await message.answer(f"Здравствуйте, {full_name}.\n\n"
-                        f'Это бот для учета записей на прием в стоматологию "Зуб Мудрости".\n'
+                        f'Это бот для учета записей на прием в стоматологию "{clinic_name}".\n'
                          f'Вы будете получать напоминания о предстоящих записях с возможностью подтвердить или отменить их.\n\n'
                          'Для ознакомления с функционалом нажмите "Помощь".')
 

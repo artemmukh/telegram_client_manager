@@ -90,7 +90,7 @@ def test_client_action_cb_round_trip_with_longest_action_name():
 async def test_get_clients_page_orders_deterministically_for_same_full_name():
     connection = await aiosqlite.connect(":memory:")
     try:
-        await ClinicRepository(connection).init()
+        await ClinicRepository(connection).init("zb")
         repo = UserRepository(connection)
         await repo.init()
         await UserSettingsRepository(connection).init()
@@ -122,7 +122,7 @@ class FakeClinicRepo:
 async def test_search_paginate_update_delete_flow_composes():
     connection = await aiosqlite.connect(":memory:")
     try:
-        await ClinicRepository(connection).init()
+        await ClinicRepository(connection).init("zb")
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
@@ -182,7 +182,7 @@ async def test_search_paginate_update_delete_flow_composes():
 async def test_search_client_by_name_excludes_clients_from_other_clinics():
     connection = await aiosqlite.connect(":memory:")
     try:
-        await ClinicRepository(connection).init()
+        await ClinicRepository(connection).init("zb")
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
@@ -213,7 +213,7 @@ async def test_search_client_by_name_excludes_clients_from_other_clinics():
 async def test_search_client_by_phone_excludes_clients_from_other_clinics():
     connection = await aiosqlite.connect(":memory:")
     try:
-        await ClinicRepository(connection).init()
+        await ClinicRepository(connection).init("zb")
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
@@ -239,7 +239,7 @@ async def test_search_client_by_phone_excludes_clients_from_other_clinics():
 async def test_paginate_clients_list_mode_excludes_other_clinics():
     connection = await aiosqlite.connect(":memory:")
     try:
-        await ClinicRepository(connection).init()
+        await ClinicRepository(connection).init("zb")
         user_repo = UserRepository(connection)
         client_clinic_repo = ClientClinicRepository(connection)
         await user_repo.init()
