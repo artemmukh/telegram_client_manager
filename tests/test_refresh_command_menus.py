@@ -29,6 +29,7 @@ from bot.utils.role import Role
 class FakeConfig:
     def __init__(self, database_path):
         self.database_path = str(database_path)
+        self.instance = "zb"
 
 
 class FakeBot:
@@ -57,7 +58,7 @@ async def _seed_users(path: Path, users: list[User]) -> None:
         await connection.execute(
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
-        await ClinicRepository(connection).init()
+        await ClinicRepository(connection).init("zb")
         user_repo = UserRepository(connection)
         await user_repo.init()
         await UserSettingsRepository(connection).init()

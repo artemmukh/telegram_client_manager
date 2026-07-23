@@ -11,8 +11,10 @@ from bot.models.database import Database
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-bot = Bot(token=load_config().bot_token)
-db = Database(load_config().database_path)
+config = load_config()
+
+bot = Bot(token=config.bot_token)
+db = Database(config.database_path)
 
 dp = Dispatcher()
 
@@ -20,8 +22,10 @@ dp = Dispatcher()
 data_dir = Path("data")
 data_dir.mkdir(exist_ok=True)
 
-# Create sync SQLAlchemy engine for job store (separate from async bot DB)
-jobstore_db_url = f"sqlite:///{data_dir}/reminders.db"
+# Create sync SQLAlchemy engine for job store (separate from async bot DB).
+# Named per instance so two bot processes sharing the same main DB don't
+# also share (and contend on) the same APScheduler job store file.
+jobstore_db_url = f"sqlite:///{data_dir}/reminders_{config.instance}.db"
 jobstore_engine = create_engine(jobstore_db_url)
 
 # Create scheduler with timezone support for Asia/Tashkent and persistent job store

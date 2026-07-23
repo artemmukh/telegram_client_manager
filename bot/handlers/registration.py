@@ -54,16 +54,14 @@ def create_reg_router(
             state: FSMContext,
             command: CommandObject,
     ):
-        token = command.args
-
-        if not token:
-            await message.answer("Пожалуйста, отсканируйте QR-код клиники или воспользуйтесь пригласительной ссылкой.")
-            return
-
-        clinic = await reg.get_clinic_by_token(token)
+        # Each bot instance now serves exactly one clinic, so an outdated,
+        # mismatched, or missing token (older QR codes / share links) still
+        # resolves correctly -- as long as this database has exactly one
+        # clinic. A matching token is still preferred when present.
+        clinic = await reg.resolve_start_clinic(command.args)
 
         if clinic is None:
-            await message.answer("QR-код недействителен.")
+            await message.answer("QR-код или пригласительная ссылка недействительна. Обратитесь в клинику.")
             return
 
         await state.clear()
@@ -245,7 +243,9 @@ def create_reg_router(
             await show_main_admin_menu(callback.message, full_name=data["full_name"])
             await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
         else:
-            await show_main_client_menu(callback.message, full_name=data["full_name"])
+            await show_main_client_menu(
+                callback.message, full_name=data["full_name"], clinic_name=data["clinic_name"],
+            )
             await bot.set_my_commands(CLIENT_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
 
         await callback.answer()

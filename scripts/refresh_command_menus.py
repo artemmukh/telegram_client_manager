@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 async def refresh_command_menus() -> None:
-    db = Database(load_config().database_path)
+    config = load_config()
+    db = Database(config.database_path)
     connection = await db.connect()
     bot = get_bot()
 
@@ -48,7 +49,7 @@ async def refresh_command_menus() -> None:
         user_settings_repo = UserSettingsRepository(connection)
 
         await user_repo.init()
-        await clinic_repo.init()
+        await clinic_repo.init(config.instance)
         await user_settings_repo.init()
 
         updated = 0

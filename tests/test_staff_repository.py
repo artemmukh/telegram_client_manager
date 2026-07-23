@@ -16,6 +16,12 @@ async def test_visibility_scope_backfill_transfers_value_from_users():
         await connection.execute(
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
+        # Staff seeding now resolves clinic_id by clinic token (not a
+        # hardcoded numeric id), so the seed clinic must actually exist.
+        # 685889801 is seeded under the "Зуб Мудрости" clinic token.
+        await connection.execute(
+            "INSERT INTO clinics(id, name, token) VALUES (1, 'Test Clinic', 'x7A92JdPkLmQe81')"
+        )
         # Simulate a users table that still physically has the legacy
         # visibility_scope column -- UserRepository no longer manages it, but
         # a database that predates this refactor still has it on disk.
@@ -33,7 +39,7 @@ async def test_visibility_scope_backfill_transfers_value_from_users():
         await connection.commit()
 
         staff_repo = StaffRepository(connection)
-        await staff_repo.init()
+        await staff_repo.init("zb")
 
         staff = await staff_repo.get_staff(685889801)
         assert staff.visibility_scope == "clinic"
@@ -59,6 +65,12 @@ async def test_visibility_scope_backfill_leaves_null_when_telegram_id_missing_fr
         await connection.execute(
             "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
         )
+        # Staff seeding now resolves clinic_id by clinic token (not a
+        # hardcoded numeric id), so the seed clinic must actually exist.
+        # 685889801 is seeded under the "Зуб Мудрости" clinic token.
+        await connection.execute(
+            "INSERT INTO clinics(id, name, token) VALUES (1, 'Test Clinic', 'x7A92JdPkLmQe81')"
+        )
         await connection.execute("""
             CREATE TABLE users(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +81,7 @@ async def test_visibility_scope_backfill_leaves_null_when_telegram_id_missing_fr
         await connection.commit()
 
         staff_repo = StaffRepository(connection)
-        await staff_repo.init()
+        await staff_repo.init("zb")
 
         staff = await staff_repo.get_staff(685889801)
         assert staff.visibility_scope is None
@@ -121,7 +133,7 @@ async def test_visibility_scope_source_column_dropped_even_if_staff_already_migr
         await connection.commit()
 
         staff_repo = StaffRepository(connection)
-        await staff_repo.init()
+        await staff_repo.init("zb")
 
         staff = await staff_repo.get_staff(685889801)
         assert staff.visibility_scope == "clinic"

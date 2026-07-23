@@ -64,6 +64,12 @@ class FakeClinicRepository:
     async def get_clinic_by_token(self, token):
         return self.clinics_by_token.get(token)
 
+    async def get_only_clinic(self):
+        clinics = list(self.clinics_by_token.values())
+        if len(clinics) != 1:
+            return None
+        return clinics[0]
+
 
 class FakeClientClinicRepository:
     def __init__(self):
@@ -371,6 +377,7 @@ async def test_final_reg_new_user_creates_client(fsm_context, notification_servi
     await fsm_context.set_state(RegisterStates.confirm_register)
     await fsm_context.update_data(
         clinic_id=1,
+        clinic_name="Клиника Тест",
         phone="+998901234567",
         full_name="Иван Иванов",
     )
@@ -396,6 +403,7 @@ async def test_final_reg_new_user_links_client_to_clinic(fsm_context, notificati
     await fsm_context.set_state(RegisterStates.confirm_register)
     await fsm_context.update_data(
         clinic_id=1,
+        clinic_name="Клиника Тест",
         phone="+998901234567",
         full_name="Иван Иванов",
     )
@@ -417,6 +425,7 @@ async def test_final_reg_existing_user_no_conflict_no_edit_saves_name(
     await fsm_context.set_state(RegisterStates.confirm_register)
     await fsm_context.update_data(
         clinic_id=1,
+        clinic_name="Клиника Тест",
         phone=existing_client.phone,
         full_name=existing_client.full_name,
         existing_user_id=existing_client.ID,
@@ -444,6 +453,7 @@ async def test_final_reg_existing_user_conflict_yes_saves_name_and_notifies(
     await fsm_context.set_state(RegisterStates.name_conflict)
     await fsm_context.update_data(
         clinic_id=1,
+        clinic_name="Клиника Тест",
         phone=existing_client.phone,
         existing_user_id=existing_client.ID,
         existing_full_name=original_full_name,
@@ -471,6 +481,7 @@ async def test_final_reg_existing_user_conflict_no_then_edit_saves_edited_name_w
     await fsm_context.update_data(
         clinic_id=1,
         phone=existing_client.phone,
+        clinic_name="Клиника Тест",
         full_name="Петр Петров",
         existing_user_id=existing_client.ID,
         existing_full_name=existing_client.full_name,
@@ -497,6 +508,7 @@ async def test_final_reg_existing_user_no_conflict_then_edit_saves_edited_name_w
     await fsm_context.update_data(
         clinic_id=1,
         phone=existing_client.phone,
+        clinic_name="Клиника Тест",
         full_name="Сидоров Сидор",
         existing_user_id=existing_client.ID,
         existing_full_name=existing_client.full_name,
@@ -529,6 +541,76 @@ async def test_start_guest_with_valid_token_sends_guide_prompt_with_reg_guide_bu
     )
     reply_markup = guide_call.kwargs["reply_markup"]
     assert reply_markup.inline_keyboard[0][0].callback_data == "reg_guide"
+
+
+@pytest.mark.asyncio
+async def test_start_guest_without_token_resolves_the_only_clinic(
+        fsm_context, notification_service):
+    # Plain "/start", no QR / invite link payload at all: with one clinic
+    # per database, registration must still work by falling back to that
+    # single clinic instead of requiring a token.
+    clinic = Clinic(name="Клиника Тест", token="abc123", clinic_id=1)
+    clinic_repo = FakeClinicRepository(clinics=[clinic])
+    router, _ = _build_router(
+        existing_clients=[], notification_service=notification_service, clinic_repo=clinic_repo,
+    )
+    start_guest = _get_handler(router.message, "start_guest")
+
+    message = _message()
+
+    await start_guest(message, fsm_context, _command(args=None))
+
+    data = await fsm_context.get_data()
+    assert data["clinic_id"] == 1
+    assert data["clinic_name"] == "Клиника Тест"
+    guide_call = next(
+        call for call in message.answer.call_args_list
+        if call.args and "Пройдите регистрацию" in call.args[0]
+    )
+    reply_markup = guide_call.kwargs["reply_markup"]
+    assert reply_markup.inline_keyboard[0][0].callback_data == "reg_guide"
+
+
+@pytest.mark.asyncio
+async def test_start_guest_with_unknown_token_falls_back_to_the_only_clinic(
+        fsm_context, notification_service):
+    # An outdated / mismatched token (old QR code, stale share link) must
+    # still resolve, the same as no token at all -- as long as this
+    # database has exactly one clinic.
+    clinic = Clinic(name="Клиника Тест", token="abc123", clinic_id=1)
+    clinic_repo = FakeClinicRepository(clinics=[clinic])
+    router, _ = _build_router(
+        existing_clients=[], notification_service=notification_service, clinic_repo=clinic_repo,
+    )
+    start_guest = _get_handler(router.message, "start_guest")
+
+    message = _message()
+
+    await start_guest(message, fsm_context, _command(args="some-old-token-that-no-longer-matches"))
+
+    data = await fsm_context.get_data()
+    assert data["clinic_id"] == 1
+    assert data["clinic_name"] == "Клиника Тест"
+
+
+@pytest.mark.asyncio
+async def test_start_guest_without_token_and_no_clinic_seeded_rejects(
+        fsm_context, notification_service):
+    # Defensive edge case: an empty (not-yet-seeded) database must not
+    # silently guess a clinic.
+    clinic_repo = FakeClinicRepository(clinics=[])
+    router, _ = _build_router(
+        existing_clients=[], notification_service=notification_service, clinic_repo=clinic_repo,
+    )
+    start_guest = _get_handler(router.message, "start_guest")
+
+    message = _message()
+
+    await start_guest(message, fsm_context, _command(args=None))
+
+    message.answer.assert_awaited_once()
+    sent_text = message.answer.call_args.args[0]
+    assert "недействительна" in sent_text
 
 
 @pytest.mark.asyncio
@@ -604,6 +686,7 @@ async def test_reclaimed_user_conflict_yes_full_flow_persists_birth_date_and_gen
     await fsm_context.set_state(RegisterStates.name_conflict)
     await fsm_context.update_data(
         clinic_id=1,
+        clinic_name="Клиника Тест",
         phone=existing_client.phone,
         existing_user_id=existing_client.ID,
         existing_full_name=existing_client.full_name,
@@ -642,6 +725,7 @@ async def test_reclaimed_user_conflict_no_full_flow_persists_birth_date_and_gend
     await fsm_context.set_state(RegisterStates.name_conflict)
     await fsm_context.update_data(
         clinic_id=1,
+        clinic_name="Клиника Тест",
         phone=existing_client.phone,
         existing_user_id=existing_client.ID,
         existing_full_name=existing_client.full_name,

@@ -6,7 +6,7 @@ from aiogram.types import BotCommandScopeDefault
 from bot.handlers.client.geolocation import create_price_geo_router
 from bot.handlers.client.price_list import create_price_list_router
 from bot.loader import get_bot
-from bot.create_bot import dp, db
+from bot.create_bot import dp, db, config
 
 bot = get_bot()
 from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
@@ -66,8 +66,8 @@ async def main():
     await user_settings_repo.init()
 
     await appointment_repo.init()
-    await clinic_repo.init()
-    await staff_repo.init()
+    await clinic_repo.init(config.instance)
+    await staff_repo.init(config.instance)
     await client_clinic_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers

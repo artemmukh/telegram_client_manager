@@ -1,6 +1,7 @@
 import aiosqlite
 
 
+from bot.config.clinic_instances import CLINIC_SEED_BY_INSTANCE, STAFF_SEED_BY_INSTANCE
 from bot.models.staff import Staff
 
 
@@ -8,7 +9,7 @@ class StaffRepository:
     def __init__(self, connection: aiosqlite.Connection):
         self.connection = connection
 
-    async def init(self) -> None:
+    async def init(self, instance: str) -> None:
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS staff(
                 telegram_user_id INTEGER PRIMARY KEY,
@@ -20,17 +21,13 @@ class StaffRepository:
             )
         """)
 
-        await self.connection.execute("""
-        INSERT OR IGNORE INTO staff (
-                    telegram_user_id,
-                    clinic_id)
-            
-            
-                    VALUES
-                    (685889801, 1),
-                    (226655040, 1),
-                    (37470594, 1);
-                                      """)
+        # Each instance now runs its own dedicated database (one clinic per
+        # DB), so only that instance's own staff are seeded here -- not
+        # everyone from every clinic.
+        clinic_token = CLINIC_SEED_BY_INSTANCE[instance]["token"]
+        await self._seed_staff_by_clinic_token(
+            clinic_token, STAFF_SEED_BY_INSTANCE[instance]
+        )
 
         cursor = await self.connection.execute("PRAGMA table_info(staff)")
         columns = {row[1] for row in await cursor.fetchall()}
@@ -74,6 +71,31 @@ class StaffRepository:
             await self.connection.execute("ALTER TABLE users DROP COLUMN visibility_scope")
 
         await self.connection.commit()
+
+    async def _seed_staff_by_clinic_token(
+        self, clinic_token: str, telegram_user_ids: list[int]
+    ) -> None:
+        # Seed telegram ids resolved by clinic token rather than a hardcoded
+        # clinic_id: clinics.id is AUTOINCREMENT, so the numeric id a given
+        # clinic ends up with depends on insert history (migrations, backups,
+        # restores) and isn't guaranteed to match the order clinics were
+        # first added in source. A hardcoded id can point at the wrong clinic
+        # or, if that id doesn't exist yet, trip the FOREIGN KEY constraint
+        # (INSERT OR IGNORE does not suppress FK violations in SQLite).
+        cursor = await self.connection.execute(
+            "SELECT id FROM clinics WHERE token = ?", (clinic_token,)
+        )
+        row = await cursor.fetchone()
+
+        if row is None:
+            return
+
+        clinic_id = row[0]
+
+        await self.connection.executemany(
+            "INSERT OR IGNORE INTO staff (telegram_user_id, clinic_id) VALUES (?, ?)",
+            [(telegram_user_id, clinic_id) for telegram_user_id in telegram_user_ids],
+        )
 
     async def get_staff(self, telegram_user_id: int) -> Staff | None:
         cursor = await self.connection.execute(
