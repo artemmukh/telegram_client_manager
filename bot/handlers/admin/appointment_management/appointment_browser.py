@@ -178,7 +178,7 @@ def create_admin_appointment_browser_router(
     async def open_calendar_callback(callback: CallbackQuery, state: FSMContext):
         await show_calendar(callback, state)
 
-    @router.message(F.text == "📆 Календарь")
+    @router.message(F.text.in_({"/calendar", "📆 Календарь"}))
     async def open_calendar_message(message: Message, state: FSMContext):
         await show_calendar(message, state)
 

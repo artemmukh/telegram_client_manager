@@ -17,5 +17,9 @@ CLIENT_COMMANDS = [
     BotCommand(command="help", description="❓ Как пользоваться ботом"),
     BotCommand(command="profile", description="👤 Мой профиль"),
     BotCommand(command="price", description="💰 Прайс-лист"),
-    BotCommand(command="location", description="📍 Адрес клиники"),
+    BotCommand(command="geo", description="📍 Адрес клиники"),
+]
+
+DEFAULT_COMMANDS = [
+    BotCommand(command="start", description="🚀 Запустить бота"),
 ]

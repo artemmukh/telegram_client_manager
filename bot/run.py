@@ -1,6 +1,8 @@
 import asyncio
 import logging
 
+from aiogram.types import BotCommandScopeDefault
+
 from bot.handlers.client.geolocation import create_price_geo_router
 from bot.handlers.client.price_list import create_price_list_router
 from bot.loader import get_bot
@@ -43,6 +45,7 @@ from bot.services.appointment.appointment_pagination_service import AppointmentP
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_notifications import ClientNotificationService
+from bot.utils.commands import DEFAULT_COMMANDS
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +180,7 @@ async def main():
         # dp["personal_data_broadcast_task"] = asyncio.create_task(
         #     client_notification_service.broadcast_personal_data_request(personal_data_broadcast_kb())
         # )
+        await bot.set_my_commands(DEFAULT_COMMANDS, scope=BotCommandScopeDefault())
         await dp.start_polling(bot)
     finally:
         # Graceful shutdown of scheduler

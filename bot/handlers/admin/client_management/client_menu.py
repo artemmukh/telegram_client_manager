@@ -12,7 +12,7 @@ def create_admin_client_menu_router():
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
-    @router.message(F.text.in_({"/client_managing", "👤 Управление клиентами"}))
+    @router.message(F.text.in_({"/client_managing", "/clients", "/create_client", "👤 Управление клиентами"}))
     async def client_managing(message: Message):
         await message.answer(text="Выберите действие над клиентом:", reply_markup=client_keyboard())
 

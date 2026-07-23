@@ -23,7 +23,9 @@ def create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
-    @router.message(F.text.in_({"/record_managing", "📒 Управление записями", "📅 Календарь"}))
+    @router.message(F.text.in_({
+        "/record_managing", "/appointments", "/create_appointment", "📒 Управление записями", "📅 Календарь",
+    }))
     async def record_managing(message: Message):
         await message.answer(text="Выберите действие над записью:", reply_markup=record_keyboard())
 

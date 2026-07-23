@@ -880,6 +880,56 @@ async def test_get_staff_users_by_clinic_id_still_includes_clinic_scope_admins()
         await connection.close()
 
 
+@pytest.mark.asyncio
+async def test_get_all_users_returns_every_user_regardless_of_role_or_clinic():
+    """get_all_users() (used by scripts/refresh_command_menus.py) must return
+    every row with no role/clinic filtering, unlike get_staff_users_by_clinic_id
+    or get_clients_page which scope by role and/or clinic_id."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        client_clinic_1 = User(
+            full_name="Клиент Один", phone="+998901111101", role=Role.CLIENT,
+            telegram_user_id=1001, clinic_id=1,
+        )
+        await user_repo.create_user(client_clinic_1)
+
+        client_clinic_2 = User(
+            full_name="Клиент Два", phone="+998901111102", role=Role.CLIENT,
+            telegram_user_id=1002, clinic_id=2,
+        )
+        await user_repo.create_user(client_clinic_2)
+
+        admin = User(
+            full_name="Админ Один", phone="+998901111103", role=Role.ADMIN,
+            telegram_user_id=1003, clinic_id=1,
+        )
+        await user_repo.create_user(admin)
+
+        # Not yet linked to a telegram account -- get_all_users() must still
+        # return it, unlike broadcast-style queries that require a link.
+        unlinked_client = User(
+            full_name="Клиент Три", phone="+998901111104", role=Role.CLIENT,
+            telegram_user_id=None,
+        )
+        await user_repo.create_user(unlinked_client)
+
+        users = await user_repo.get_all_users()
+
+        assert {user.ID for user in users} == {
+            client_clinic_1.ID, client_clinic_2.ID, admin.ID, unlinked_client.ID,
+        }
+        assert [user.ID for user in users] == sorted(user.ID for user in users)
+    finally:
+        await connection.close()
+
+
 # --- Phase 1 (REFACTOR_DB_PROMPT.md): gender/birth_date rebuild ---
 
 @pytest.mark.asyncio

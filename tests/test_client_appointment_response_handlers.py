@@ -17,6 +17,13 @@ def _get_handler_by_name(router, name):
     raise AssertionError(f"{name} handler not found on router")
 
 
+def _get_message_handler_object_by_name(router, name):
+    for handler in router.message.handlers:
+        if handler.callback.__name__ == name:
+            return handler
+    raise AssertionError(f"{name} message handler not found on router")
+
+
 def _make_callback_query(data):
     callback_query = MagicMock()
     callback_query.data = data
@@ -116,6 +123,51 @@ class FakeNotificationService:
 
     async def notify_admin_cancellation(self, admin_telegram_id, appointment, client_name):
         self.cancellations.append((admin_telegram_id, appointment, client_name))
+
+
+# --- show_appointment_management (text-triggered entrypoint: buttons + slash commands) ---
+
+@pytest.mark.asyncio
+async def test_show_appointment_management_filter_accepts_new_slash_commands_and_button_text():
+    """Routing-level guard: F.text.in_({...}) must accept /appointments, /book,
+    /history and the legacy button text, and reject unrelated text."""
+    router = create_client_appointment_router(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+    handler = _get_message_handler_object_by_name(router, "show_appointment_management")
+
+    for text in ("/appointments", "/book", "/history", "📋 Управление записями"):
+        message = MagicMock()
+        message.text = text
+        matched, _ = await handler.check(message)
+        assert matched is True, text
+
+    message = MagicMock()
+    message.text = "some other text"
+    matched, _ = await handler.check(message)
+    assert matched is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger_text", ["/appointments", "/book", "/history"])
+async def test_show_appointment_management_new_slash_commands_trigger_same_response_as_button_text(trigger_text):
+    """/appointments, /book and /history must trigger the exact same
+    show_appointment_management handler (and therefore the same response) as
+    the pre-existing "📋 Управление записями" reply-keyboard button text."""
+    from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
+
+    router = create_client_appointment_router(MagicMock(), MagicMock(), MagicMock(), MagicMock())
+    show_appointment_management = _get_message_handler_object_by_name(
+        router, "show_appointment_management"
+    ).callback
+
+    message = MagicMock()
+    message.text = trigger_text
+    message.answer = AsyncMock()
+
+    await show_appointment_management(message)
+
+    message.answer.assert_awaited_once_with(
+        "Выберите действие:", reply_markup=client_appointment_management_kb()
+    )
 
 
 # Tests for confirmation flow

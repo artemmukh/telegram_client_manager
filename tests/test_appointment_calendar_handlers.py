@@ -168,6 +168,13 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
+def _find_message_handler_object(router, name):
+    for handler in router.message.handlers:
+        if handler.callback.__name__ == name:
+            return handler
+    raise AssertionError(f"message handler {name} not found")
+
+
 def _callback_query(telegram_user_id=OWN_ADMIN_TELEGRAM_ID):
     callback_query = MagicMock()
     callback_query.from_user.id = telegram_user_id
@@ -216,6 +223,64 @@ async def test_open_calendar_clears_state_and_opens_grid_at_clamped_current_mont
 
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
+    assert kwargs["reply_markup"] == appointment_calendar_kb(expected_year, expected_month)
+
+
+# --- open_calendar_message (text-triggered entrypoint: button + /calendar slash command) ---
+
+@pytest.mark.asyncio
+async def test_open_calendar_message_filter_accepts_slash_command_and_button_text():
+    """Routing-level guard: the F.text.in_({"/calendar", "📆 Календарь"}) filter
+    on open_calendar_message must accept both triggers and reject unrelated text."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo)
+    handler = _find_message_handler_object(router, "open_calendar_message")
+
+    for text in ("/calendar", "📆 Календарь"):
+        message = MagicMock()
+        message.text = text
+        matched, _ = await handler.check(message)
+        assert matched is True, text
+
+    message = MagicMock()
+    message.text = "some other text"
+    matched, _ = await handler.check(message)
+    assert matched is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger_text", ["/calendar", "📆 Календарь"])
+async def test_open_calendar_message_opens_grid_at_clamped_current_month(trigger_text):
+    """/calendar must trigger the exact same open_calendar_message handler
+    (and therefore the exact same show_calendar behaviour) as the pre-existing
+    "📆 Календарь" reply-keyboard button text."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo)
+    open_calendar_message = _find_message_handler_object(router, "open_calendar_message").callback
+
+    sent_message = MagicMock()
+    sent_message.chat.id = 100
+    sent_message.message_id = 555
+
+    message = MagicMock()
+    message.text = trigger_text
+    message.answer = AsyncMock(return_value=sent_message)
+    state = FakeState(stale_key="stale_value")
+
+    await open_calendar_message(message, state)
+
+    today = get_current_tashkent_datetime().date()
+    expected_year, expected_month = clamp_month_to_range(today.year, today.month)
+
+    assert "stale_key" not in state.data
+    assert state.data["calendar_year"] == expected_year
+    assert state.data["calendar_month"] == expected_month
+    assert state.data["card_chat_id"] == 100
+    assert state.data["card_message_id"] == 555
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+
+    message.answer.assert_awaited_once()
+    args, kwargs = message.answer.await_args
     assert kwargs["reply_markup"] == appointment_calendar_kb(expected_year, expected_month)
 
 
