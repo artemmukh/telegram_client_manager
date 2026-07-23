@@ -7,8 +7,8 @@ working hours/days configurable per clinic/doctor.
 
 from datetime import datetime, timedelta
 
-WORKING_HOURS_START = "10:30"
-WORKING_HOURS_END = "18:00"
+WORKING_HOURS_START = "10:00"
+WORKING_HOURS_END = "17:30"
 SLOT_STEP_MINUTES = 30
 WORKING_WEEKDAYS = (0, 1, 2, 3, 4, 5)  # Mon=0 ... Sat=5, Sunday=6 is a day off
 BOOKING_HORIZON_DAYS = 14
