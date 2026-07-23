@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
+import bot.handlers.registration as registration_module
 from bot.handlers.registration import create_reg_router
 from bot.keyboards.utils.gender_cb import GenderCB
 from bot.models.clinic import Clinic
@@ -83,6 +84,15 @@ class FakeClientNotificationService:
         self.registration_name_changes.append((clinic_id, stored_name, new_name, client_phone))
 
 
+class FakeRegistrationBot:
+    """Stands in for bot.loader.get_bot() so final_reg doesn't hit the real
+    aiogram Bot / aiohttp session (see test_refresh_command_menus.py for the
+    same get_bot-faking convention)."""
+
+    async def set_my_commands(self, commands, scope):
+        pass
+
+
 def _get_handler(observer, name):
     for handler in observer.handlers:
         if handler.callback.__name__ == name:
@@ -115,6 +125,11 @@ def existing_client():
 @pytest.fixture
 def notification_service():
     return FakeClientNotificationService()
+
+
+@pytest.fixture(autouse=True)
+def _patch_get_bot(monkeypatch):
+    monkeypatch.setattr(registration_module, "get_bot", lambda: FakeRegistrationBot())
 
 
 def _build_router(existing_clients, notification_service, clinic_repo=None, client_clinic_repo=None):
