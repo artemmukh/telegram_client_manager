@@ -66,6 +66,13 @@ def _find_callback_handler(router, name):
     raise AssertionError(f"callback handler {name} not found")
 
 
+def _find_message_handler_object(router, name):
+    for handler in router.message.handlers:
+        if handler.callback.__name__ == name:
+            return handler
+    raise AssertionError(f"message handler {name} not found")
+
+
 def _callback_query():
     callback_query = MagicMock()
     callback_query.from_user.id = ADMIN_TELEGRAM_ID
@@ -87,6 +94,52 @@ def _build_router(clients_by_id=None, client_clinic_repo=None):
     user_repo = FakeUserRepoForRecordMenu(clients_by_id=clients_by_id)
     return create_admin_record_router(
         user_repo, FakeStaffRepo(), FakeClinicRepo(), client_clinic_repo=client_clinic_repo,
+    )
+
+
+# --- record_managing (text-triggered entrypoint: buttons + slash commands) ---
+
+@pytest.mark.asyncio
+async def test_record_managing_filter_accepts_new_slash_commands_and_button_text():
+    """Routing-level guard: F.text.in_({...}) must accept /record_managing,
+    /appointments, /create_appointment and both legacy button texts, and
+    reject unrelated text."""
+    router = _build_router()
+    handler = _find_message_handler_object(router, "record_managing")
+
+    accepted_texts = (
+        "/record_managing", "/appointments", "/create_appointment",
+        "📒 Управление записями", "📅 Календарь",
+    )
+    for text in accepted_texts:
+        message = MagicMock()
+        message.text = text
+        matched, _ = await handler.check(message)
+        assert matched is True, text
+
+    message = MagicMock()
+    message.text = "some other text"
+    matched, _ = await handler.check(message)
+    assert matched is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger_text", ["/appointments", "/create_appointment", "📒 Управление записями"])
+async def test_record_managing_new_slash_commands_trigger_same_response_as_button_text(trigger_text):
+    """/appointments and /create_appointment must trigger the exact same
+    record_managing handler (and therefore the same response) as the
+    pre-existing "📒 Управление записями" reply-keyboard button text."""
+    router = _build_router()
+    record_managing = _find_message_handler_object(router, "record_managing").callback
+
+    message = MagicMock()
+    message.text = trigger_text
+    message.answer = AsyncMock()
+
+    await record_managing(message)
+
+    message.answer.assert_awaited_once_with(
+        text="Выберите действие над записью:", reply_markup=record_keyboard()
     )
 
 
