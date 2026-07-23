@@ -26,10 +26,10 @@ async def appointment_setup(tmp_path):
     staff_repo = StaffRepository(connection)
     appointment_repo = AppointmentRepository(connection)
 
-    await clinic_repo.init()
+    await clinic_repo.init("zb")
     await user_repo.init()
     await UserSettingsRepository(connection).init()
-    await staff_repo.init()
+    await staff_repo.init("zb")
     await appointment_repo.init()
 
     await user_repo.create_user(
@@ -113,10 +113,10 @@ async def _in_memory_repos():
     staff_repo = StaffRepository(connection)
     appointment_repo = AppointmentRepository(connection)
 
-    await clinic_repo.init()
+    await clinic_repo.init("zb")
     await user_repo.init()
     await UserSettingsRepository(connection).init()
-    await staff_repo.init()
+    await staff_repo.init("zb")
     await appointment_repo.init()
 
     return connection, user_repo, appointment_repo
@@ -1650,10 +1650,10 @@ async def test_appointments_rebuild_triggers_even_without_admin_tg_id_on_ancient
     try:
         clinic_repo = ClinicRepository(connection)
         user_repo = UserRepository(connection)
-        await clinic_repo.init()
+        await clinic_repo.init("zb")
         await user_repo.init()
         await UserSettingsRepository(connection).init()
-        await StaffRepository(connection).init()
+        await StaffRepository(connection).init("zb")
 
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
 
@@ -1698,10 +1698,10 @@ async def test_appointments_rebuild_round_trips_all_existing_fields_and_preserve
         clinic_repo = ClinicRepository(connection)
         user_repo = UserRepository(connection)
         staff_repo = StaffRepository(connection)
-        await clinic_repo.init()
+        await clinic_repo.init("zb")
         await user_repo.init()
         await UserSettingsRepository(connection).init()
-        await staff_repo.init()
+        await staff_repo.init("zb")
 
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
         doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
@@ -1775,10 +1775,10 @@ async def test_appointments_rebuild_is_idempotent_second_init_does_not_rebuild_a
     try:
         clinic_repo = ClinicRepository(connection)
         user_repo = UserRepository(connection)
-        await clinic_repo.init()
+        await clinic_repo.init("zb")
         await user_repo.init()
         await UserSettingsRepository(connection).init()
-        await StaffRepository(connection).init()
+        await StaffRepository(connection).init("zb")
 
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
 
@@ -1821,7 +1821,7 @@ async def test_appointments_rebuild_preserves_appointment_notifications_fk():
     try:
         clinic_repo = ClinicRepository(connection)
         user_repo = UserRepository(connection)
-        await clinic_repo.init()
+        await clinic_repo.init("zb")
         await user_repo.init()
         await UserSettingsRepository(connection).init()
 

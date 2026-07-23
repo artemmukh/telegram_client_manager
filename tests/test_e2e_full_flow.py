@@ -88,10 +88,10 @@ async def e2e(tmp_path):
     appointment_repo = AppointmentRepository(connection)
     client_clinic_repo = ClientClinicRepository(connection)
 
-    await clinic_repo.init()
+    await clinic_repo.init("zb")
     await user_repo.init()
     await user_settings_repo.init()
-    await staff_repo.init()
+    await staff_repo.init("zb")
     await appointment_repo.init()
     await client_clinic_repo.init()
 
