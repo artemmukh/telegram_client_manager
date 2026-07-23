@@ -54,6 +54,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_delete_confirm_kb,
     appointment_delete_notify_kb,
     appointment_list_kb,
+    appointment_status_menu_kb,
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
@@ -312,6 +313,45 @@ def create_admin_appointment_browser_router(
             build_appointment_card(appointment),
             reply_markup=appointment_card_kb(
                 callback_data.appointment_id, callback_data.mode, callback_data.page, status=appointment.status,
+            ),
+        )
+        await remember_tracked_message(state, callback_query.message)
+
+    @router.callback_query(ApptActionCB.filter(F.action == "status_menu"))
+    async def open_status_menu(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment),
+            reply_markup=appointment_status_menu_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page, tab="", status=appointment.status,
+            ),
+        )
+        await remember_tracked_message(state, callback_query.message)
+
+    @router.callback_query(ApptActionCB.filter(F.action == "select_status"))
+    async def select_status(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+        try:
+            selected_status = AppointmentStatus(callback_data.value)
+        except ValueError:
+            await callback_query.answer("Некорректный статус.", show_alert=True)
+            return
+
+        appointment = await appt_mng.get_appointment_for_admin(callback_data.appointment_id, callback_query.from_user.id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment),
+            reply_markup=appointment_card_kb(
+                callback_data.appointment_id, callback_data.mode, callback_data.page, status=appointment.status,
+                post_appt=True, selected_status=selected_status,
             ),
         )
         await remember_tracked_message(state, callback_query.message)
@@ -668,7 +708,12 @@ def create_admin_appointment_browser_router(
             return
 
         try:
-            appointment = await appt_mng.update_status(owned_appointment, AppointmentStatus.COMPLETED)
+            selected_status = AppointmentStatus(callback_data.value) if callback_data.value else AppointmentStatus.COMPLETED
+        except ValueError:
+            selected_status = AppointmentStatus.COMPLETED
+
+        try:
+            appointment = await appt_mng.update_status(owned_appointment, selected_status)
         except BotException as e:
             await callback_query.answer(str(e), show_alert=True)
             return
@@ -676,7 +721,7 @@ def create_admin_appointment_browser_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
-        await callback_query.answer("Приём завершён")
+        await callback_query.answer("Статус обновлён")
         await callback_query.message.edit_text(
             build_appointment_card(appointment),
             reply_markup=appointment_card_kb(

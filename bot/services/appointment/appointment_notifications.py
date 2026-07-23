@@ -322,7 +322,7 @@ class AppointmentNotificationService:
         """
         sent_message = await self.bot.send_message(
             chat_id=admin_telegram_id,
-            text="Приём завершён. Внести исправления?",
+            text="Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?",
             reply_markup=completion_followup_kb(appointment.id),
             reply_parameters=self._admin_reply_parameters(appointment),
         )

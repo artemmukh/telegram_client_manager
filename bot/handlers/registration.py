@@ -1,7 +1,10 @@
 from aiogram import Router, F
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
-from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, UserAlreadyExistsError
+from aiogram.types import Message, CallbackQuery, BotCommandScopeChat
+
+from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, \
+    UserAlreadyExistsError
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     birth_date_processing, edit_full_name, full_name_processing
@@ -16,17 +19,17 @@ from bot.keyboards.utils.utils_kb import (
     reg_guide_kb,
     reg_name_conflict_kb,
 )
-
+from bot.loader import get_bot
 from bot.services.client.client_notifications import ClientNotificationService
 from bot.services.utils.auth import AuthService
 from bot.services.utils.registration import RegistrationService
 from bot.states.register_states import RegisterStates
+from bot.utils.commands import ADMIN_COMMANDS, CLIENT_COMMANDS
 from bot.utils.info import (
     display_registration_guide_msg,
     show_main_admin_menu,
     show_main_client_menu,
 )
-from aiogram.filters import CommandStart, CommandObject
 from bot.utils.role import RoleFilter, Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import FULL_NAME_PATTERN
@@ -236,10 +239,14 @@ def create_reg_router(
 
         await callback.message.answer("Регистрация прошла успешно!")
 
+        bot = get_bot()
+
         if role == Role.ADMIN:
             await show_main_admin_menu(callback.message, full_name=data["full_name"])
+            await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
         else:
             await show_main_client_menu(callback.message, full_name=data["full_name"])
+            await bot.set_my_commands(CLIENT_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
 
         await callback.answer()
         await state.clear()

@@ -225,11 +225,9 @@ async def test_skip_edit_shows_alert_and_invalidates_own_message_on_lost_race():
 
     await skip_edit(callback_query, CompletionFollowupCB(action="skip", appointment_id=1))
 
-    callback_query.answer.assert_called_once()
-    args, kwargs = callback_query.answer.call_args
-    assert "уже обработана" in args[0]
-    assert "Ivanova Irina" in args[0]
-    assert kwargs == {"show_alert": True}
+    callback_query.answer.assert_called_once_with(
+        "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»", show_alert=True,
+    )
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
         555, 777, DECIDED_LABEL, "приём завершён"
     )

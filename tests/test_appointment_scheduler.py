@@ -1597,6 +1597,81 @@ async def test_cancel_appointment_autocomplete_idempotent_no_error(
 
 
 @pytest.mark.asyncio
+async def test_past_due_autocomplete_completes_appointment_immediately(
+    appointment_scheduler, scheduler, mock_appointment_repo, sample_appointment
+):
+    """When the computed autocomplete time (appointment datetime + 2h) is
+    already in the past and the appointment is still CONFIRMED with no active
+    reschedule negotiation, schedule_appointment_autocomplete must complete it
+    immediately via complete_confirmed_appointment instead of leaving it stuck
+    CONFIRMED, and must not schedule any job for it."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=3)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+    mock_appointment_repo.update_appointment_status.assert_called_once_with(
+        sample_appointment.id, AppointmentStatus.COMPLETED, ANY,
+    )
+    assert sample_appointment.status == AppointmentStatus.COMPLETED
+    assert scheduler.get_jobs() == []
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_autocomplete_does_not_call_add_job(
+    appointment_scheduler, scheduler, mock_appointment_repo, sample_appointment
+):
+    """Regression test for the past-due guard: add_job must not be invoked
+    when the computed autocomplete time is already in the past, even though
+    the appointment now gets completed immediately instead of silently
+    skipped."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=3)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch.object(scheduler, "add_job") as mock_add_job:
+        await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+        mock_add_job.assert_not_called()
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_autocomplete_with_active_proposal_does_not_force_complete(
+    appointment_scheduler, scheduler, mock_appointment_repo, sample_appointment
+):
+    """When the appointment is CONFIRMED but has an active reschedule proposal
+    (proposed_datetime set), the past-due guard still calls
+    complete_confirmed_appointment, but that call must decline (return None)
+    per its own negotiation-in-progress guard, leaving the appointment
+    CONFIRMED and not scheduling any job."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = (_current_tashkent_time() + timedelta(days=1)).isoformat()
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=3)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+    mock_appointment_repo.update_appointment_status.assert_not_called()
+    assert sample_appointment.status == AppointmentStatus.CONFIRMED
+    assert scheduler.get_jobs() == []
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
 async def test_complete_confirmed_appointment_completes_when_confirmed_no_proposal(
     mock_appointment_management, mock_appointment_repo, sample_appointment
 ):

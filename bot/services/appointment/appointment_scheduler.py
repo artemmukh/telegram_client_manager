@@ -201,10 +201,19 @@ class AppointmentScheduler:
             autocomplete_time = appointment_dt + timedelta(hours=AUTO_COMPLETE_DELAY_HOURS)
 
             if autocomplete_time <= _current_tashkent_time():
-                logger.info(
-                    f"Skipping past-due autocomplete for appointment {appointment.id} "
-                    f"(would have run at {autocomplete_time.isoformat()})"
+                logger.warning(
+                    f"Past-due autocomplete for appointment {appointment.id} "
+                    f"(would have run at {autocomplete_time.isoformat()}); "
+                    "completing immediately instead of leaving it stuck CONFIRMED"
                 )
+                completed = await self.appointment_management.complete_confirmed_appointment(appointment.id)
+                if completed is not None:
+                    logger.warning(f"Completed past-due appointment {appointment.id} immediately")
+                else:
+                    logger.warning(
+                        f"Appointment {appointment.id} was not completed immediately "
+                        "(no longer CONFIRMED or has a proposed_datetime)"
+                    )
                 return
 
             job_id = f"appt_{appointment.id}_autocomplete"
@@ -666,6 +675,10 @@ class AppointmentScheduler:
                 await self.schedule_proposal_reminder(proposal_target)
             else:
                 await self.cancel_reschedule_expiry(appointment_id)
+                # Safe to cancel-then-reschedule unconditionally: schedule_appointment_autocomplete
+                # no longer silently no-ops on a past-due autocomplete_time -- it now completes the
+                # appointment immediately in that branch, so this can never leave the appointment
+                # stuck CONFIRMED with no job covering it.
                 await self.schedule_appointment_autocomplete(appointment)
 
             await self.cancel_appointment_reminders(appointment_id)
