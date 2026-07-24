@@ -133,7 +133,7 @@ async def main():
 
     #browse (view/edit/delete)
     dp.include_router(create_admin_client_browser_router(
-        user_repo, staff_repo, clinic_repo, appointment_repo, client_clinic_repo,
+        user_repo, staff_repo, clinic_repo, appointment_repo, client_clinic_repo, instance=config.instance,
     ))
 
     #name-change approval
@@ -142,8 +142,8 @@ async def main():
     #record handlers
     dp.include_router(create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic_repo))
     dp.include_router(create_admin_appointment_creation_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service, notification_service,
-        appointment_scheduler, client_clinic_repo,
+        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service,
+        notification_service, appointment_scheduler, client_clinic_repo,
     ))
     dp.include_router(create_admin_appointment_browser_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service
@@ -171,8 +171,8 @@ async def main():
     dp.include_router(create_client_appointment_invite_router(
         appointment_management_service, notification_service, appointment_scheduler
     ))
-    dp.include_router(create_price_list_router())
-    dp.include_router(create_price_geo_router())
+    dp.include_router(create_price_list_router(config.instance))
+    dp.include_router(create_price_geo_router(config.instance))
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)

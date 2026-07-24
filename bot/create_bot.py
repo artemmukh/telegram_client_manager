@@ -23,9 +23,12 @@ data_dir = Path("data")
 data_dir.mkdir(exist_ok=True)
 
 # Create sync SQLAlchemy engine for job store (separate from async bot DB).
-# Named per instance so two bot processes sharing the same main DB don't
-# also share (and contend on) the same APScheduler job store file.
-jobstore_db_url = f"sqlite:///{data_dir}/reminders_{config.instance}.db"
+# "zb" keeps the original, pre-existing reminders.db (its scheduled jobs
+# must not be silently abandoned) -- only newer instances get their own
+# distinctly-named job store file, since each now has its own main DB too.
+REMINDERS_DB_NAME_BY_INSTANCE = {"zb": "reminders.db"}
+reminders_db_name = REMINDERS_DB_NAME_BY_INSTANCE.get(config.instance, f"reminders_{config.instance}.db")
+jobstore_db_url = f"sqlite:///{data_dir}/{reminders_db_name}"
 jobstore_engine = create_engine(jobstore_db_url)
 
 # Create scheduler with timezone support for Asia/Tashkent and persistent job store

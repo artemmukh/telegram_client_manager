@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_admin_client_browser_router(
-    user_repo, staff_repo, clinic_repo, appointment_repo=None, client_clinic_repo=None,
+    user_repo, staff_repo, clinic_repo, appointment_repo=None, client_clinic_repo=None, *, instance: str = "zb",
 ):
     router = Router()
 
@@ -239,6 +239,7 @@ def create_admin_client_browser_router(
         data = await state.get_data()
         await ah.begin_appointment_creation(
             appt_mng, callback_query, state,
+            instance=instance,
             full_name=client.full_name, phone=client.phone,
             origin_client_id=callback_data.client_id, origin_mode=callback_data.mode, origin_page=callback_data.page,
             origin_search_data=data.get("search_data"),

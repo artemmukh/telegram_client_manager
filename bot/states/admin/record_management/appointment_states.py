@@ -10,5 +10,7 @@ class AppointmentCreationStates(StatesGroup):
     edit_phone = State()
     appointment_datetime = State()
     appointment_datetime_confirm = State()
+    choose_day = State()
+    choose_slot = State()
     purpose = State()
     confirm = State()
