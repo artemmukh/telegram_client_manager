@@ -109,7 +109,7 @@ async def test_confirm_request_shows_alert_and_invalidates_own_message_on_lost_r
         async def get_appointment_by_id(self, appointment_id):
             return self.appointment
 
-        async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
             return []
 
         async def try_confirm_or_reject_pending(self, appointment_id, new_status, decided_by_user_id, status_updated_at):
@@ -157,7 +157,7 @@ async def test_accept_reschedule_shows_alert_and_invalidates_own_message_on_lost
         async def get_appointment_by_id(self, appointment_id):
             return self.current
 
-        async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
             return []
 
         async def try_resolve_client_reschedule(
@@ -205,7 +205,7 @@ async def test_skip_edit_shows_alert_and_invalidates_own_message_on_lost_race():
         async def get_appointment_by_id(self, appointment_id):
             return self.appointment
 
-        async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
             return []
 
         async def try_complete_appointment(self, appointment_id, decided_by_user_id, status_updated_at):
@@ -252,7 +252,7 @@ async def test_approve_propose_datetime_shows_alert_and_invalidates_own_message_
         async def get_appointment_by_id(self, appointment_id):
             return self.current
 
-        async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+        async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
             return []
 
         async def try_propose_new_datetime(

@@ -38,7 +38,7 @@ class FakeAppointmentRepository:
     async def get_appointment_by_id(self, appointment_id):
         return self.appointment
 
-    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
         return []
 
     async def update_proposed_datetime(self, appointment_id, proposed_datetime):
@@ -130,7 +130,7 @@ class RaceFakeAppointmentRepository:
     async def get_appointment_by_id(self, appointment_id):
         return self.current
 
-    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
         return []
 
     async def try_propose_new_datetime(

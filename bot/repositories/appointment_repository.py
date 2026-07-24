@@ -48,7 +48,7 @@ class AppointmentRepository:
     def __init__(self, connection: aiosqlite.Connection):
         self.connection = connection
 
-    async def init(self) -> None:
+    async def init(self, max_bookings_per_slot: int | None = None) -> None:
         # Rename columns if they exist (migration from old schema)
         try:
             await self.connection.execute(
@@ -180,28 +180,38 @@ class AppointmentRepository:
             ON appointment_notifications(appointment_id, kind)
         """)
 
-        cursor = await self.connection.execute("""
-            SELECT admin_id, datetime, COUNT(*)
-            FROM appointments
-            WHERE status = 'confirmed'
-            GROUP BY admin_id, datetime
-            HAVING COUNT(*) > 1
-        """)
-        duplicates = await cursor.fetchall()
-        if duplicates:
-            pairs = ", ".join(f"(admin_id={row[0]}, datetime={row[1]})" for row in duplicates)
-            logger.error(
-                "Found duplicate confirmed appointments for the same doctor/datetime, "
-                "skipping creation of idx_appointments_doctor_datetime_confirmed "
-                "(double-booking protection is NOT active until this is resolved): %s",
-                pairs,
-            )
-        else:
-            await self.connection.execute("""
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_doctor_datetime_confirmed
-                ON appointments(admin_id, datetime)
+        if max_bookings_per_slot is None:
+            cursor = await self.connection.execute("""
+                SELECT admin_id, datetime, COUNT(*)
+                FROM appointments
                 WHERE status = 'confirmed'
+                GROUP BY admin_id, datetime
+                HAVING COUNT(*) > 1
             """)
+            duplicates = await cursor.fetchall()
+            if duplicates:
+                pairs = ", ".join(f"(admin_id={row[0]}, datetime={row[1]})" for row in duplicates)
+                logger.error(
+                    "Found duplicate confirmed appointments for the same doctor/datetime, "
+                    "skipping creation of idx_appointments_doctor_datetime_confirmed "
+                    "(double-booking protection is NOT active until this is resolved): %s",
+                    pairs,
+                )
+            else:
+                await self.connection.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_doctor_datetime_confirmed
+                    ON appointments(admin_id, datetime)
+                    WHERE status = 'confirmed'
+                """)
+        else:
+            # A prior init() call (old code, or a zb-style boot on this same
+            # DB file) may have created the single-booking-per-slot unique
+            # index. When max_bookings_per_slot allows multiple confirmed
+            # bookings per slot, that index must not survive, or it will
+            # keep hard-blocking additional confirmed bookings.
+            await self.connection.execute(
+                "DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed"
+            )
 
         await self.connection.commit()
 
@@ -325,11 +335,23 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
-    async def get_appointments_by_doctor_and_date(self, doctor_id: int, date: str) -> list[Appointment]:
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT + "\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status = ?",
-            (doctor_id, f"{date}%", AppointmentStatus.CONFIRMED.value),
-        )
+    async def get_appointments_by_doctor_and_date(
+        self,
+        doctor_id: int,
+        date: str,
+        statuses: list[AppointmentStatus] | None = None,
+    ) -> list[Appointment]:
+        if statuses is None:
+            cursor = await self.connection.execute(
+                APPOINTMENT_SELECT + "\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status = ?",
+                (doctor_id, f"{date}%", AppointmentStatus.CONFIRMED.value),
+            )
+        else:
+            placeholders = ", ".join("?" for _ in statuses)
+            cursor = await self.connection.execute(
+                APPOINTMENT_SELECT + f"\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status IN ({placeholders})",
+                (doctor_id, f"{date}%", *[status.value for status in statuses]),
+            )
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 

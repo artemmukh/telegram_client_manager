@@ -43,15 +43,18 @@ class DateParserContent(TypedDict):
 
 # None means "not set up yet" -- the handler sends a placeholder text message
 # instead of trying to load images that don't exist for that clinic.
-PRICE_LIST_BY_INSTANCE: dict[str, PriceListContent | None] = {
+PRICE_LIST_BY_INSTANCE: dict[str, PriceListContent] = {
     "zb": {
         "image_paths": ["data/price_list/rus_1pg.png", "data/price_list/rus_2pg.png"],
-        "caption": "Прайс лист оказываемых услуг.",
+        "caption": "Прайс-лист оказываемых услуг.",
     },
-    "mm": None,
+    "mm": {
+        "image_paths": ["data/price_list/price_mm.jpg", "data/price_list/schedule_mm.jpg"],
+        "caption": "График и Прайс-лист оказываемых услуг.",
+    },
 }
 
-LOCATION_BY_INSTANCE: dict[str, LocationContent | None] = {
+LOCATION_BY_INSTANCE: dict[str, LocationContent] = {
     "zb": {
         "image_path": "data/location/location.png",
         "caption": (
@@ -60,7 +63,11 @@ LOCATION_BY_INSTANCE: dict[str, LocationContent | None] = {
             'Ориентир: магазин "Чимган".'
         ),
     },
-    "mm": None,
+    "mm": {"image_path": "data/location/location_mm.png",
+        "caption": (
+            "https://yandex.uz/maps/-/CTfUePor\n"
+            "Мануал мед, ул. Шота Руставели, 91"
+        ),}
 }
 
 PRICE_LIST_STUB_MESSAGE = "Прайс-лист скоро появится здесь. Уточняйте у администратора клиники."

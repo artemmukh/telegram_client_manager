@@ -301,10 +301,16 @@ def create_admin_appointment_creation_router(instance:str,
         )
         await state.set_state(AppointmentCreationStates.purpose)
 
-        await callback_query.message.edit_text(
-            "Опишите услугу (например: Консультация):",
-            reply_markup=back_to_records_kb(),
-        )
+        if instance == "zb":
+            await callback_query.message.edit_text(
+                "Опишите услугу (например: Консультация):",
+                reply_markup=back_to_records_kb(),
+            )
+        else:
+            await callback_query.message.edit_text(
+                "Опишите боль или проблему:",
+                reply_markup=back_to_records_kb(),
+            )
         await callback_query.answer()
 
     @router.message(AppointmentCreationStates.purpose, F.text)

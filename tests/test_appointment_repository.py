@@ -1279,6 +1279,116 @@ async def test_init_skips_index_creation_and_does_not_crash_when_duplicate_confi
         await connection.close()
 
 
+@pytest.mark.asyncio
+async def test_init_with_max_bookings_per_slot_skips_index_creation():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        # The index already exists from the no-arg init() call inside
+        # _in_memory_repos(); drop it so this test proves init(3) itself
+        # does not (re)create it, matching what a fresh mm-instance DB
+        # (which never calls init() with no argument) would look like.
+        await connection.execute("DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed")
+        await connection.commit()
+
+        await appointment_repo.init(3)
+
+        cursor = await connection.execute("PRAGMA index_list('appointments')")
+        index_names = {row[1] for row in await cursor.fetchall()}
+
+        assert "idx_appointments_doctor_datetime_confirmed" not in index_names
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_init_with_max_bookings_per_slot_drops_preexisting_index():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        # _in_memory_repos() already called init() with no argument, which
+        # creates the single-booking-per-slot unique index (simulating a DB
+        # that either ran under the old unconditional-index code, or a
+        # zb-style boot on this same DB file before an mm upgrade).
+        cursor = await connection.execute("PRAGMA index_list('appointments')")
+        index_names = {row[1] for row in await cursor.fetchall()}
+        assert "idx_appointments_doctor_datetime_confirmed" in index_names
+
+        # Now simulate the mm upgrade path: init(3) on the SAME connection
+        # must drop the stale index, or it keeps hard-blocking a 2nd
+        # confirmed booking per slot even after the upgrade.
+        await appointment_repo.init(3)
+
+        cursor = await connection.execute("PRAGMA index_list('appointments')")
+        index_names = {row[1] for row in await cursor.fetchall()}
+
+        assert "idx_appointments_doctor_datetime_confirmed" not in index_names
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_allows_second_confirmed_same_slot_when_max_bookings_per_slot_set():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
+        slot = "2026-07-10 10:00"
+
+        await connection.execute("DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed")
+        await connection.commit()
+        await appointment_repo.init(3)
+
+        first = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.CONFIRMED)
+        )
+        second = await appointment_repo.create_appointment(
+            _slot_appointment(petrov.ID, doctor_id, slot, AppointmentStatus.CONFIRMED)
+        )
+
+        assert first.id != second.id
+        assert (await appointment_repo.get_appointment_by_id(first.id)).status is AppointmentStatus.CONFIRMED
+        assert (await appointment_repo.get_appointment_by_id(second.id)).status is AppointmentStatus.CONFIRMED
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_update_appointment_status_allows_second_confirmed_same_slot_when_max_bookings_per_slot_set():
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        ivanov = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        petrov = await _seed_client(user_repo, "Петров Пётр", "+998902222222")
+        doctor = await _seed_doctor(user_repo, "Доктор Докторович", "+998900000100", telegram_user_id=100100)
+        doctor_id = doctor.ID
+        slot = "2026-07-10 10:00"
+
+        await connection.execute("DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed")
+        await connection.commit()
+        await appointment_repo.init(3)
+
+        first = await appointment_repo.create_appointment(
+            _slot_appointment(ivanov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+        second = await appointment_repo.create_appointment(
+            _slot_appointment(petrov.ID, doctor_id, slot, AppointmentStatus.PENDING)
+        )
+
+        await appointment_repo.update_appointment_status(
+            first.id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+        )
+        await appointment_repo.update_appointment_status(
+            second.id, AppointmentStatus.CONFIRMED, "2026-07-01 09:05:00"
+        )
+
+        first_confirmed = await appointment_repo.get_appointment_by_id(first.id)
+        second_confirmed = await appointment_repo.get_appointment_by_id(second.id)
+        assert first_confirmed.status is AppointmentStatus.CONFIRMED
+        assert second_confirmed.status is AppointmentStatus.CONFIRMED
+    finally:
+        await connection.close()
+
+
 # --- Atomic decision guards (try_*): compare-and-set race-closing behavior ---
 #
 # These prove the SQL guard actually closes the race window at the DB level:
