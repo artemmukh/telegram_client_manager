@@ -27,3 +27,46 @@ STAFF_SEED_BY_INSTANCE: dict[str, list[int]] = {
     # the staff.telegram_user_id PK conflict that blocked this before.
     "mm": [1093653116, 685889801],
 }
+
+
+class PriceListContent(TypedDict):
+    image_paths: list[str]
+    caption: str
+
+
+class LocationContent(TypedDict):
+    image_path: str
+    caption: str
+
+class DateParserContent(TypedDict):
+    clinic_mode: str
+
+# None means "not set up yet" -- the handler sends a placeholder text message
+# instead of trying to load images that don't exist for that clinic.
+PRICE_LIST_BY_INSTANCE: dict[str, PriceListContent | None] = {
+    "zb": {
+        "image_paths": ["data/price_list/rus_1pg.png", "data/price_list/rus_2pg.png"],
+        "caption": "Прайс лист оказываемых услуг.",
+    },
+    "mm": None,
+}
+
+LOCATION_BY_INSTANCE: dict[str, LocationContent | None] = {
+    "zb": {
+        "image_path": "data/location/location.png",
+        "caption": (
+            "https://yandex.uz/maps/-/CTBl4J6V\n"
+            "ул. Мирзо Улугбека 105/3 (вход со стороны дороги).\n"
+            'Ориентир: магазин "Чимган".'
+        ),
+    },
+    "mm": None,
+}
+
+PRICE_LIST_STUB_MESSAGE = "Прайс-лист скоро появится здесь. Уточняйте у администратора клиники."
+LOCATION_STUB_MESSAGE = "Адрес клиники скоро появится здесь. Уточняйте у администратора клиники."
+
+DATEPARSER_BY_INSTANCE: dict[str, str] = {
+    "zb": "parser",
+    "mm": "slots",
+}

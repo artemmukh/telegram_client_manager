@@ -372,15 +372,24 @@ async def test_start_delete_warning_includes_count_when_appointments_exist(fake_
 # --- new_appointment: book directly from a client's card, skipping FIO/phone entry ---
 
 class FakeUserRepoForNewAppointment:
-    def __init__(self, clients_by_id=None, staff_by_clinic=None):
+    def __init__(self, clients_by_id=None, staff_by_clinic=None, admin=None):
         self.clients_by_id = dict(clients_by_id or {})
         self.staff_by_clinic = staff_by_clinic or {}
+        self.admin = admin
 
     async def get_client_by_id(self, user_id):
         return self.clients_by_id.get(user_id)
 
     async def get_staff_users_by_clinic_id(self, clinic_id):
         return self.staff_by_clinic.get(clinic_id, [])
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        # Only needed by the MM slot-picker's _ensure_staff_user_id fallback
+        # (bot/handlers/utils/admin_utils/appointment_helpers.py); the zb
+        # free-text flow never calls this.
+        if self.admin and self.admin.telegram_user_id == telegram_user_id:
+            return self.admin
+        return None
 
 
 class FakeStaffRepoForNewAppointment:
@@ -415,15 +424,18 @@ def _new_appointment_fsm_context():
     return FSMContext(storage=storage, key=key)
 
 
-def _build_new_appointment_router(client, staff_by_telegram_id, staff_by_clinic=None, client_clinic_repo=None):
+def _build_new_appointment_router(
+    client, staff_by_telegram_id, staff_by_clinic=None, client_clinic_repo=None, admin=None, instance="zb",
+):
     user_repo = FakeUserRepoForNewAppointment(
         clients_by_id={client.ID: client} if client else {},
         staff_by_clinic=staff_by_clinic or {},
+        admin=admin,
     )
     staff_repo = FakeStaffRepoForNewAppointment(staff_by_telegram_id)
     clinic_repo = FakeClinicRepoForNewAppointment(Clinic(clinic_id=1, name="Клиника Тест", token="t"))
     return create_admin_client_browser_router(
-        user_repo, staff_repo, clinic_repo, client_clinic_repo=client_clinic_repo,
+        user_repo, staff_repo, clinic_repo, client_clinic_repo=client_clinic_repo, instance=instance,
     )
 
 
@@ -549,3 +561,42 @@ async def test_new_appointment_client_not_found_shows_alert_and_does_not_touch_f
     callback_query.message.edit_text.assert_not_called()
     assert await state.get_state() is None
     assert await state.get_data() == {}
+
+
+@pytest.mark.asyncio
+async def test_new_appointment_with_mm_instance_enters_day_picker_with_admin_fallback_staff_id(
+    fake_client_clinic_repo_factory,
+):
+    """new_appointment threads its (optional, default "zb") instance kwarg
+    into begin_appointment_creation -- instance="mm" must enter the day
+    picker instead of the zb free-text prompt, and _ensure_staff_user_id
+    must fall back to the acting admin's own User.ID since no doctor was
+    pre-selected."""
+    client = _new_appointment_client()
+    admin = User(
+        ID=42, full_name="Управляющий", phone="+998900000000", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1,
+    )
+    staff_by_telegram_id = {
+        ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
+    }
+    client_clinic_repo = fake_client_clinic_repo_factory(links={(client.ID, 1)})
+    router = _build_new_appointment_router(
+        client, staff_by_telegram_id, client_clinic_repo=client_clinic_repo, admin=admin, instance="mm",
+    )
+    new_appointment = _find_handler(router, "new_appointment")
+
+    callback_data = ClientActionCB(action="new_appointment", client_id=5, mode="list", page=2)
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+
+    await new_appointment(callback_query, callback_data, state)
+
+    assert await state.get_state() == AppointmentCreationStates.choose_day
+    data = await state.get_data()
+    assert data["client_preselected"] is True
+    assert data["staff_user_id"] == admin.ID
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == "Выберите день записи:"

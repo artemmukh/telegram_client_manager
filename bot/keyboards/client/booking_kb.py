@@ -40,7 +40,11 @@ def booking_doctor_kb(
 
 
 def booking_day_kb(
-    days: list[date], week_offset: int, can_go_back: bool, can_go_forward: bool
+    days: list[date],
+    week_offset: int,
+    can_go_back: bool,
+    can_go_forward: bool,
+    cancel_callback_data: str = "client_appointment_menu",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
@@ -68,7 +72,7 @@ def booking_day_kb(
     if nav_buttons:
         rows.append(nav_buttons)
 
-    builder.button(text="❌ Отмена", callback_data="client_appointment_menu")
+    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)

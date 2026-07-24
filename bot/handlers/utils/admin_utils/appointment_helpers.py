@@ -1,18 +1,22 @@
+import logging
+
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import CallbackQuery, Message
 
+from bot.config.clinic_instances import DATEPARSER_BY_INSTANCE as DATA_PARSE_MODE
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
-from bot.keyboards.client.booking_kb import booking_doctor_kb
+from bot.keyboards.client.booking_kb import booking_day_kb, booking_doctor_kb
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
     RESCHEDULE_NEGOTIATION_NOTE,
     build_reschedule_proposal_line,
     format_appointment_card_datetime,
     format_datetime_for_display,
+    get_current_tashkent_datetime,
     parse_ru_datetime,
 )
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
@@ -21,6 +25,8 @@ from bot.validators.validators import (
     validate_price,
     validate_purpose,
 )
+
+logger = logging.getLogger(__name__)
 
 DATETIME_INPUT_PROMPT = (
     "Введите дату и время на русском языке:\n\n"
@@ -160,8 +166,75 @@ async def price_processing(message: Message, state: FSMContext, next_state: Stat
     return True
 
 
+async def _ensure_staff_user_id(appt_mng, state: FSMContext, admin_telegram_id: int) -> None:
+    """MM's slot picker needs a doctor id to look up available slots. Mirror
+    AppointmentManagement.create_appointment's own fallback of defaulting to
+    the acting admin's own User.ID when no doctor was explicitly chosen
+    (e.g. a doctor-scoped admin with no doctor picker in front of them)."""
+    data = await state.get_data()
+    if data.get("staff_user_id") is not None:
+        return
+
+    admin_user = await appt_mng.get_user_by_telegram_id(admin_telegram_id)
+    if admin_user is None:
+        logger.warning(
+            "Could not resolve acting admin's own User.ID for MM slot picker "
+            "fallback (telegram_id=%s)", admin_telegram_id,
+        )
+        return
+
+    await state.update_data(staff_user_id=admin_user.ID)
+
+
+async def _send_day_selection(appt_mng, state: FSMContext, week_offset: int, send) -> None:
+    reference = get_current_tashkent_datetime().date()
+    days = await appt_mng.get_working_days(reference, week_offset)
+
+    data = await state.get_data()
+    min_week_offset = data.get("min_week_offset", week_offset)
+    can_go_back = week_offset > min_week_offset
+    can_go_forward = bool(await appt_mng.get_working_days(reference, week_offset + 1))
+
+    await state.update_data(week_offset=week_offset)
+    await state.set_state(AppointmentCreationStates.choose_day)
+
+    await send(
+        "Выберите день записи:",
+        booking_day_kb(days, week_offset, can_go_back, can_go_forward, cancel_callback_data="back_to_main_records"),
+    )
+
+
+async def render_day_selection(appt_mng, callback_query: CallbackQuery, state: FSMContext, week_offset: int) -> None:
+    async def send(text: str, reply_markup) -> None:
+        await callback_query.message.edit_text(text, reply_markup=reply_markup)
+
+    await _send_day_selection(appt_mng, state, week_offset, send)
+    await callback_query.answer()
+
+
+async def render_day_selection_start(appt_mng, callback_query: CallbackQuery, state: FSMContext) -> None:
+    await _ensure_staff_user_id(appt_mng, state, callback_query.from_user.id)
+    reference = get_current_tashkent_datetime().date()
+    start_offset = await appt_mng.find_first_available_week_offset(reference)
+    await state.update_data(min_week_offset=start_offset)
+    await render_day_selection(appt_mng, callback_query, state, start_offset)
+
+
+async def render_day_selection_start_from_message(appt_mng, message: Message, state: FSMContext) -> None:
+    await _ensure_staff_user_id(appt_mng, state, message.from_user.id)
+    reference = get_current_tashkent_datetime().date()
+    start_offset = await appt_mng.find_first_available_week_offset(reference)
+    await state.update_data(min_week_offset=start_offset)
+
+    async def send(text: str, reply_markup) -> None:
+        await message.answer(text, reply_markup=reply_markup)
+
+    await _send_day_selection(appt_mng, state, start_offset, send)
+
+
 async def begin_appointment_creation(
     appt_mng, callback_query: CallbackQuery, state: FSMContext, *,
+    instance: str,
     full_name: str | None = None, phone: str | None = None,
     origin_client_id: int | None = None, origin_mode: str | None = None,
     origin_page: int | None = None, origin_search_data: dict | None = None,
@@ -204,6 +277,11 @@ async def begin_appointment_creation(
         return
 
     if full_name is not None and phone is not None:
+        if DATA_PARSE_MODE.get(instance) == "slots":
+            await callback_query.answer('')
+            await render_day_selection_start(appt_mng, callback_query, state)
+            return
+
         await state.set_state(AppointmentCreationStates.appointment_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(

@@ -1,4 +1,5 @@
 import logging
+from datetime import date, datetime
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -28,20 +29,27 @@ from bot.keyboards.admin.record_management_kb.appointment_kb import (
     client_creation_confirm_kb,
     back_to_records_kb,
 )
-from bot.keyboards.client.booking_cb import ClientBookDoctorCB
+from bot.keyboards.client.booking_cb import (
+    ClientBookDayCB,
+    ClientBookDayPageCB,
+    ClientBookDoctorCB,
+    ClientBookSlotCB,
+)
+from bot.keyboards.client.booking_kb import booking_slot_kb
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.utils.date_parser import format_datetime_for_db
+from bot.services.utils.date_parser import format_datetime_for_db, format_datetime_for_display, get_current_tashkent_datetime
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 from bot.validators.validators import SEARCH_NAME_PATTERN
+from bot.config.clinic_instances import DATEPARSER_BY_INSTANCE as DATA_PARSE_MODE
 
 logger = logging.getLogger(__name__)
 
 
-def create_admin_appointment_creation_router(
+def create_admin_appointment_creation_router(instance:str,
     appointment_repo, user_repo, staff_repo, clinic_repo, client_management=None, notification_service=None,
-    scheduler=None, client_clinic_repo=None,
+    scheduler=None, client_clinic_repo=None
 ):
     router = Router()
 
@@ -54,7 +62,7 @@ def create_admin_appointment_creation_router(
     router.callback_query.filter(RoleFilter("admin"))
 
     async def begin_appointment_creation(callback_query: CallbackQuery, state: FSMContext):
-        await ah.begin_appointment_creation(appt_mng, callback_query, state)
+        await ah.begin_appointment_creation(appt_mng, callback_query, state, instance=instance)
 
     @router.callback_query(F.data == "create_record")
     async def start_create(callback_query: CallbackQuery, state: FSMContext):
@@ -69,6 +77,11 @@ def create_admin_appointment_creation_router(
         await state.update_data(staff_user_id=callback_data.staff_user_id, staff_name=staff_name)
 
         if data.get("client_preselected"):
+            if DATA_PARSE_MODE.get(instance) == "slots":
+                await callback_query.answer('')
+                await ah.render_day_selection_start(appt_mng, callback_query, state)
+                return
+
             await state.set_state(AppointmentCreationStates.appointment_datetime)
             await callback_query.answer('')
             await callback_query.message.edit_text(DATETIME_INPUT_PROMPT, reply_markup=back_to_records_kb())
@@ -82,6 +95,7 @@ def create_admin_appointment_creation_router(
         if data.get("client_preselected"):
             await ah.begin_appointment_creation(
                 appt_mng, callback_query, state,
+                instance=instance,
                 full_name=data.get("full_name"), phone=data.get("phone"),
                 origin_client_id=data.get("origin_client_id"), origin_mode=data.get("origin_mode"),
                 origin_page=data.get("origin_page"), origin_search_data=data.get("origin_search_data"),
@@ -108,6 +122,10 @@ def create_admin_appointment_creation_router(
         client = await appt_mng.find_client_by_phone(phone)
 
         if client:
+            if DATA_PARSE_MODE.get(instance) == "slots":
+                await ah.render_day_selection_start_from_message(appt_mng, message, state)
+                return
+
             await state.set_state(AppointmentCreationStates.appointment_datetime)
             await message.answer(
                 DATETIME_INPUT_PROMPT,
@@ -134,6 +152,12 @@ def create_admin_appointment_creation_router(
             return
         except BotException as e:
             await callback_query.answer(f"Ошибка создания клиента: {e}", show_alert=True)
+            return
+
+
+        if DATA_PARSE_MODE.get(instance) == "slots":
+            await callback_query.answer('')
+            await ah.render_day_selection_start(appt_mng, callback_query, state)
             return
 
         await state.set_state(AppointmentCreationStates.appointment_datetime)
@@ -168,13 +192,22 @@ def create_admin_appointment_creation_router(
 
     @router.message(AppointmentCreationStates.appointment_datetime, F.text)
     async def get_datetime(message: Message, state: FSMContext):
-        if not await datetime_processing(message, state, AppointmentCreationStates.appointment_datetime_confirm):
-            return
-        data = await state.get_data()
-        await message.answer(
-            f"Вы имели в виду: {data.get('appointment_datetime_display')}?",
-            reply_markup=appointment_datetime_confirm_kb(),
-        )
+        date_parse_mode = DATA_PARSE_MODE.get(instance)
+
+        if date_parse_mode == "parser":
+            if not await datetime_processing(message, state, AppointmentCreationStates.appointment_datetime_confirm):
+                return
+
+            data = await state.get_data()
+            await message.answer(
+                f"Вы имели в виду: {data.get('appointment_datetime_display')}?",
+                reply_markup=appointment_datetime_confirm_kb(),
+            )
+        elif date_parse_mode == "slots":
+            # MM admins don't type free text here (they enter choose_day directly),
+            # but if they somehow do, re-render the day picker instead of silently
+            # swallowing the message.
+            await ah.render_day_selection_start_from_message(appt_mng, message, state)
 
     @router.callback_query(AppointmentCreationStates.appointment_datetime_confirm, F.data == "approve_datetime")
     async def confirm_datetime(callback_query: CallbackQuery, state: FSMContext):
@@ -195,18 +228,84 @@ def create_admin_appointment_creation_router(
         await state.set_state(AppointmentCreationStates.purpose)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            "Опишите услугу (например: Консультация, Чистка):",
+            "Опишите услугу (например: Консультация):",
             reply_markup=back_to_records_kb(),
         )
 
     @router.callback_query(AppointmentCreationStates.appointment_datetime_confirm, F.data == "retry_datetime")
     async def retry_datetime(callback_query: CallbackQuery, state: FSMContext):
+        if DATA_PARSE_MODE.get(instance) == "slots":
+            await callback_query.answer('')
+            await ah.render_day_selection_start(appt_mng, callback_query, state)
+            return
+
         await state.set_state(AppointmentCreationStates.appointment_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(
             DATETIME_INPUT_PROMPT,
             reply_markup=back_to_records_kb(),
         )
+
+    @router.callback_query(AppointmentCreationStates.choose_day, ClientBookDayPageCB.filter())
+    async def paginate_days(callback_query: CallbackQuery, callback_data: ClientBookDayPageCB, state: FSMContext):
+        await ah.render_day_selection(appt_mng, callback_query, state, callback_data.week_offset)
+
+    @router.callback_query(AppointmentCreationStates.choose_day, ClientBookDayCB.filter())
+    async def pick_day(callback_query: CallbackQuery, callback_data: ClientBookDayCB, state: FSMContext):
+        try:
+            day = date.fromisoformat(callback_data.day_iso)
+        except ValueError:
+            await callback_query.answer("Некорректная дата, попробуйте ещё раз.", show_alert=True)
+            return
+
+        now = get_current_tashkent_datetime()
+        data = await state.get_data()
+        slots = await appt_mng.get_available_slots(data["staff_user_id"], day, now)
+
+        if not slots:
+            await callback_query.answer("На этот день больше нет доступных слотов.", show_alert=True)
+            return
+
+        await state.update_data(day_iso=callback_data.day_iso)
+        await state.set_state(AppointmentCreationStates.choose_slot)
+
+        await callback_query.message.edit_text(
+            f"Выберите время на {day.strftime('%d.%m.%Y')}:",
+            reply_markup=booking_slot_kb(slots, cancel_callback_data="admin_book_back_to_day"),
+        )
+        await callback_query.answer()
+
+    @router.callback_query(AppointmentCreationStates.choose_slot, F.data == "admin_book_back_to_day")
+    async def back_to_day_selection(callback_query: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        week_offset = data.get("week_offset", 0)
+        await ah.render_day_selection(appt_mng, callback_query, state, week_offset)
+
+    @router.callback_query(AppointmentCreationStates.choose_slot, ClientBookSlotCB.filter())
+    async def pick_slot(callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext):
+        try:
+            datetime.strptime(callback_data.slot, "%H:%M")
+        except ValueError:
+            await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
+            return
+
+        data = await state.get_data()
+        appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
+
+        await state.update_data(
+            slot=callback_data.slot,
+            appointment_datetime=appointment_datetime,
+            appointment_datetime_display=format_datetime_for_display(
+                datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
+            ),
+        )
+        await state.set_state(AppointmentCreationStates.purpose)
+
+        await callback_query.message.edit_text(
+            "Опишите услугу (например: Консультация):",
+            reply_markup=back_to_records_kb(),
+        )
+        await callback_query.answer()
 
     @router.message(AppointmentCreationStates.purpose, F.text)
     async def get_purpose(message: Message, state: FSMContext):

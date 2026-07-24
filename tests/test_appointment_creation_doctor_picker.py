@@ -99,7 +99,7 @@ def _doctor(staff_id, telegram_user_id, full_name="Petrov Petr"):
 def _build_router(user_repo, staff_repo):
     clinic_repo = FakeClinicRepo(Clinic(clinic_id=1, name="Zub Mudrosti", token="t"))
     return create_admin_appointment_creation_router(
-        FakeAppointmentRepository(), user_repo, staff_repo, clinic_repo,
+        "zb", FakeAppointmentRepository(), user_repo, staff_repo, clinic_repo,
     )
 
 
