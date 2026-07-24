@@ -1,7 +1,9 @@
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 from bot.config.booking_config import (
     CANCELLATION_COOLDOWN_WINDOW_MINUTES,
+    MAX_BOOKINGS_PER_SLOT,
     MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
     MAX_PENDING_REQUESTS_PER_CLIENT,
 )
@@ -43,6 +45,8 @@ from bot.validators.validators import validate_datetime, validate_price, validat
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
+SLOT_UNAVAILABLE_MESSAGE = "Это время уже занято другой подтверждённой записью, выберите другое."
+DUPLICATE_CLIENT_SLOT_MESSAGE = "У этого клиента уже есть запись на это время."
 
 
 class AppointmentManagement:
@@ -87,7 +91,7 @@ class AppointmentManagement:
                     raise UserNotFoundError("Врач не найден.")
             doctor_id = doctor.ID
 
-        await self._ensure_slot_available(doctor_id, appointment_datetime, None)
+        await self._ensure_slot_available(doctor_id, appointment_datetime, None, client.ID)
 
         if self.client_clinic_repository is not None:
             await self.client_clinic_repository.link_client_to_clinic(client.ID, clinic.clinic_id)
@@ -164,7 +168,7 @@ class AppointmentManagement:
         self._validate_min_lead_time(appointment_datetime)
         purpose = validate_purpose(data["complaint"])
 
-        await self._ensure_slot_available(staff.ID, appointment_datetime, None)
+        await self._ensure_slot_available(staff.ID, appointment_datetime, None, client.ID)
 
         appointment = Appointment(
             clinic_id=client.clinic_id,
@@ -360,7 +364,7 @@ class AppointmentManagement:
         if appointment.created_by == CreatedBy.CLIENT and appointment.status == AppointmentStatus.PENDING:
             raise AwaitingClinicDecisionError("Дождитесь решения клиники по вашей заявке.")
 
-        await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
+        await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
 
         return await self.update_status(appointment, AppointmentStatus.CONFIRMED)
 
@@ -399,7 +403,7 @@ class AppointmentManagement:
                 "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
             )
 
-        await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id)
+        await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
 
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
         status_updated_at = get_current_tashkent_time()
@@ -456,7 +460,7 @@ class AppointmentManagement:
         validated = validate_datetime(proposed_datetime)
         self._validate_min_lead_time(validated)
 
-        await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id)
+        await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id, appointment.client_id)
 
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
         proposed = await self.appointment_repository.try_propose_new_datetime(
@@ -484,7 +488,7 @@ class AppointmentManagement:
         if appointment.proposed_by != CreatedBy.ADMIN:
             raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
 
-        await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id)
+        await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id, appointment.client_id)
 
         status_updated_at = get_current_tashkent_time()
         accepted = await self.appointment_repository.try_resolve_admin_proposal(
@@ -588,7 +592,7 @@ class AppointmentManagement:
         if appointment.proposed_by != CreatedBy.CLIENT:
             raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
 
-        await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id)
+        await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id, appointment.client_id)
 
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
         status_updated_at = get_current_tashkent_time()
@@ -863,20 +867,43 @@ class AppointmentManagement:
         return count
 
     async def _ensure_slot_available(
-        self, doctor_id: int, datetime_str: str, exclude_appointment_id: int | None
+        self, doctor_id: int, datetime_str: str, exclude_appointment_id: int | None, client_id: int
     ) -> None:
         date_part = datetime_str.split(" ")[0]
-        confirmed = await self.appointment_repository.get_appointments_by_doctor_and_date(doctor_id, date_part)
-        for other in confirmed:
-            if other.datetime == datetime_str and other.id != exclude_appointment_id:
-                raise SlotUnavailableError("Это время уже занято другой подтверждённой записью, выберите другое.")
+
+        appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
+            doctor_id, date_part, statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
+        )
+        active_at_slot = [
+            a for a in appointments
+            if a.datetime == datetime_str and a.id != exclude_appointment_id
+        ]
+
+        for other in active_at_slot:
+            if other.client_id == client_id:
+                raise SlotUnavailableError(DUPLICATE_CLIENT_SLOT_MESSAGE)
+
+        if MAX_BOOKINGS_PER_SLOT is None:
+            if any(a.status == AppointmentStatus.CONFIRMED for a in active_at_slot):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE)
+            return
+
+        if len(active_at_slot) >= MAX_BOOKINGS_PER_SLOT:
+            raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE)
 
     async def get_available_slots(self, doctor_id: int, day: date, now: datetime) -> list[str]:
         slots = generate_available_slots(day, now)
-        confirmed = await self.appointment_repository.get_appointments_by_doctor_and_date(doctor_id, day.isoformat())
-        booked_times = {appointment.datetime.split(" ")[1] for appointment in confirmed}
 
-        return [slot for slot in slots if slot not in booked_times]
+        if MAX_BOOKINGS_PER_SLOT is None:
+            confirmed = await self.appointment_repository.get_appointments_by_doctor_and_date(doctor_id, day.isoformat())
+            booked_times = {appointment.datetime.split(" ")[1] for appointment in confirmed}
+            return [slot for slot in slots if slot not in booked_times]
+
+        appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
+            doctor_id, day.isoformat(), statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
+        )
+        counts = Counter(appointment.datetime.split(" ")[1] for appointment in appointments)
+        return [slot for slot in slots if counts[slot] < MAX_BOOKINGS_PER_SLOT]
 
     async def get_working_days(self, reference_date: date, week_offset: int) -> list[date]:
         return generate_working_days(reference_date, week_offset)

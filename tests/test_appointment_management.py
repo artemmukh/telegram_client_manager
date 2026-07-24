@@ -1,6 +1,8 @@
+import itertools
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
+import aiosqlite
 import pytest
 
 from bot.exceptions.appointment_exceptions import (
@@ -20,13 +22,23 @@ from bot.config.booking_config import (
     CANCELLATION_COOLDOWN_WINDOW_MINUTES,
     MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
 )
+from bot.config.clinic_instances import STAFF_SEED_BY_INSTANCE
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
-from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.staff_repository import StaffRepository
+from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
+from bot.services.appointment.appointment_management import (
+    DUPLICATE_CLIENT_SLOT_MESSAGE,
+    SLOT_UNAVAILABLE_MESSAGE,
+    AppointmentManagement,
+)
 from bot.services.client.client_management import ClientManagement
 from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
@@ -62,10 +74,16 @@ class FakeAppointmentRepository:
     async def get_appointment_by_id(self, appointment_id):
         return next((a for a in self.appointments if a.id == appointment_id), None)
 
-    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses: list[AppointmentStatus] | None = None):
+        if statuses is None:
+            return [
+                a for a in self.appointments
+                if a.doctor_id == doctor_id and a.datetime.startswith(date) and a.status == AppointmentStatus.CONFIRMED
+            ]
+
         return [
             a for a in self.appointments
-            if a.doctor_id == doctor_id and a.datetime.startswith(date) and a.status == AppointmentStatus.CONFIRMED
+            if a.doctor_id == doctor_id and a.datetime.startswith(date) and a.status in statuses
         ]
 
     async def appointment_exists(self, appointment_id):
@@ -2871,6 +2889,129 @@ async def test_two_pending_requests_for_same_doctor_and_slot_both_succeed():
     assert len(appt_repo.created) == 2
 
 
+# --- MAX_BOOKINGS_PER_SLOT capacity (mm instances) ---
+#
+# zb instances leave MAX_BOOKINGS_PER_SLOT as None -- exercised by the tests
+# above, where a single CONFIRMED row already blocks a slot. mm instances set
+# it to 3, switching _ensure_slot_available/get_available_slots onto the
+# CONFIRMED+PENDING counting branch instead. MAX_BOOKINGS_PER_SLOT is bound
+# by name at import time inside appointment_management, so BOT_INSTANCE/env
+# monkeypatching would not reach the already-imported name -- it must be
+# monkeypatched directly on that module (mirrors how get_current_tashkent_datetime
+# is patched at its call site elsewhere in this file).
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("statuses", [
+    [],
+    [AppointmentStatus.CONFIRMED],
+    [AppointmentStatus.PENDING],
+    [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING],
+])
+async def test_ensure_slot_available_allows_below_max_bookings_per_slot(monkeypatch, statuses):
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    doctor_id = 50
+    slot = "2026-07-20 10:30"
+    appointments = [
+        _appt(i + 1, doctor_id, slot, status, client_id=100 + i)
+        for i, status in enumerate(statuses)
+    ]
+    appt_repo = FakeAppointmentRepository(appointments)
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    await service._ensure_slot_available(doctor_id, slot, None, 999)  # must not raise
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("statuses", [
+    [AppointmentStatus.CONFIRMED, AppointmentStatus.CONFIRMED, AppointmentStatus.CONFIRMED],
+    [AppointmentStatus.PENDING, AppointmentStatus.PENDING, AppointmentStatus.PENDING],
+    [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED],
+])
+async def test_ensure_slot_available_raises_when_max_bookings_per_slot_reached(monkeypatch, statuses):
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    doctor_id = 50
+    slot = "2026-07-20 10:30"
+    appointments = [
+        _appt(i + 1, doctor_id, slot, status, client_id=100 + i)
+        for i, status in enumerate(statuses)
+    ]
+    appt_repo = FakeAppointmentRepository(appointments)
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(SlotUnavailableError):
+        await service._ensure_slot_available(doctor_id, slot, None, 999)
+
+
+@pytest.mark.asyncio
+async def test_ensure_slot_available_excludes_own_appointment_id_from_capacity_count(monkeypatch):
+    """Rescheduling appointment 1 back onto its own current slot must not count
+    itself among the 3 capacity slots -- only the other 2 existing rows should
+    count, leaving room for the appointment being modified."""
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    doctor_id = 50
+    slot = "2026-07-20 10:30"
+    appointments = [
+        _appt(1, doctor_id, slot, AppointmentStatus.CONFIRMED, client_id=7),
+        _appt(2, doctor_id, slot, AppointmentStatus.PENDING, client_id=8),
+        _appt(3, doctor_id, slot, AppointmentStatus.PENDING, client_id=9),
+    ]
+    appt_repo = FakeAppointmentRepository(appointments)
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    await service._ensure_slot_available(doctor_id, slot, exclude_appointment_id=1, client_id=999)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_ensure_slot_available_ignores_finalized_statuses_toward_capacity(monkeypatch):
+    """CANCELLED/COMPLETED/NO_SHOW/EXPIRED rows never count toward capacity --
+    stacking 4 of them on the same slot alongside only 2 CONFIRMED/PENDING rows
+    must not push the count to the MAX_BOOKINGS_PER_SLOT=3 threshold. This also
+    proves the fake repo's statuses filtering is real, not vacuous."""
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    doctor_id = 50
+    slot = "2026-07-20 10:30"
+    appointments = [
+        _appt(1, doctor_id, slot, AppointmentStatus.CONFIRMED, client_id=7),
+        _appt(2, doctor_id, slot, AppointmentStatus.PENDING, client_id=8),
+        _appt(3, doctor_id, slot, AppointmentStatus.CANCELLED, client_id=9),
+        _appt(4, doctor_id, slot, AppointmentStatus.COMPLETED, client_id=10),
+        _appt(5, doctor_id, slot, AppointmentStatus.NO_SHOW, client_id=11),
+        _appt(6, doctor_id, slot, AppointmentStatus.EXPIRED, client_id=12),
+    ]
+    appt_repo = FakeAppointmentRepository(appointments)
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    await service._ensure_slot_available(doctor_id, slot, None, 999)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_get_available_slots_keeps_slot_below_capacity_but_excludes_slot_at_max(monkeypatch):
+    """A slot with 1 or 2 existing CONFIRMED/PENDING bookings must still be
+    offered -- only the 3rd booking (reaching MAX_BOOKINGS_PER_SLOT=3) fills
+    it and removes it from the returned list."""
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    doctor_id = 50
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+
+    appt_repo = FakeAppointmentRepository([
+        _appt(1, doctor_id, "2026-07-20 10:00", AppointmentStatus.CONFIRMED, client_id=7),
+        _appt(2, doctor_id, "2026-07-20 10:30", AppointmentStatus.CONFIRMED, client_id=8),
+        _appt(3, doctor_id, "2026-07-20 10:30", AppointmentStatus.PENDING, client_id=9),
+        _appt(4, doctor_id, "2026-07-20 11:00", AppointmentStatus.CONFIRMED, client_id=10),
+        _appt(5, doctor_id, "2026-07-20 11:00", AppointmentStatus.PENDING, client_id=11),
+        _appt(6, doctor_id, "2026-07-20 11:00", AppointmentStatus.PENDING, client_id=12),
+    ])
+    service = AppointmentManagement(appt_repo, FakeUserRepo(_client()), FakeStaffRepo(None), _clinic_repo())
+
+    slots = await service.get_available_slots(doctor_id, day, now)
+
+    assert "10:00" in slots  # 1 booking -- still available
+    assert "10:30" in slots  # 2 bookings -- still available
+    assert "11:00" not in slots  # 3 bookings -- at capacity, excluded
+
+
 # --- Zombie PENDING fix (item 1/4): MIN_LEAD_TIME boundary tests ---
 #
 # MIN_LEAD_TIME = 2h30 is the real internal threshold; every user-facing text
@@ -3263,5 +3404,318 @@ async def test_resolve_notification_recipients_skips_doctor_id_that_does_not_res
     recipients = await service.resolve_notification_recipients(_recipient_appointment(doctor_id=999))
 
     assert recipients == []
+
+
+# --- Real-DB workflow tests: AppointmentManagement against a real SQLite DB ---
+#
+# Every test above in this file drives AppointmentManagement with
+# FakeAppointmentRepository, an in-memory Python object with no real schema,
+# indexes, or constraints underneath it. That is exactly the blind spot that
+# hid the originally reported production bug: AppointmentRepository.init()
+# unconditionally created a DB-level partial UNIQUE INDEX
+# (idx_appointments_doctor_datetime_confirmed) on (admin_id, datetime) WHERE
+# status = 'confirmed'. For mm instances (capacity 3, CONFIRMED+PENDING
+# combined) this silently overrode the service-layer capacity logic the
+# moment a 2nd/3rd booking at the same slot became CONFIRMED -- e.g. via the
+# walk-in/no-telegram-account auto-confirm path in create_appointment -- and
+# the user reported a 2nd mm booking failing with SlotUnavailableError even
+# though _ensure_slot_available alone allows up to 3. A fake repository can
+# never reproduce that: it has no unique index to violate.
+#
+# The tests below wire a REAL AppointmentRepository/UserRepository/
+# StaffRepository/ClinicRepository onto a REAL in-memory SQLite connection --
+# no fakes -- mirroring the _in_memory_repos() helper in
+# tests/test_appointment_repository.py, and drive every scenario through the
+# actual service methods (create_appointment / create_self_booking), never
+# through raw repository inserts.
+
+_real_seed_counter = itertools.count(1)
+
+
+async def _real_service(instance: str, max_bookings_per_slot: int | None = None):
+    """Wires a real AppointmentRepository/UserRepository/StaffRepository/
+    ClinicRepository onto a fresh in-memory SQLite connection and returns
+    (connection, service, user_repo, doctor_telegram_id, clinic_id).
+
+    Mirrors production bot/run.py, which calls
+    appointment_repo.init(MAX_BOOKINGS_PER_SLOT) exactly once (None for zb, 3
+    for mm) -- so this helper does the same, never a no-arg init() followed
+    by a second init(3) call, to keep the DB-index-vs-no-index branch exactly
+    as it is in production for each instance."""
+    connection = await aiosqlite.connect(":memory:")
+    await connection.execute("PRAGMA foreign_keys = ON")
+
+    clinic_repo = ClinicRepository(connection)
+    user_repo = UserRepository(connection)
+    staff_repo = StaffRepository(connection)
+    appointment_repo = AppointmentRepository(connection)
+
+    await clinic_repo.init(instance)
+    await user_repo.init()
+    await UserSettingsRepository(connection).init()
+    await staff_repo.init(instance)
+    await appointment_repo.init(max_bookings_per_slot)
+
+    service = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    doctor_telegram_id = STAFF_SEED_BY_INSTANCE[instance][0]
+    clinic = await clinic_repo.get_only_clinic()
+
+    return connection, service, user_repo, doctor_telegram_id, clinic.clinic_id
+
+
+async def _real_admin(user_repo: UserRepository, telegram_user_id: int) -> User:
+    """Seeds a real admin/doctor User row for the already-seeded Staff row at
+    telegram_user_id (STAFF_SEED_BY_INSTANCE) -- needed because
+    create_appointment/create_self_booking look the acting doctor up as a
+    User row (get_user_by_telegram_id/get_user_by_id), not just as Staff."""
+    n = next(_real_seed_counter)
+    await user_repo.create_user(
+        User(full_name=f"Admin {n}", phone=f"+998900{n:06d}", role=Role.ADMIN, telegram_user_id=telegram_user_id)
+    )
+    return await user_repo.get_user_by_telegram_id(telegram_user_id)
+
+
+async def _real_walk_in_client(user_repo: UserRepository) -> User:
+    """A client with no linked Telegram account. create_appointment always
+    auto-confirms these (the walk-in/no-telegram-account path) regardless of
+    lead time -- this is the exact path that triggered the originally
+    reported production bug when a 2nd/3rd such booking hit the same slot."""
+    n = next(_real_seed_counter)
+    phone = f"+998901{n:06d}"
+    await user_repo.create_user(User(full_name=f"Walk-in {n}", phone=phone, role=Role.CLIENT))
+    return await user_repo.get_client_by_phone(phone)
+
+
+async def _real_self_booking_client(user_repo: UserRepository, clinic_id: int) -> User:
+    n = next(_real_seed_counter)
+    telegram_user_id = 800_000_000 + n
+    await user_repo.create_user(
+        User(
+            full_name=f"Client {n}", phone=f"+998902{n:06d}", role=Role.CLIENT,
+            telegram_user_id=telegram_user_id, clinic_id=clinic_id,
+        )
+    )
+    return await user_repo.get_user_by_telegram_id(telegram_user_id)
+
+
+async def _real_book_confirmed(service, user_repo, doctor_telegram_id, slot):
+    """Books a CONFIRMED appointment via create_appointment's walk-in
+    auto-confirm path (a fresh client with telegram_user_id=None)."""
+    client = await _real_walk_in_client(user_repo)
+    appointment = await service.create_appointment(
+        doctor_telegram_id,
+        {"phone": client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
+    )
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    return client, appointment
+
+
+async def _real_book_pending(service, user_repo, admin_id, clinic_id, slot):
+    """Books a PENDING appointment via a normal client self-booking (a fresh
+    client with a linked Telegram account)."""
+    client = await _real_self_booking_client(user_repo, clinic_id)
+    appointment = await service.create_self_booking(
+        client.telegram_user_id,
+        {"staff_user_id": admin_id, "appointment_datetime": slot, "complaint": "Болит зуб"},
+    )
+    assert appointment.status is AppointmentStatus.PENDING
+    return client, appointment
+
+
+@pytest.mark.asyncio
+async def test_mm_slot_allows_three_confirmed_walk_ins_and_blocks_a_fourth(monkeypatch):
+    """Regression repro for the originally reported production bug: on an mm
+    instance (capacity 3), 3 different clients getting a CONFIRMED
+    appointment at the identical doctor+datetime slot must all succeed, and
+    only a 4th booking at that slot must be rejected. Each of the 3 goes
+    through create_appointment's walk-in/no-telegram-account auto-confirm
+    path (client.telegram_user_id is None), which is exactly the path that
+    hit the stray idx_appointments_doctor_datetime_confirmed unique index in
+    production and raised SlotUnavailableError on the 2nd booking, even
+    though the service-layer capacity logic alone allows up to 3."""
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service("mm", max_bookings_per_slot=3)
+    try:
+        await _real_admin(user_repo, doctor_telegram_id)
+        slot = _future_datetime(days=10)
+
+        for _ in range(3):
+            await _real_book_confirmed(service, user_repo, doctor_telegram_id, slot)
+
+        fourth_client = await _real_walk_in_client(user_repo)
+        with pytest.raises(SlotUnavailableError) as exc_info:
+            await service.create_appointment(
+                doctor_telegram_id,
+                {"phone": fourth_client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
+            )
+
+        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "statuses",
+    [
+        (AppointmentStatus.CONFIRMED, AppointmentStatus.CONFIRMED, AppointmentStatus.CONFIRMED),
+        (AppointmentStatus.PENDING, AppointmentStatus.PENDING, AppointmentStatus.PENDING),
+        (AppointmentStatus.CONFIRMED, AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING),
+        (AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING, AppointmentStatus.PENDING),
+    ],
+    ids=["all-confirmed", "all-pending", "2-confirmed-1-pending", "1-confirmed-2-pending"],
+)
+async def test_mm_slot_allows_exactly_three_active_bookings_for_every_status_combo_and_blocks_a_fourth(
+    monkeypatch, statuses,
+):
+    """All 4 status compositions that sum to the mm capacity of 3 (CONFIRMED
+    and PENDING combined): 3 distinct clients must always succeed, and a 4th
+    booking of either status at the same slot must always be rejected once
+    capacity is reached."""
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", 3)
+    connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service("mm", max_bookings_per_slot=3)
+    try:
+        admin = await _real_admin(user_repo, doctor_telegram_id)
+        slot = _future_datetime(days=11)
+
+        for status in statuses:
+            if status is AppointmentStatus.CONFIRMED:
+                await _real_book_confirmed(service, user_repo, doctor_telegram_id, slot)
+            else:
+                await _real_book_pending(service, user_repo, admin.ID, clinic_id, slot)
+
+        with pytest.raises(SlotUnavailableError) as confirmed_exc:
+            await _real_book_confirmed(service, user_repo, doctor_telegram_id, slot)
+        assert str(confirmed_exc.value) == SLOT_UNAVAILABLE_MESSAGE
+
+        with pytest.raises(SlotUnavailableError) as pending_exc:
+            await _real_book_pending(service, user_repo, admin.ID, clinic_id, slot)
+        assert str(pending_exc.value) == SLOT_UNAVAILABLE_MESSAGE
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "instance,max_bookings_per_slot",
+    [("zb", None), ("mm", 3)],
+)
+async def test_create_self_booking_raises_duplicate_message_when_same_client_rebooks_own_pending_slot(
+    monkeypatch, instance, max_bookings_per_slot,
+):
+    """A client's own duplicate PENDING request at the same doctor+slot must
+    always be blocked in both instances -- in zb this is a NEW protection:
+    zb's raw capacity check alone only blocks a slot once a row is CONFIRMED
+    (a different client's PENDING never blocked zb before, and still
+    doesn't -- see test_zb_slot_allows_second_pending_from_different_client
+    below), but the SAME client's own PENDING duplicate must now be rejected
+    regardless of instance."""
+    if max_bookings_per_slot is not None:
+        monkeypatch.setattr(
+            "bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", max_bookings_per_slot
+        )
+    # MAX_PENDING_REQUESTS_PER_CLIENT is bound by name at import time inside
+    # appointment_management (same as MAX_BOOKINGS_PER_SLOT), and its real
+    # (zb) value is 1. This test needs a 2nd create_self_booking call by the
+    # same client to actually reach _ensure_slot_available's duplicate check
+    # instead of being turned away earlier by the unrelated pending-request-
+    # limit guard, so it's raised here for both instances.
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_PENDING_REQUESTS_PER_CLIENT", 10)
+
+    connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service(instance, max_bookings_per_slot)
+    try:
+        admin = await _real_admin(user_repo, doctor_telegram_id)
+        client = await _real_self_booking_client(user_repo, clinic_id)
+        slot = _future_datetime(days=15)
+
+        first = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": admin.ID, "appointment_datetime": slot, "complaint": "Болит зуб"},
+        )
+        assert first.status is AppointmentStatus.PENDING
+
+        with pytest.raises(SlotUnavailableError) as exc_info:
+            await service.create_self_booking(
+                client.telegram_user_id,
+                {"staff_user_id": admin.ID, "appointment_datetime": slot, "complaint": "Болит зуб"},
+            )
+
+        assert str(exc_info.value) == DUPLICATE_CLIENT_SLOT_MESSAGE
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_raises_duplicate_message_when_admin_rebooks_same_client_and_slot():
+    """Admin-booking direction of the same-client duplicate protection: a 2nd
+    create_appointment call for the same client+doctor+slot, while the first
+    is still active, must be rejected with the duplicate-slot message -- not
+    silently create a 2nd row for the same client at the same time."""
+    connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service("zb")
+    try:
+        await _real_admin(user_repo, doctor_telegram_id)
+        client = await _real_walk_in_client(user_repo)
+        slot = _future_datetime(days=16)
+
+        first = await service.create_appointment(
+            doctor_telegram_id,
+            {"phone": client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
+        )
+        assert first.status is AppointmentStatus.CONFIRMED
+
+        with pytest.raises(SlotUnavailableError) as exc_info:
+            await service.create_appointment(
+                doctor_telegram_id,
+                {"phone": client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
+            )
+
+        assert str(exc_info.value) == DUPLICATE_CLIENT_SLOT_MESSAGE
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_zb_slot_blocks_second_confirmed_from_different_client():
+    """zb regression guard: default mode (no MAX_BOOKINGS_PER_SLOT
+    monkeypatch, appointment_repo.init() with no args, matching production
+    zb). A 2nd CONFIRMED booking from a DIFFERENT client at the same slot
+    must still be rejected with the plain slot-unavailable message, not the
+    duplicate-client one."""
+    connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service("zb")
+    try:
+        await _real_admin(user_repo, doctor_telegram_id)
+        slot = _future_datetime(days=13)
+
+        await _real_book_confirmed(service, user_repo, doctor_telegram_id, slot)
+
+        second_client = await _real_walk_in_client(user_repo)
+        with pytest.raises(SlotUnavailableError) as exc_info:
+            await service.create_appointment(
+                doctor_telegram_id,
+                {"phone": second_client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
+            )
+
+        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_zb_slot_allows_second_pending_from_different_client():
+    """zb regression guard: zb's original design -- a PENDING booking never
+    blocks a DIFFERENT client from also going PENDING on the same slot; only
+    a CONFIRMED row blocks others. This must survive unchanged after the
+    same-client duplicate-check addition in _ensure_slot_available."""
+    connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service("zb")
+    try:
+        admin = await _real_admin(user_repo, doctor_telegram_id)
+        slot = _future_datetime(days=14)
+
+        await _real_book_pending(service, user_repo, admin.ID, clinic_id, slot)
+        _, second = await _real_book_pending(service, user_repo, admin.ID, clinic_id, slot)
+
+        assert second.status is AppointmentStatus.PENDING
+    finally:
+        await connection.close()
 
 

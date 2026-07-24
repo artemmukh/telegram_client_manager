@@ -47,11 +47,18 @@ class FakeAppointmentRepository:
     async def create_appointment(self, appointment):
         return appointment
 
-    async def get_appointments_by_doctor_and_date(self, doctor_id, date):
+    async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
+        if statuses is None:
+            return [
+                a for a in self.appointments
+                if a.doctor_id == doctor_id and a.datetime.startswith(date)
+                and a.status == AppointmentStatus.CONFIRMED
+            ]
+
         return [
             a for a in self.appointments
             if a.doctor_id == doctor_id and a.datetime.startswith(date)
-            and a.status == AppointmentStatus.CONFIRMED
+            and a.status in statuses
         ]
 
 

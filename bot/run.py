@@ -3,6 +3,7 @@ import logging
 
 from aiogram.types import BotCommandScopeDefault
 
+from bot.config.booking_config import MAX_BOOKINGS_PER_SLOT
 from bot.handlers.client.geolocation import create_price_geo_router
 from bot.handlers.client.price_list import create_price_list_router
 from bot.loader import get_bot
@@ -65,7 +66,7 @@ async def main():
     user_settings_repo = UserSettingsRepository(connection)
     await user_settings_repo.init()
 
-    await appointment_repo.init()
+    await appointment_repo.init(MAX_BOOKINGS_PER_SLOT)
     await clinic_repo.init(config.instance)
     await staff_repo.init(config.instance)
     await client_clinic_repo.init()
