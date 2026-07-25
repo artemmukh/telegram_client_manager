@@ -314,6 +314,15 @@ def appointment_card_kb(
         )
         rows.append(1)
 
+    if status == AppointmentStatus.COMPLETED:
+        builder.button(
+            text="📄 Получить историю болезни",
+            callback_data=ApptActionCB(
+                action="get_medical_record", appointment_id=appointment_id, mode=mode, page=page,
+            ).pack(),
+        )
+        rows.append(1)
+
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ApptPageCB(mode=mode, page=page, tab=tab).pack(),

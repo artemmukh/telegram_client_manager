@@ -10,7 +10,7 @@ from bot.keyboards.client.appointment_history_cb import (
 from bot.keyboards.client.appointment_manage_kb import _add_status_action_buttons
 from bot.keyboards.client.reschedule_cb import ClientRescheduleStartCB
 from bot.models.appointment import Appointment
-from bot.utils.appointment_enums import APPOINTMENT_TAB_LABELS, APPOINTMENT_TAB_ORDER
+from bot.utils.appointment_enums import APPOINTMENT_TAB_LABELS, APPOINTMENT_TAB_ORDER, AppointmentStatus
 from bot.utils.pagination import get_circular_page
 
 _TAB_LABELS = {status.value: label for status, label in APPOINTMENT_TAB_LABELS.items()}
@@ -76,6 +76,15 @@ def appointment_history_card_kb(
         ),
         reschedule_cb=ClientRescheduleStartCB(appointment_id=appointment.id),
     )
+
+    if appointment.status == AppointmentStatus.COMPLETED:
+        builder.button(
+            text="📄 Получить историю болезни",
+            callback_data=ClientHistoryActionCB(
+                action="get_medical_record", appointment_id=appointment.id, tab=tab, page=page,
+            ).pack(),
+        )
+        button_rows += 1
 
     builder.button(
         text="⬅️ Назад к списку",

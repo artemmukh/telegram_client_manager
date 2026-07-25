@@ -33,6 +33,7 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     full_name_processing,
     phone_processing,
 )
+from bot.handlers.utils.medical_record_delivery import deliver_medical_record
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptActionCB,
     ApptCalendarDayCB,
@@ -73,7 +74,8 @@ logger = logging.getLogger(__name__)
 
 
 def create_admin_appointment_browser_router(
-    appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None, notification_service=None
+    appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None, notification_service=None,
+    medical_record_service=None,
 ):
     router = Router()
 
@@ -745,6 +747,22 @@ def create_admin_appointment_browser_router(
             ),
         )
         await remember_tracked_message(state, callback_query.message)
+
+    # --- Medical record retrieval ---
+
+    if medical_record_service and appointment_scheduler:
+        @router.callback_query(ApptActionCB.filter(F.action == "get_medical_record"))
+        async def get_medical_record(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+            appointment = await appt_mng.get_appointment_for_admin(
+                callback_data.appointment_id, callback_query.from_user.id
+            )
+            if appointment is None:
+                await callback_query.answer("Запись не найдена.", show_alert=True)
+                return
+
+            await deliver_medical_record(
+                callback_query, medical_record_service, appointment_scheduler, callback_data.appointment_id,
+            )
 
     @router.callback_query(F.data == "noop")
     async def noop_button(callback_query: CallbackQuery):

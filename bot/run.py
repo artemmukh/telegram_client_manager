@@ -157,7 +157,8 @@ async def main():
         notification_service, appointment_scheduler, client_clinic_repo,
     ))
     dp.include_router(create_admin_appointment_browser_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service
+        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,
+        medical_record_service=medical_record_service,
     ))
     dp.include_router(create_admin_booking_requests_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
@@ -171,7 +172,8 @@ async def main():
 
     #client handlers
     dp.include_router(create_client_appointment_router(
-        appointment_pagination_service, appointment_management_service, notification_service, appointment_scheduler
+        appointment_pagination_service, appointment_management_service, notification_service, appointment_scheduler,
+        medical_record_service=medical_record_service,
     ))
     dp.include_router(create_client_booking_router(
         appointment_management_service, notification_service, appointment_scheduler

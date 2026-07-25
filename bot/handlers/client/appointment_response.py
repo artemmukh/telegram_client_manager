@@ -8,6 +8,7 @@ from aiogram.types import Message, CallbackQuery
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException, PaginationError
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
+from bot.handlers.utils.medical_record_delivery import deliver_medical_record
 from bot.keyboards.client.appointment_history_cb import (
     ClientHistoryActionCB,
     ClientHistoryCardCB,
@@ -59,6 +60,7 @@ def create_client_appointment_router(
     appointment_management_service: AppointmentManagement = None,
     notification_service: AppointmentNotificationService = None,
     appointment_scheduler=None,
+    medical_record_service=None,
 ) -> Router:
     router = Router()
 
@@ -365,6 +367,23 @@ def create_client_appointment_router(
 
             if callback_data.action == "cancel_no":
                 await render_history_card(callback_query, appointment_id, tab, page, state)
+                return
+
+            if callback_data.action == "get_medical_record":
+                if not medical_record_service or not appointment_scheduler:
+                    await callback_query.answer("Функция недоступна.", show_alert=True)
+                    return
+
+                appointment = await appointment_management_service.get_appointment_for_client(
+                    appointment_id, callback_query.from_user.id,
+                )
+                if appointment is None:
+                    await callback_query.answer("Запись не найдена.", show_alert=True)
+                    return
+
+                await deliver_medical_record(
+                    callback_query, medical_record_service, appointment_scheduler, appointment_id,
+                )
                 return
 
         @router.callback_query(F.data.startswith("appt_confirm:"))
