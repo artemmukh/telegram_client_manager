@@ -8,6 +8,8 @@ class Config:
     bot_token: str
     database_path: str
     instance: str
+    ollama_base_url: str
+    ollama_model: str
 
 
 def load_config() -> Config:
@@ -15,6 +17,8 @@ def load_config() -> Config:
 
     instance = os.getenv("BOT_INSTANCE")
     database_path = os.getenv("DATA_BASE")
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL")
+    ollama_model = os.getenv("OLLAMA_MODEL")
 
     token_by_instance = {
         "zb": os.getenv("BOT_TOKEN_ZB"),
@@ -37,6 +41,8 @@ def load_config() -> Config:
         bot_token=bot_token,
         database_path=database_path,
         instance=instance,
+        ollama_base_url=ollama_base_url,
+        ollama_model=ollama_model,
     )
 
 

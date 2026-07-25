@@ -61,6 +61,7 @@ def create_admin_completion_router(
 
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
+            await appointment_scheduler.schedule_medical_record_generation(appointment.id)
 
         await callback_query.answer('')
         await callback_query.message.edit_text(
@@ -118,6 +119,7 @@ def create_admin_completion_router(
 
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
+            await appointment_scheduler.schedule_medical_record_generation(appointment.id)
 
         await callback_query.answer('')
         await callback_query.message.edit_text("Приём завершён.", reply_markup=None)

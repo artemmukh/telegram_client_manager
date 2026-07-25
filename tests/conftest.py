@@ -3,8 +3,10 @@ from __future__ import annotations
 import pytest
 
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError
+from bot.models.medical_record import MedicalRecord
 from bot.models.user import User
 from bot.models.user_settings import UserSettings
+from bot.utils.medical_record_enums import MedicalRecordStatus
 
 
 class FakeUserRepository:
@@ -202,3 +204,74 @@ def fake_client_clinic_repo() -> FakeClientClinicRepository:
 @pytest.fixture
 def fake_client_clinic_repo_factory():
     return FakeClientClinicRepository
+
+
+class FakeMedicalRecordRepository:
+    """Drop-in for MedicalRecordRepository, matching its method names/signatures
+    (create_pending, get_by_appointment_id, mark_generating, mark_ready,
+    mark_failed). Mutates the same MedicalRecord object in place across calls
+    (mirroring the real repository, where a fresh get_by_appointment_id()
+    after a status update reflects the new state) so callers can assert on
+    both the returned record and the recorded call history."""
+
+    def __init__(self, records_by_appointment_id=None):
+        self.records_by_appointment_id = dict(records_by_appointment_id or {})
+        self._next_id = max(
+            (r.id for r in self.records_by_appointment_id.values() if r.id is not None),
+            default=0,
+        ) + 1
+        self.create_pending_calls: list[int] = []
+        self.mark_generating_calls: list[int] = []
+        self.mark_ready_calls: list[tuple[int, str, bool]] = []
+        self.mark_failed_calls: list[tuple[int, str]] = []
+
+    async def create_pending(self, appointment_id: int) -> MedicalRecord:
+        self.create_pending_calls.append(appointment_id)
+        existing = self.records_by_appointment_id.get(appointment_id)
+        if existing is not None:
+            return existing
+
+        record = MedicalRecord(
+            id=self._next_id, appointment_id=appointment_id, status=MedicalRecordStatus.PENDING,
+        )
+        self._next_id += 1
+        self.records_by_appointment_id[appointment_id] = record
+        return record
+
+    async def get_by_appointment_id(self, appointment_id: int) -> MedicalRecord | None:
+        return self.records_by_appointment_id.get(appointment_id)
+
+    async def mark_generating(self, id: int) -> None:
+        self.mark_generating_calls.append(id)
+        record = self._find_by_id(id)
+        if record is not None:
+            record.status = MedicalRecordStatus.GENERATING
+
+    async def mark_ready(self, id: int, file_path: str, partial: bool) -> None:
+        self.mark_ready_calls.append((id, file_path, partial))
+        record = self._find_by_id(id)
+        if record is not None:
+            record.status = MedicalRecordStatus.READY_PARTIAL if partial else MedicalRecordStatus.READY
+            record.file_path = file_path
+
+    async def mark_failed(self, id: int, error_message: str) -> None:
+        self.mark_failed_calls.append((id, error_message))
+        record = self._find_by_id(id)
+        if record is not None:
+            record.status = MedicalRecordStatus.FAILED
+            record.error_message = error_message
+
+    def _find_by_id(self, id: int) -> MedicalRecord | None:
+        return next(
+            (r for r in self.records_by_appointment_id.values() if r.id == id), None,
+        )
+
+
+@pytest.fixture
+def fake_medical_record_repo() -> FakeMedicalRecordRepository:
+    return FakeMedicalRecordRepository()
+
+
+@pytest.fixture
+def fake_medical_record_repo_factory():
+    return FakeMedicalRecordRepository

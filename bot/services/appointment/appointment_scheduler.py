@@ -22,7 +22,9 @@ from bot.services.appointment.appointment_jobs import (
     auto_confirm_pending_job,
     auto_complete_appointment_job,
     send_proposal_reminder_job,
+    generate_medical_record_job,
 )
+from bot.services.medical_record.medical_record_management import MedicalRecordService
 from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
@@ -46,10 +48,16 @@ class AppointmentScheduler:
         scheduler: AsyncIOScheduler,
         notification_service: AppointmentNotificationService,
         appointment_management: AppointmentManagement,
+        medical_record_service: MedicalRecordService | None = None,
     ):
         self.scheduler = scheduler
         self.notification_service = notification_service
         self.appointment_management = appointment_management
+        # Not consumed directly by this class - scheduling dispatches to
+        # generate_medical_record_job, which builds its own MedicalRecordService
+        # (required so APScheduler can pickle the job by module reference).
+        # Injected here only for DI symmetry with notification_service/appointment_management.
+        self.medical_record_service = medical_record_service
 
     async def schedule_appointment_reminders(self, appointment: Appointment) -> None:
         """Schedule reminder jobs for an appointment.
@@ -209,6 +217,7 @@ class AppointmentScheduler:
                 completed = await self.appointment_management.complete_confirmed_appointment(appointment.id)
                 if completed is not None:
                     logger.warning(f"Completed past-due appointment {appointment.id} immediately")
+                    await self.schedule_medical_record_generation(appointment.id)
                 else:
                     logger.warning(
                         f"Appointment {appointment.id} was not completed immediately "
@@ -239,6 +248,42 @@ class AppointmentScheduler:
         except JobSchedulingError as e:
             logger.error(
                 f"Failed to schedule autocomplete for appointment {appointment.id}: {e}"
+            )
+
+    async def schedule_medical_record_generation(self, appointment_id: int) -> None:
+        """Schedule immediate generation of the medical record docx for a
+        just-completed appointment.
+
+        Runs as soon as possible (run_date=now) via APScheduler rather than
+        a bare create_task, so the job survives a quick process restart
+        thanks to the persistent jobstore, matching every other background
+        task in this class. Called right after complete_appointment_by_admin/
+        complete_confirmed_appointment successfully transition an appointment
+        to COMPLETED.
+
+        Job ID: appt_{appointment_id}_medical_record
+        """
+        try:
+            job_id = f"appt_{appointment_id}_medical_record"
+
+            try:
+                self.scheduler.add_job(
+                    generate_medical_record_job,
+                    "date",
+                    run_date=_current_tashkent_time(),
+                    args=(appointment_id,),
+                    id=job_id,
+                    replace_existing=True,
+                )
+            except Exception as exc:
+                raise JobSchedulingError(
+                    f"Failed to schedule medical record generation job {job_id}: {exc}"
+                ) from exc
+
+            logger.info(f"Scheduled medical record generation for appointment {appointment_id}")
+        except JobSchedulingError as e:
+            logger.error(
+                f"Failed to schedule medical record generation for appointment {appointment_id}: {e}"
             )
 
     async def schedule_auto_confirm(self, appointment: Appointment) -> None:

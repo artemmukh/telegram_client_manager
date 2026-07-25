@@ -1604,7 +1604,13 @@ async def test_past_due_autocomplete_completes_appointment_immediately(
     already in the past and the appointment is still CONFIRMED with no active
     reschedule negotiation, schedule_appointment_autocomplete must complete it
     immediately via complete_confirmed_appointment instead of leaving it stuck
-    CONFIRMED, and must not schedule any job for it."""
+    CONFIRMED, and must not schedule any job for it.
+
+    schedule_medical_record_generation is mocked out here: the real
+    implementation would add_job(generate_medical_record_job, run_date=now) on
+    this already-started scheduler, letting a real background job fire and
+    hit real load_config()/Database() -- exercised deliberately, in isolation,
+    by test_past_due_autocomplete_triggers_medical_record_generation_exactly_once."""
     scheduler.start()
 
     sample_appointment.status = AppointmentStatus.CONFIRMED
@@ -1612,13 +1618,17 @@ async def test_past_due_autocomplete_completes_appointment_immediately(
     sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=3)).isoformat()
     mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
 
-    await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+    with patch.object(appointment_scheduler, "schedule_medical_record_generation", new=AsyncMock()):
+        await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
 
     mock_appointment_repo.update_appointment_status.assert_called_once_with(
         sample_appointment.id, AppointmentStatus.COMPLETED, ANY,
     )
     assert sample_appointment.status == AppointmentStatus.COMPLETED
-    assert scheduler.get_jobs() == []
+    # The autocomplete job itself must never be (re)scheduled for this
+    # appointment -- it was just completed immediately instead.
+    autocomplete_job_id = f"appt_{sample_appointment.id}_autocomplete"
+    assert autocomplete_job_id not in {job.id for job in scheduler.get_jobs()}
 
     scheduler.shutdown(wait=False)
 
@@ -1628,9 +1638,12 @@ async def test_past_due_autocomplete_does_not_call_add_job(
     appointment_scheduler, scheduler, mock_appointment_repo, sample_appointment
 ):
     """Regression test for the past-due guard: add_job must not be invoked
-    when the computed autocomplete time is already in the past, even though
-    the appointment now gets completed immediately instead of silently
-    skipped."""
+    for the autocomplete job itself when the computed autocomplete time is
+    already in the past, even though the appointment now gets completed
+    immediately instead of silently skipped. A separate add_job call for the
+    appt_{id}_medical_record generation job is expected in this branch (see
+    test_past_due_autocomplete_triggers_medical_record_generation), so this
+    only asserts the autocomplete job specifically was never scheduled."""
     scheduler.start()
 
     sample_appointment.status = AppointmentStatus.CONFIRMED
@@ -1641,7 +1654,11 @@ async def test_past_due_autocomplete_does_not_call_add_job(
     with patch.object(scheduler, "add_job") as mock_add_job:
         await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
 
-        mock_add_job.assert_not_called()
+        autocomplete_job_id = f"appt_{sample_appointment.id}_autocomplete"
+        autocomplete_calls = [
+            call for call in mock_add_job.call_args_list if call.kwargs.get("id") == autocomplete_job_id
+        ]
+        assert autocomplete_calls == []
 
     scheduler.shutdown(wait=False)
 
@@ -1669,6 +1686,69 @@ async def test_past_due_autocomplete_with_active_proposal_does_not_force_complet
     assert scheduler.get_jobs() == []
 
     scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_autocomplete_triggers_medical_record_generation_exactly_once(
+    appointment_scheduler, scheduler, mock_appointment_repo, sample_appointment
+):
+    """Design doc requirement: the past-due branch of schedule_appointment_autocomplete
+    completes the appointment immediately (bypassing auto_complete_appointment_job
+    entirely), so it must trigger medical record generation itself right there,
+    exactly once, after a successful completion."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=3)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch.object(
+        appointment_scheduler, "schedule_medical_record_generation", new=AsyncMock(),
+    ) as mock_schedule_generation:
+        await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+        mock_schedule_generation.assert_awaited_once_with(sample_appointment.id)
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_past_due_autocomplete_with_active_proposal_does_not_trigger_generation(
+    appointment_scheduler, scheduler, mock_appointment_repo, sample_appointment
+):
+    """Mirror of test_past_due_autocomplete_with_active_proposal_does_not_force_complete:
+    when completion is declined (negotiation in progress), generation must not
+    be triggered either -- there is nothing COMPLETED to generate a record for."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = (_current_tashkent_time() + timedelta(days=1)).isoformat()
+    sample_appointment.datetime = (_current_tashkent_time() - timedelta(hours=3)).isoformat()
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch.object(
+        appointment_scheduler, "schedule_medical_record_generation", new=AsyncMock(),
+    ) as mock_schedule_generation:
+        await appointment_scheduler.schedule_appointment_autocomplete(sample_appointment)
+
+        mock_schedule_generation.assert_not_awaited()
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_schedule_medical_record_generation_swallows_add_job_failure(
+    appointment_scheduler, scheduler,
+):
+    """Design guarantee: generation scheduling must never be able to break the
+    already-committed COMPLETED transition. Even if the scheduler's add_job()
+    itself raises, schedule_medical_record_generation must swallow it (via its
+    own JobSchedulingError handling) instead of letting it propagate to the
+    caller (open_edit/skip_edit/auto_complete_appointment_job/the past-due
+    branch all call this with no try/except of their own around it)."""
+    with patch.object(scheduler, "add_job", side_effect=Exception("boom")):
+        await appointment_scheduler.schedule_medical_record_generation(1)  # must not raise
 
 
 @pytest.mark.asyncio
@@ -1767,6 +1847,72 @@ async def test_auto_complete_appointment_job_completes_eligible_confirmed_appoin
 
             await auto_complete_appointment_job(sample_appointment.id)
 
+            mock_appointment_repo.update_appointment_status.assert_called_once_with(
+                sample_appointment.id, AppointmentStatus.COMPLETED, ANY,
+            )
+
+
+@pytest.mark.asyncio
+async def test_auto_complete_appointment_job_triggers_medical_record_generation_exactly_once(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Design doc requirement: after complete_confirmed_appointment succeeds,
+    the job must trigger medical record generation exactly once."""
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch(
+                 "bot.services.appointment.appointment_jobs.generate_medical_record_job", new=AsyncMock(),
+             ) as mock_generate_job:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_complete_appointment_job(sample_appointment.id)
+
+            mock_generate_job.assert_awaited_once_with(sample_appointment.id)
+
+
+@pytest.mark.asyncio
+async def test_auto_complete_appointment_job_swallows_medical_record_generation_failure(
+    appointment_scheduler, mock_appointment_repo, sample_appointment
+):
+    """Generation failure must never affect the already-committed COMPLETED
+    status or escape the job -- it is wrapped in its own try/except."""
+    sample_appointment.status = AppointmentStatus.CONFIRMED
+    sample_appointment.proposed_datetime = None
+    mock_appointment_repo.get_appointment_by_id.return_value = sample_appointment
+
+    with patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch(
+                 "bot.services.appointment.appointment_jobs.generate_medical_record_job",
+                 new=AsyncMock(side_effect=Exception("boom")),
+             ) as mock_generate_job:
+            mock_repo_class.return_value = mock_appointment_repo
+
+            await auto_complete_appointment_job(sample_appointment.id)  # must not raise
+
+            mock_generate_job.assert_awaited_once_with(sample_appointment.id)
             mock_appointment_repo.update_appointment_status.assert_called_once_with(
                 sample_appointment.id, AppointmentStatus.COMPLETED, ANY,
             )

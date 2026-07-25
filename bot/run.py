@@ -36,6 +36,7 @@ from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.user import UserContextMiddleware
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.medical_record_repository import MedicalRecordRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
@@ -46,6 +47,8 @@ from bot.services.appointment.appointment_pagination_service import AppointmentP
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_notifications import ClientNotificationService
+from bot.services.llm.agent import ChatLLM
+from bot.services.medical_record.medical_record_management import MedicalRecordService
 from bot.utils.commands import DEFAULT_COMMANDS
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,7 @@ async def main():
     clinic_repo = ClinicRepository(connection)
     staff_repo = StaffRepository(connection)
     client_clinic_repo = ClientClinicRepository(connection)
+    medical_record_repo = MedicalRecordRepository(connection)
 
     await user_repo.init()
 
@@ -67,6 +71,7 @@ async def main():
     await user_settings_repo.init()
 
     await appointment_repo.init(MAX_BOOKINGS_PER_SLOT)
+    await medical_record_repo.init()
     await clinic_repo.init(config.instance)
     await staff_repo.init(config.instance)
     await client_clinic_repo.init()
@@ -95,6 +100,10 @@ async def main():
     notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     client_notification_service = ClientNotificationService(bot, user_repo)
     appointment_pagination_service = AppointmentPaginationService(appointment_repo)
+    chat_llm = ChatLLM(config.ollama_base_url, config.ollama_model)
+    medical_record_service = MedicalRecordService(
+        medical_record_repo, appointment_management_service, chat_llm,
+    )
 
     # Create and start scheduler for appointment reminders
     scheduler = dp["scheduler"]
@@ -108,6 +117,7 @@ async def main():
         scheduler=scheduler,
         notification_service=notification_service,
         appointment_management=appointment_management_service,
+        medical_record_service=medical_record_service,
     )
 
     # Routers
