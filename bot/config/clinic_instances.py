@@ -77,3 +77,11 @@ DATEPARSER_BY_INSTANCE: dict[str, str] = {
     "zb": "parser",
     "mm": "slots",
 }
+
+# None means "not set up yet" -- MedicalRecordService marks the record failed
+# with a clear message instead of trying to render a template that doesn't
+# exist for that clinic.
+MEDICAL_RECORD_TEMPLATE_BY_INSTANCE: dict[str, str | None] = {
+    "zb": "data/history_of_illness/medical_card_wisdom_tooth.docx",
+    "mm": None,  # ещё не настроено
+}

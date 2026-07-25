@@ -1,5 +1,6 @@
 import logging
 
+from bot.config.clinic_instances import MEDICAL_RECORD_TEMPLATE_BY_INSTANCE
 from bot.exceptions.medical_record_exceptions import MedicalRecordGenerationError
 from bot.models.medical_record import MedicalRecord
 from bot.models.user import User
@@ -74,10 +75,12 @@ class MedicalRecordService:
         medical_record_repository: MedicalRecordRepository,
         appointment_management: AppointmentManagement,
         chat_llm: ChatLLM,
+        instance: str,
     ):
         self.medical_record_repository = medical_record_repository
         self.appointment_management = appointment_management
         self.chat_llm = chat_llm
+        self.instance = instance
 
     async def generate(self, appointment_id: int) -> MedicalRecord | None:
         """Generate the medical record docx for a completed appointment.
@@ -109,6 +112,17 @@ class MedicalRecordService:
             await self.medical_record_repository.mark_failed(record.id, "Клиент не найден.")
             return None
 
+        template_path = MEDICAL_RECORD_TEMPLATE_BY_INSTANCE.get(self.instance)
+        if template_path is None:
+            logger.info(
+                "Шаблон истории болезни не настроен для инстанса %s, генерация пропущена (appointment %s).",
+                self.instance, appointment_id,
+            )
+            await self.medical_record_repository.mark_failed(
+                record.id, "Шаблон истории болезни не настроен для этой клиники.",
+            )
+            return None
+
         ai_fields, partial = await self._generate_ai_fields(appointment.purpose, client)
 
         data = {
@@ -121,7 +135,7 @@ class MedicalRecordService:
         }
 
         try:
-            file_path = await create_docx(data, appointment.purpose, appointment_id)
+            file_path = await create_docx(data, appointment.purpose, appointment_id, template_path)
         except Exception as exc:
             logger.exception("Failed to render medical record docx for appointment %s: %s", appointment_id, exc)
             await self.medical_record_repository.mark_failed(record.id, str(exc))

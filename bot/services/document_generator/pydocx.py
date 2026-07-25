@@ -12,8 +12,8 @@ from docxtpl import DocxTemplate
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "data" / "history_of_illness" / "medical_card_wisdom_tooth.docx"
 OUTPUT_DIR = Path(__file__).resolve().parents[3] / "data" / "history_of_illness" / "generated"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 TEETH_TABLE_INDEX = 1
 
@@ -74,8 +74,8 @@ def mark_tooth(table, tooth: int, marker: str) -> None:
     run.font.size = Pt(12)
 
 
-def _render_docx_sync(data: dict, raw_diagnosis: str, output_path: Path) -> None:
-    template = DocxTemplate(str(TEMPLATE_PATH))
+def _render_docx_sync(data: dict, raw_diagnosis: str, output_path: Path, template_path: Path) -> None:
+    template = DocxTemplate(str(template_path))
     template.render(data)
 
     buffer = io.BytesIO()
@@ -104,7 +104,7 @@ def _render_docx_sync(data: dict, raw_diagnosis: str, output_path: Path) -> None
     logger.info("Документ сохранён: %s", output_path)
 
 
-async def create_docx(data: dict, raw_diagnosis: str, appointment_id: int) -> str:
+async def create_docx(data: dict, raw_diagnosis: str, appointment_id: int, template_path: str) -> str:
     """Render the medical record template and mark the affected tooth.
 
     `data` must already contain every template placeholder (appointment_date,
@@ -112,11 +112,14 @@ async def create_docx(data: dict, raw_diagnosis: str, appointment_id: int) -> st
     examination, treatment) with LLM-key-to-template-key mapping already
     applied by the caller. `raw_diagnosis` is the original short
     appointment.purpose string (not the LLM-generated diagnosis text), used
-    only for the tooth-map regex/keyword search. Returns the path to the
-    generated .docx file.
+    only for the tooth-map regex/keyword search. `template_path` is the
+    per-clinic-instance .docx template path resolved by the caller (see
+    MEDICAL_RECORD_TEMPLATE_BY_INSTANCE in bot.config.clinic_instances).
+    Returns the path to the generated .docx file.
     """
     output_path = OUTPUT_DIR / f"medical_card_{appointment_id}.docx"
+    resolved_template_path = PROJECT_ROOT / template_path
 
-    await asyncio.to_thread(_render_docx_sync, data, raw_diagnosis, output_path)
+    await asyncio.to_thread(_render_docx_sync, data, raw_diagnosis, output_path, resolved_template_path)
 
     return str(output_path)

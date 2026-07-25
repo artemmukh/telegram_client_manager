@@ -93,7 +93,7 @@ async def test_generate_success_creates_docx_and_marks_ready(fake_medical_record
     client = _client()
     chat_llm = FakeChatLLM(response=LLM_RESPONSE)
     service = MedicalRecordService(
-        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm,
+        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm, instance="zb",
     )
 
     create_docx_mock = AsyncMock(return_value="/data/history_of_illness/generated/medical_card_1.docx")
@@ -108,9 +108,10 @@ async def test_generate_success_creates_docx_and_marks_ready(fake_medical_record
     assert len(chat_llm.calls) == 1
 
     create_docx_mock.assert_awaited_once()
-    data_arg, raw_diagnosis_arg, appointment_id_arg = create_docx_mock.call_args.args
+    data_arg, raw_diagnosis_arg, appointment_id_arg, template_path_arg = create_docx_mock.call_args.args
     assert raw_diagnosis_arg == appointment.purpose
     assert appointment_id_arg == appointment.id
+    assert template_path_arg == "data/history_of_illness/medical_card_wisdom_tooth.docx"
     assert data_arg["complaints"] == LLM_RESPONSE["complaints"]
     assert data_arg["diseases"] == LLM_RESPONSE["anamnesis"]
     assert data_arg["examination"] == LLM_RESPONSE["objective"]
@@ -126,7 +127,7 @@ async def test_generate_falls_back_to_empty_ai_fields_when_llm_fails(fake_medica
     client = _client()
     chat_llm = FakeChatLLM(error=MedicalRecordGenerationError("Ollama unavailable"))
     service = MedicalRecordService(
-        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm,
+        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm, instance="zb",
     )
 
     create_docx_mock = AsyncMock(return_value="/data/history_of_illness/generated/medical_card_1.docx")
@@ -165,7 +166,7 @@ async def test_generate_is_idempotent_when_already_generated_or_in_flight(
 
     chat_llm = FakeChatLLM(response=LLM_RESPONSE)
     service = MedicalRecordService(
-        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm,
+        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm, instance="zb",
     )
 
     create_docx_mock = AsyncMock()
@@ -186,7 +187,7 @@ async def test_generate_is_idempotent_when_already_generated_or_in_flight(
 async def test_generate_marks_failed_when_appointment_missing(fake_medical_record_repo):
     chat_llm = FakeChatLLM(response=LLM_RESPONSE)
     service = MedicalRecordService(
-        fake_medical_record_repo, FakeAppointmentManagement(appointment=None, client=None), chat_llm,
+        fake_medical_record_repo, FakeAppointmentManagement(appointment=None, client=None), chat_llm, instance="zb",
     )
 
     result = await service.generate(appointment_id=404)
@@ -197,6 +198,34 @@ async def test_generate_marks_failed_when_appointment_missing(fake_medical_recor
     assert failed_record.status is MedicalRecordStatus.FAILED
 
 
+@pytest.mark.asyncio
+async def test_generate_marks_failed_when_instance_has_no_configured_template(fake_medical_record_repo, monkeypatch):
+    """"mm" has no MEDICAL_RECORD_TEMPLATE_BY_INSTANCE entry yet -- this is an
+    expected "not set up" case (like price_list/location stubs), not a bug:
+    generation must not be attempted and no LLM call/docx render should happen."""
+    appointment = _appointment()
+    client = _client()
+    chat_llm = FakeChatLLM(response=LLM_RESPONSE)
+    service = MedicalRecordService(
+        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), chat_llm, instance="mm",
+    )
+
+    create_docx_mock = AsyncMock()
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.create_docx", create_docx_mock,
+    )
+
+    result = await service.generate(appointment.id)
+
+    assert result is None
+    assert chat_llm.calls == []
+    create_docx_mock.assert_not_awaited()
+    assert fake_medical_record_repo.mark_failed_calls
+    failed_record = await fake_medical_record_repo.get_by_appointment_id(appointment.id)
+    assert failed_record.status is MedicalRecordStatus.FAILED
+    assert failed_record.error_message == "Шаблон истории болезни не настроен для этой клиники."
+
+
 # --- get_or_generate ---
 
 @pytest.mark.asyncio
@@ -205,7 +234,7 @@ async def test_get_or_generate_returns_existing_ready_record_without_generation_
         id=1, appointment_id=1, status=MedicalRecordStatus.READY, file_path="/existing/path.docx",
     )
     fake_medical_record_repo.records_by_appointment_id[1] = existing
-    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM())
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
 
     record, needs_generation = await service.get_or_generate(1)
 
@@ -217,7 +246,7 @@ async def test_get_or_generate_returns_existing_ready_record_without_generation_
 async def test_get_or_generate_creates_pending_row_and_signals_generation_when_no_record_exists(
     fake_medical_record_repo,
 ):
-    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM())
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
 
     record, needs_generation = await service.get_or_generate(99)
 
@@ -236,7 +265,7 @@ async def test_generate_ai_fields_maps_llm_response_keys_to_template_placeholder
     treatment_plan->treatment. Assert this directly rather than relying solely
     on the end-to-end generate() test."""
     chat_llm = FakeChatLLM(response=LLM_RESPONSE)
-    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), chat_llm)
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), chat_llm, instance="zb")
 
     ai_fields, partial = await service._generate_ai_fields("Средний кариес 37 зуба", _client())
 
@@ -253,7 +282,7 @@ async def test_generate_ai_fields_maps_llm_response_keys_to_template_placeholder
 @pytest.mark.asyncio
 async def test_generate_ai_fields_returns_empty_strings_and_partial_true_on_llm_failure(fake_medical_record_repo):
     chat_llm = FakeChatLLM(error=MedicalRecordGenerationError("boom"))
-    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), chat_llm)
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), chat_llm, instance="zb")
 
     ai_fields, partial = await service._generate_ai_fields("Консультация", _client())
 

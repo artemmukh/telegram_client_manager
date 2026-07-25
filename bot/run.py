@@ -102,7 +102,7 @@ async def main():
     appointment_pagination_service = AppointmentPaginationService(appointment_repo)
     chat_llm = ChatLLM(config.ollama_base_url, config.ollama_model)
     medical_record_service = MedicalRecordService(
-        medical_record_repo, appointment_management_service, chat_llm,
+        medical_record_repo, appointment_management_service, chat_llm, instance=config.instance,
     )
 
     # Create and start scheduler for appointment reminders
