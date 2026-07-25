@@ -33,6 +33,7 @@ dist/
 data/*.db
 data/*.sqlite
 data/*.sqlite3
+data/history_of_illness/generated/
 
 # Logs
 logs/

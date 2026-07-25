@@ -90,7 +90,7 @@ async def test_failed_record_shows_alert_without_sending_document():
 
     callback_query.message.answer_document.assert_not_awaited()
     callback_query.answer.assert_awaited_once_with(
-        "Документ ещё готовится, попробуйте через пару минут", show_alert=True,
+        "Не удалось подготовить документ, обратитесь к администратору", show_alert=True,
     )
 
 
