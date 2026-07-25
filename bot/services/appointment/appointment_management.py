@@ -142,6 +142,14 @@ class AppointmentManagement:
 
         return await self.list_clinic_doctors(clinic.clinic_id)
 
+    async def list_clinic_doctors_for_filter(self, admin_telegram_id: int) -> list[User]:
+        clinic_id, doctor_id = await self.resolve_admin_appointment_filter(admin_telegram_id)
+        if doctor_id is not None:
+            return []
+
+        doctors = await self.list_clinic_doctors(clinic_id)
+        return doctors if len(doctors) >= 2 else []
+
     async def resolve_admin_appointment_filter(self, admin_telegram_id: int) -> tuple[int, int | None]:
         clinic = await self.get_admin_clinic(admin_telegram_id)
         admin_user = await self.user_repository.get_user_by_telegram_id(admin_telegram_id)

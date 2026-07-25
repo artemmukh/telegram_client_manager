@@ -14,9 +14,11 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptCalendarDayCB,
     ApptCalendarMonthCB,
     ApptCardCB,
+    ApptDoctorFilterCB,
     ApptPageCB,
 )
 from bot.models.appointment import Appointment
+from bot.models.user import User
 from bot.utils.appointment_enums import APPOINTMENT_TAB_LABELS, APPOINTMENT_TAB_ORDER, AppointmentStatus
 from bot.utils.pagination import get_circular_page
 
@@ -107,6 +109,18 @@ def appointment_browser_confirm_phone_kb() -> InlineKeyboardMarkup:
     builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
 
     builder.adjust(1, 1, 1)
+    return builder.as_markup()
+
+
+def appointment_doctor_filter_kb(doctors: list[User]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+
+    for doctor in doctors:
+        builder.button(text=doctor.full_name, callback_data=ApptDoctorFilterCB(doctor_id=doctor.ID).pack())
+    builder.button(text="👥 Все врачи", callback_data=ApptDoctorFilterCB(doctor_id=0).pack())
+    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+
+    builder.adjust(*([1] * len(doctors)), 1, 1)
     return builder.as_markup()
 
 

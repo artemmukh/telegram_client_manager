@@ -38,6 +38,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptCalendarDayCB,
     ApptCalendarMonthCB,
     ApptCardCB,
+    ApptDoctorFilterCB,
     ApptPageCB,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
@@ -53,6 +54,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_confirm_new_purpose_kb,
     appointment_delete_confirm_kb,
     appointment_delete_notify_kb,
+    appointment_doctor_filter_kb,
     appointment_list_kb,
     appointment_status_menu_kb,
 )
@@ -168,6 +170,10 @@ def create_admin_appointment_browser_router(
     async def search_all(callback_query: CallbackQuery, state: FSMContext):
         await state.clear()
         clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+
+        if await maybe_prompt_doctor_filter(callback_query, state, mode="list", page=1, tab="confirmed"):
+            return
+
         await render_list(
             callback_query, state, mode="list", page=1, tab="confirmed", clinic_id=clinic_id, doctor_id=doctor_id,
         )
@@ -234,6 +240,9 @@ def create_admin_appointment_browser_router(
                 return
 
             await state.update_data(search_data={"client_id": client.ID})
+            if await maybe_prompt_doctor_filter(callback_query, state, mode="phone", page=1, tab="confirmed"):
+                return
+
             await render_list(
                 callback_query, state, mode="phone", page=1, tab="confirmed",
                 clinic_id=clinic_id, doctor_id=doctor_id,
@@ -242,6 +251,9 @@ def create_admin_appointment_browser_router(
 
         if data.get("full_name"):
             await state.update_data(search_data={"full_name": data["full_name"]})
+            if await maybe_prompt_doctor_filter(callback_query, state, mode="search", page=1, tab="confirmed"):
+                return
+
             await render_list(
                 callback_query, state, mode="search", page=1, tab="confirmed",
                 clinic_id=clinic_id, doctor_id=doctor_id,
@@ -254,7 +266,9 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(ApptPageCB.filter())
     async def paginate(callback_query: CallbackQuery, callback_data: ApptPageCB, state: FSMContext):
-        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+        clinic_id, doctor_id = await resolve_filtered_doctor_id(
+            callback_query.from_user.id, state, callback_data.mode
+        )
         await render_list(
             callback_query, state, mode=callback_data.mode, page=callback_data.page, tab=callback_data.tab,
             clinic_id=clinic_id, doctor_id=doctor_id,
@@ -429,7 +443,9 @@ def create_admin_appointment_browser_router(
                     f"Failed to notify client about deletion for appointment {callback_data.appointment_id}: {e}"
                 )
 
-        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+        clinic_id, doctor_id = await resolve_filtered_doctor_id(
+            callback_query.from_user.id, state, callback_data.mode
+        )
         await render_list(
             callback_query, state,
             mode=callback_data.mode, page=callback_data.page, prefix="✅ Запись удалена.\n\n",
@@ -736,6 +752,8 @@ def create_admin_appointment_browser_router(
 
     # --- Shared renderers ---
 
+    FILTERABLE_MODES = {"list", "search", "phone"}
+
     async def notify_appointment_changed(appointment, appointment_id: int) -> None:
         if not notification_service:
             return
@@ -746,6 +764,55 @@ def create_admin_appointment_browser_router(
             logger.warning(
                 f"Failed to notify client about changes for appointment {appointment_id}: {e}"
             )
+
+    async def maybe_prompt_doctor_filter(
+        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, tab: str,
+    ) -> bool:
+        doctors = await appt_mng.list_clinic_doctors_for_filter(callback_query.from_user.id)
+        if not doctors:
+            return False
+
+        await state.update_data(pending_render={"mode": mode, "page": page, "tab": tab})
+        await state.set_state(AppointmentBrowserStates.pick_doctor_filter)
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            "Выберите врача для фильтрации:",
+            reply_markup=appointment_doctor_filter_kb(doctors),
+        )
+        await remember_tracked_message(state, callback_query.message)
+        return True
+
+    async def resolve_filtered_doctor_id(telegram_id: int, state: FSMContext, mode: str) -> tuple[int, int | None]:
+        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(telegram_id)
+        if mode in FILTERABLE_MODES:
+            data = await state.get_data()
+            if "doctor_filter_id" in data:
+                doctor_id = data["doctor_filter_id"]
+        return clinic_id, doctor_id
+
+    @router.callback_query(AppointmentBrowserStates.pick_doctor_filter, ApptDoctorFilterCB.filter())
+    async def apply_doctor_filter(
+        callback_query: CallbackQuery, callback_data: ApptDoctorFilterCB, state: FSMContext,
+    ):
+        doctor_id = callback_data.doctor_id or None
+        await state.update_data(doctor_filter_id=doctor_id)
+
+        data = await state.get_data()
+        pending = data.get("pending_render", {})
+        mode = pending.get("mode", "list")
+
+        clinic_id, doctor_id = await resolve_filtered_doctor_id(callback_query.from_user.id, state, mode)
+
+        if mode in ("search", "phone"):
+            await state.set_state(AppointmentBrowserStates.confirm_search)
+        else:
+            await state.set_state(None)
+
+        await render_list(
+            callback_query, state,
+            mode=mode, page=pending.get("page", 1), tab=pending.get("tab", "confirmed"),
+            clinic_id=clinic_id, doctor_id=doctor_id,
+        )
 
     async def render_list(
         callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, clinic_id: int,

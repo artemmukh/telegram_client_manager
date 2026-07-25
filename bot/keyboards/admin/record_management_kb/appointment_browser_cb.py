@@ -53,3 +53,8 @@ class ApptCalendarDayCB(CallbackData, prefix="appt_cal_day"):
     year: int
     month: int
     day: int
+
+
+class ApptDoctorFilterCB(CallbackData, prefix="appt_doc_filter"):
+    """Выбор врача для фильтрации списка записей (0 = все врачи)."""
+    doctor_id: int = 0

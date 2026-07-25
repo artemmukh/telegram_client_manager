@@ -83,6 +83,12 @@ class FakeAppointmentRepository:
     async def update_proposed_by(self, appointment_id, proposed_by):
         self.proposed_by_updates.append((appointment_id, proposed_by))
 
+    async def count_appointments_by_status(self, status, clinic_id, doctor_id=None, tab_bucket=False):
+        return len([a for a in self.appointments if a.clinic_id == clinic_id and a.status == status])
+
+    async def get_appointments_by_status_page(self, status, page, clinic_id, doctor_id, per_page, tab_bucket=False):
+        return [a for a in self.appointments if a.clinic_id == clinic_id and a.status == status]
+
 
 class FakeUserRepo:
     def __init__(self, users_by_telegram_id):
@@ -403,6 +409,32 @@ async def test_finish_appointment_denies_own_scope_admin_for_other_doctor_appoin
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.status_updates == []
+
+
+# --- doctor-filter picker never shown to doctors ---
+
+@pytest.mark.asyncio
+async def test_search_all_renders_list_directly_for_doctor_without_picker():
+    """A doctor (own-scope admin) must never see the doctor-filter picker
+    added on top of search_all/approve_search -- list_clinic_doctors_for_filter
+    always returns [] for own/None-scope callers (see
+    test_appointment_browser_doctor_filter.py for the dedicated picker
+    coverage), so search_all must render the category list directly, exactly
+    as it did before that feature existed."""
+    appt_repo = FakeAppointmentRepository([_foreign_appointment(status=AppointmentStatus.CONFIRMED)])
+    router = _build_router(appt_repo)
+    search_all = _find_handler(router, "search_all")
+
+    callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
+    state = _state()
+
+    await search_all(callback_query, state)
+
+    state.set_state.assert_not_called()
+    callback_query.message.edit_text.assert_called_once()
+    args, _ = callback_query.message.edit_text.call_args
+    assert "Выберите врача" not in args[0]
+    assert "📒 Все записи" in args[0]
 
 
 # --- scheduler job migration: finish_delete and finish_appointment must resync/

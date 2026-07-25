@@ -657,6 +657,81 @@ async def test_list_clinic_doctors_for_creation_clinic_scope_shows_picker_with_s
     assert doctors == [requesting_admin]
 
 
+# --- list_clinic_doctors_for_filter ---
+#
+# Unlike list_clinic_doctors_for_creation (picker shown from 1 doctor up),
+# the browse-appointments doctor filter only appears once there are >= 2
+# doctors to choose between -- filtering a clinic of 1 doctor down to
+# "that one doctor" is a no-op, so the picker step is skipped entirely.
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_filter_returns_empty_for_doctor_caller():
+    """resolve_admin_appointment_filter resolves a non-None doctor_id for
+    'own'/None-scope callers (doctors) -- list_clinic_doctors_for_filter must
+    short-circuit to [] for them regardless of how many doctors the clinic has."""
+    admin, staff = _admin_with_scope("own")
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(admin=admin),
+        FakeStaffRepo(staff),
+        _clinic_repo(),
+    )
+
+    doctors = await service.list_clinic_doctors_for_filter(admin.telegram_user_id)
+
+    assert doctors == []
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_filter_returns_empty_when_clinic_has_no_doctors():
+    requesting_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+    user_repo = FakeUserRepo(admin=requesting_admin, staff_by_clinic={1: []})
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic"),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
+
+    doctors = await service.list_clinic_doctors_for_filter(requesting_admin.telegram_user_id)
+
+    assert doctors == []
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_filter_returns_empty_with_exactly_one_doctor():
+    requesting_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+    user_repo = FakeUserRepo(admin=requesting_admin, staff_by_clinic={1: [requesting_admin]})
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic", is_doctor=True),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
+
+    doctors = await service.list_clinic_doctors_for_filter(requesting_admin.telegram_user_id)
+
+    assert doctors == []
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_for_filter_returns_all_doctors_when_two_or_more():
+    requesting_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+    doctor_colleague = _staff_member(staff_id=99, telegram_user_id=1000, full_name="Петров Петр")
+
+    user_repo = FakeUserRepo(
+        admin=requesting_admin,
+        staff_by_clinic={1: [requesting_admin, doctor_colleague]},
+    )
+    staff_repo = FakeStaffRepo({
+        999: Staff(telegram_user_id=999, clinic_id=1, visibility_scope="clinic", is_doctor=True),
+        1000: Staff(telegram_user_id=1000, clinic_id=1, visibility_scope="own", is_doctor=True),
+    })
+    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, staff_repo, _clinic_repo())
+
+    doctors = await service.list_clinic_doctors_for_filter(requesting_admin.telegram_user_id)
+
+    assert doctors == [requesting_admin, doctor_colleague]
+    assert [d.ID for d in doctors] == [42, 99]
+    assert [d.full_name for d in doctors] == ["Артём Управляющий", "Петров Петр"]
+
+
 # --- create_appointment with an explicitly chosen doctor ---
 
 @pytest.mark.asyncio

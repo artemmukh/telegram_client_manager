@@ -9,6 +9,7 @@ class AppointmentBrowserStates(StatesGroup):
     edit_search_full_name = State()
     edit_search_phone = State()
     confirm_search = State()
+    pick_doctor_filter = State()
 
     new_datetime = State()
     confirm_new_datetime = State()
