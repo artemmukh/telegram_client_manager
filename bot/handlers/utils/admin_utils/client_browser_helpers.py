@@ -3,6 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.models.user import User
+from bot.services.utils.date_parser import format_appointment_card_datetime
 from bot.utils.tools import format_phone_short
 
 
@@ -11,9 +12,16 @@ def build_client_button_text(user: User) -> str:
 
 
 def build_client_card_text(user: User) -> str:
+    birth_date = user.birth_date
+
+    if birth_date is None:
+        birth_date = "Не указано"
+
+
     lines = [
-        f"👤 {user.full_name}",
-        f"📞 {user.phone}",
+        f"👤 ФИО: {user.full_name}",
+        f"📞 Номер телефона: {user.phone}",
+        f"📅 Дата рождения: {format_appointment_card_datetime(birth_date).split(' ')[0]}",
     ]
     if user.clinic_name:
         lines.append(f"🏥 Клиника: {user.clinic_name}")
