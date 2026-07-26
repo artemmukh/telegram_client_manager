@@ -9,44 +9,12 @@ from bot.services.appointment.appointment_management import AppointmentManagemen
 from bot.services.document_generator.pydocx import create_docx
 from bot.services.llm.agent import ChatLLM
 from bot.services.utils.date_parser import format_appointment_card_datetime
+from bot.utils import prompt_builder
 from bot.utils.medical_record_enums import MedicalRecordStatus
 
 logger = logging.getLogger(__name__)
 
 GENDER_LABELS = {"male": "Мужской", "female": "Женский"}
-
-LLM_PROMPT_TEMPLATE = """Ты врач стоматолог.
-На основе диагноза и шаблона заполни поля.
-Верни ТОЛЬКО JSON.
-Никаких пояснений.
-Структура:
-{{
-    "complaints": "",
-    "anamnesis": "",
-    "objective": "",
-    "diagnosis_reason": "",
-    "treatment_plan": ""
-}}
-Пациент:
-{patient}
-Диагноз:
-{diagnosis}
-Шаблон:
-{template}
-
-Верни строго JSON.
-Запрещено:
-- Markdown
-- ```json
-- комментарии
-- пояснения
-Все ключи должны присутствовать.
-Если информации недостаточно —
-оставь пустую строку."""
-
-TEMPLATE_FIELDS_DESCRIPTION = (
-    "Жалобы, Перенесённые и сопутствующие заболевания, Объективный осмотр, Диагноз, Лечение"
-)
 
 ALREADY_GENERATED_STATUSES = (
     MedicalRecordStatus.READY,
@@ -58,7 +26,6 @@ EMPTY_AI_FIELDS = {
     "complaints": "",
     "diseases": "",
     "examination": "",
-    "diagnosis": "",
     "treatment": "",
 }
 
@@ -91,9 +58,9 @@ class MedicalRecordService:
         found, the record (if any) is marked failed and None is returned.
 
         On LLM failure (after ChatLLM's own retries are exhausted), the
-        document is still generated with empty strings for the five
+        document is still generated with empty strings for the four
         AI-authored fields and the record is marked ready_partial, so the
-        "get document" button never blocks on Ollama being unavailable.
+        "get document" button never blocks on the LLM being unavailable.
         """
         existing = await self.medical_record_repository.get_by_appointment_id(appointment_id)
         if existing is not None and existing.status in ALREADY_GENERATED_STATUSES:
@@ -131,6 +98,7 @@ class MedicalRecordService:
             "gender": GENDER_LABELS.get(client.gender, ""),
             "birth_date": self._format_birth_date(client.birth_date),
             "phone": client.phone,
+            "diagnosis": appointment.purpose,
             **ai_fields,
         }
 
@@ -182,10 +150,9 @@ class MedicalRecordService:
 
         return {
             "complaints": llm_response["complaints"],
-            "diseases": llm_response["anamnesis"],
-            "examination": llm_response["objective"],
-            "diagnosis": llm_response["diagnosis_reason"],
-            "treatment": llm_response["treatment_plan"],
+            "examination": llm_response["examination"],
+            "diseases": llm_response["diseases"],
+            "treatment": llm_response["treatment"],
         }, False
 
     def _build_prompt(self, purpose: str, client: User) -> str:
@@ -195,11 +162,7 @@ class MedicalRecordService:
             f"дата рождения: {self._format_birth_date(client.birth_date) or 'не указана'}"
         )
 
-        return LLM_PROMPT_TEMPLATE.format(
-            patient=patient_summary,
-            diagnosis=purpose,
-            template=TEMPLATE_FIELDS_DESCRIPTION,
-        )
+        return prompt_builder.build_user_prompt(patient_summary, purpose)
 
     @staticmethod
     def _format_birth_date(birth_date: str | None) -> str:

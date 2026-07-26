@@ -10,6 +10,8 @@ class Config:
     instance: str
     ollama_base_url: str
     ollama_model: str
+    mistral_api_key: str | None
+    mistral_model: str
 
 
 def load_config() -> Config:
@@ -19,6 +21,8 @@ def load_config() -> Config:
     database_path = os.getenv("DATA_BASE")
     ollama_base_url = os.getenv("OLLAMA_BASE_URL")
     ollama_model = os.getenv("OLLAMA_MODEL")
+    mistral_api_key = os.getenv("MISTRAL_API_KEY")
+    mistral_model = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 
     token_by_instance = {
         "zb": os.getenv("BOT_TOKEN_ZB"),
@@ -43,6 +47,8 @@ def load_config() -> Config:
         instance=instance,
         ollama_base_url=ollama_base_url,
         ollama_model=ollama_model,
+        mistral_api_key=mistral_api_key,
+        mistral_model=mistral_model,
     )
 
 

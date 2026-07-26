@@ -100,7 +100,7 @@ async def main():
     notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
     client_notification_service = ClientNotificationService(bot, user_repo)
     appointment_pagination_service = AppointmentPaginationService(appointment_repo)
-    chat_llm = ChatLLM(config.ollama_base_url, config.ollama_model)
+    chat_llm = ChatLLM(config.mistral_api_key, config.mistral_model)
     medical_record_service = MedicalRecordService(
         medical_record_repo, appointment_management_service, chat_llm, instance=config.instance,
     )

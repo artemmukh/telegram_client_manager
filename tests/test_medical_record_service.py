@@ -57,10 +57,9 @@ class FakeChatLLM:
 
 LLM_RESPONSE = {
     "complaints": "Боль при накусывании",
-    "anamnesis": "Хронический гастрит",
-    "objective": "Кариозная полость на жевательной поверхности",
-    "diagnosis_reason": "Средний кариес 37 зуба",
-    "treatment_plan": "Пломбирование композитным материалом",
+    "diseases": "Хронический гастрит",
+    "examination": "Кариозная полость на жевательной поверхности",
+    "treatment": "Пломбирование композитным материалом",
 }
 
 
@@ -113,10 +112,10 @@ async def test_generate_success_creates_docx_and_marks_ready(fake_medical_record
     assert appointment_id_arg == appointment.id
     assert template_path_arg == "data/history_of_illness/medical_card_wisdom_tooth.docx"
     assert data_arg["complaints"] == LLM_RESPONSE["complaints"]
-    assert data_arg["diseases"] == LLM_RESPONSE["anamnesis"]
-    assert data_arg["examination"] == LLM_RESPONSE["objective"]
-    assert data_arg["diagnosis"] == LLM_RESPONSE["diagnosis_reason"]
-    assert data_arg["treatment"] == LLM_RESPONSE["treatment_plan"]
+    assert data_arg["diseases"] == LLM_RESPONSE["diseases"]
+    assert data_arg["examination"] == LLM_RESPONSE["examination"]
+    assert data_arg["diagnosis"] == appointment.purpose
+    assert data_arg["treatment"] == LLM_RESPONSE["treatment"]
     assert data_arg["full_name"] == client.full_name
     assert data_arg["phone"] == client.phone
 
@@ -144,7 +143,7 @@ async def test_generate_falls_back_to_empty_ai_fields_when_llm_fails(fake_medica
     assert data_arg["complaints"] == ""
     assert data_arg["diseases"] == ""
     assert data_arg["examination"] == ""
-    assert data_arg["diagnosis"] == ""
+    assert data_arg["diagnosis"] == appointment.purpose
     assert data_arg["treatment"] == ""
 
 
@@ -256,14 +255,13 @@ async def test_get_or_generate_creates_pending_row_and_signals_generation_when_n
     assert fake_medical_record_repo.create_pending_calls == [99]
 
 
-# --- JSON-key -> template-placeholder mapping (assert directly, not only via generate()) ---
+# --- AI-authored fields (diagnosis is sourced from appointment.purpose, not the LLM) ---
 
 @pytest.mark.asyncio
-async def test_generate_ai_fields_maps_llm_response_keys_to_template_placeholder_keys(fake_medical_record_repo):
-    """The mapping table from the design doc: complaints->complaints,
-    anamnesis->diseases, objective->examination, diagnosis_reason->diagnosis,
-    treatment_plan->treatment. Assert this directly rather than relying solely
-    on the end-to-end generate() test."""
+async def test_generate_ai_fields_returns_llm_response_keys_as_is(fake_medical_record_repo):
+    """_generate_ai_fields only covers the four AI-authored keys the LLM is
+    responsible for; diagnosis is populated separately in generate() from
+    appointment.purpose and is never requested from the LLM."""
     chat_llm = FakeChatLLM(response=LLM_RESPONSE)
     service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), chat_llm, instance="zb")
 
@@ -272,10 +270,9 @@ async def test_generate_ai_fields_maps_llm_response_keys_to_template_placeholder
     assert partial is False
     assert ai_fields == {
         "complaints": LLM_RESPONSE["complaints"],
-        "diseases": LLM_RESPONSE["anamnesis"],
-        "examination": LLM_RESPONSE["objective"],
-        "diagnosis": LLM_RESPONSE["diagnosis_reason"],
-        "treatment": LLM_RESPONSE["treatment_plan"],
+        "diseases": LLM_RESPONSE["diseases"],
+        "examination": LLM_RESPONSE["examination"],
+        "treatment": LLM_RESPONSE["treatment"],
     }
 
 
@@ -291,6 +288,5 @@ async def test_generate_ai_fields_returns_empty_strings_and_partial_true_on_llm_
         "complaints": "",
         "diseases": "",
         "examination": "",
-        "diagnosis": "",
         "treatment": "",
     }

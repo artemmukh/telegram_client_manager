@@ -579,7 +579,7 @@ async def generate_medical_record_job(appointment_id: int) -> None:
         medical_record_repo = MedicalRecordRepository(connection)
 
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        chat_llm = ChatLLM(config.ollama_base_url, config.ollama_model)
+        chat_llm = ChatLLM(config.mistral_api_key, config.mistral_model)
         medical_record_service = MedicalRecordService(
             medical_record_repo, appointment_management, chat_llm, instance=config.instance,
         )
