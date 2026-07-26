@@ -53,6 +53,7 @@ def _callback_query(telegram_user_id):
 def _medical_record_service(record, needs_generation=False):
     service = MagicMock()
     service.get_or_generate = AsyncMock(return_value=(record, needs_generation))
+    service.mark_for_regeneration = AsyncMock()
     return service
 
 
@@ -137,9 +138,14 @@ def _admin_router(appointment, admin, medical_record_service, appointment_schedu
 
 
 @pytest.mark.asyncio
-async def test_admin_get_medical_record_ready_sends_document():
+async def test_admin_get_medical_record_ready_sends_document(tmp_path):
+    file_path = tmp_path / "medical_card_1.docx"
+    file_path.write_bytes(b"")
+    ready_record = MedicalRecord(
+        id=1, appointment_id=1, status=MedicalRecordStatus.READY, file_path=str(file_path),
+    )
     router = _admin_router(
-        _admin_appointment(), _admin(), _medical_record_service(READY_RECORD), _appointment_scheduler(),
+        _admin_appointment(), _admin(), _medical_record_service(ready_record), _appointment_scheduler(),
     )
     handler = _find_handler(router, "get_medical_record")
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
@@ -149,7 +155,7 @@ async def test_admin_get_medical_record_ready_sends_document():
 
     callback_query.message.answer_document.assert_awaited_once()
     sent_document = callback_query.message.answer_document.call_args.args[0]
-    assert sent_document.path == "/data/medical_card_1.docx"
+    assert sent_document.path == str(file_path)
 
 
 @pytest.mark.asyncio
@@ -260,9 +266,14 @@ def _client_router(appointment, client, medical_record_service, appointment_sche
 
 
 @pytest.mark.asyncio
-async def test_client_get_medical_record_ready_sends_document():
+async def test_client_get_medical_record_ready_sends_document(tmp_path):
+    file_path = tmp_path / "medical_card_1.docx"
+    file_path.write_bytes(b"")
+    ready_record = MedicalRecord(
+        id=1, appointment_id=1, status=MedicalRecordStatus.READY, file_path=str(file_path),
+    )
     router, _ = _client_router(
-        _client_appointment(), _client_user(), _medical_record_service(READY_RECORD), _appointment_scheduler(),
+        _client_appointment(), _client_user(), _medical_record_service(ready_record), _appointment_scheduler(),
     )
     handler = _find_handler(router, "history_action")
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
@@ -272,7 +283,7 @@ async def test_client_get_medical_record_ready_sends_document():
 
     callback_query.message.answer_document.assert_awaited_once()
     sent_document = callback_query.message.answer_document.call_args.args[0]
-    assert sent_document.path == "/data/medical_card_1.docx"
+    assert sent_document.path == str(file_path)
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,13 @@
+import logging
+from pathlib import Path
+
 from aiogram.types import CallbackQuery, FSInputFile
 
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.medical_record.medical_record_management import MedicalRecordService
 from bot.utils.medical_record_enums import MedicalRecordStatus
+
+logger = logging.getLogger(__name__)
 
 READY_STATUSES = (MedicalRecordStatus.READY, MedicalRecordStatus.READY_PARTIAL)
 
@@ -34,6 +39,18 @@ async def deliver_medical_record(
         await appointment_scheduler.schedule_medical_record_generation(appointment_id)
 
     if record.status in READY_STATUSES:
+        if not Path(record.file_path).exists():
+            logger.warning(
+                "Medical record file missing on disk for appointment %s: %s",
+                appointment_id, record.file_path,
+            )
+            await medical_record_service.mark_for_regeneration(appointment_id)
+            await appointment_scheduler.schedule_medical_record_generation(appointment_id)
+            await callback_query.answer(
+                "Документ не найден, готовим заново — попробуйте через пару минут", show_alert=True,
+            )
+            return
+
         await callback_query.message.answer_document(FSInputFile(record.file_path))
         await callback_query.answer()
     elif record.status is MedicalRecordStatus.FAILED:

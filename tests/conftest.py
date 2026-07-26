@@ -208,8 +208,8 @@ def fake_client_clinic_repo_factory():
 
 class FakeMedicalRecordRepository:
     """Drop-in for MedicalRecordRepository, matching its method names/signatures
-    (create_pending, get_by_appointment_id, mark_generating, mark_ready,
-    mark_failed). Mutates the same MedicalRecord object in place across calls
+    (create_pending, get_by_appointment_id, mark_generating, mark_pending,
+    mark_ready, mark_failed). Mutates the same MedicalRecord object in place across calls
     (mirroring the real repository, where a fresh get_by_appointment_id()
     after a status update reflects the new state) so callers can assert on
     both the returned record and the recorded call history."""
@@ -222,6 +222,7 @@ class FakeMedicalRecordRepository:
         ) + 1
         self.create_pending_calls: list[int] = []
         self.mark_generating_calls: list[int] = []
+        self.mark_pending_calls: list[int] = []
         self.mark_ready_calls: list[tuple[int, str, bool]] = []
         self.mark_failed_calls: list[tuple[int, str]] = []
 
@@ -246,6 +247,13 @@ class FakeMedicalRecordRepository:
         record = self._find_by_id(id)
         if record is not None:
             record.status = MedicalRecordStatus.GENERATING
+
+    async def mark_pending(self, id: int) -> None:
+        self.mark_pending_calls.append(id)
+        record = self._find_by_id(id)
+        if record is not None:
+            record.status = MedicalRecordStatus.PENDING
+            record.file_path = None
 
     async def mark_ready(self, id: int, file_path: str, partial: bool) -> None:
         self.mark_ready_calls.append((id, file_path, partial))

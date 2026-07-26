@@ -74,6 +74,18 @@ async def test_mark_ready_partial_sets_ready_partial_status(medical_record_repo)
 
 
 @pytest.mark.asyncio
+async def test_mark_pending_resets_status_and_clears_file_path(medical_record_repo):
+    record = await medical_record_repo.create_pending(appointment_id=1)
+    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=False)
+
+    await medical_record_repo.mark_pending(record.id)
+
+    updated = await medical_record_repo.get_by_appointment_id(1)
+    assert updated.status is MedicalRecordStatus.PENDING
+    assert updated.file_path is None
+
+
+@pytest.mark.asyncio
 async def test_mark_failed_sets_status_and_error_message(medical_record_repo):
     record = await medical_record_repo.create_pending(appointment_id=1)
 

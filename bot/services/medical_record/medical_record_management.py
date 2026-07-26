@@ -142,6 +142,18 @@ class MedicalRecordService:
         record = await self.medical_record_repository.create_pending(appointment_id)
         return record, True
 
+    async def mark_for_regeneration(self, appointment_id: int) -> None:
+        """Reset an existing record back to pending so it can be regenerated.
+
+        Used when the stored file_path no longer points at a document on
+        disk (e.g. it was deleted manually). No-op if no record exists yet.
+        """
+        record = await self.medical_record_repository.get_by_appointment_id(appointment_id)
+        if record is None:
+            return
+
+        await self.medical_record_repository.mark_pending(record.id)
+
     async def _generate_ai_fields(self, purpose: str, client: User) -> tuple[dict, bool]:
         prompt = self._build_prompt(purpose, client)
 

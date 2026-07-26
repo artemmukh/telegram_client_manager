@@ -109,6 +109,17 @@ class MedicalRecordRepository:
         )
         await self.connection.commit()
 
+    async def mark_pending(self, id: int) -> None:
+        await self.connection.execute(
+            """
+            UPDATE medical_records
+            SET status = ?, file_path = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (MedicalRecordStatus.PENDING.value, id),
+        )
+        await self.connection.commit()
+
     async def mark_ready(self, id: int, file_path: str, partial: bool) -> None:
         status = MedicalRecordStatus.READY_PARTIAL if partial else MedicalRecordStatus.READY
         await self.connection.execute(

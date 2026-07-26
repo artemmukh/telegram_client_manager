@@ -259,6 +259,33 @@ async def test_get_or_generate_creates_pending_row_and_signals_generation_when_n
     assert fake_medical_record_repo.create_pending_calls == [99]
 
 
+# --- mark_for_regeneration ---
+
+@pytest.mark.asyncio
+async def test_mark_for_regeneration_resets_existing_record_to_pending(fake_medical_record_repo):
+    existing = MedicalRecord(
+        id=1, appointment_id=10, status=MedicalRecordStatus.READY, file_path="/existing/path.docx",
+    )
+    fake_medical_record_repo.records_by_appointment_id[10] = existing
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    await service.mark_for_regeneration(10)
+
+    assert fake_medical_record_repo.mark_pending_calls == [1]
+    updated = await fake_medical_record_repo.get_by_appointment_id(10)
+    assert updated.status is MedicalRecordStatus.PENDING
+    assert updated.file_path is None
+
+
+@pytest.mark.asyncio
+async def test_mark_for_regeneration_is_noop_when_no_record_exists(fake_medical_record_repo):
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    await service.mark_for_regeneration(999)
+
+    assert fake_medical_record_repo.mark_pending_calls == []
+
+
 # --- AI-authored fields (diagnosis is sourced from appointment.purpose, not the LLM) ---
 
 @pytest.mark.asyncio

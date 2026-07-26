@@ -21,6 +21,7 @@ def _callback_query():
 def _service(record, needs_generation=False):
     service = MagicMock()
     service.get_or_generate = AsyncMock(return_value=(record, needs_generation))
+    service.mark_for_regeneration = AsyncMock()
     return service
 
 
@@ -31,9 +32,11 @@ def _scheduler():
 
 
 @pytest.mark.asyncio
-async def test_ready_record_sends_document_and_answers_without_alert():
+async def test_ready_record_sends_document_and_answers_without_alert(tmp_path):
+    file_path = tmp_path / "medical_card_10.docx"
+    file_path.write_bytes(b"")
     record = MedicalRecord(
-        id=1, appointment_id=10, status=MedicalRecordStatus.READY, file_path="/data/medical_card_10.docx",
+        id=1, appointment_id=10, status=MedicalRecordStatus.READY, file_path=str(file_path),
     )
     callback_query = _callback_query()
     scheduler = _scheduler()
@@ -42,15 +45,17 @@ async def test_ready_record_sends_document_and_answers_without_alert():
 
     callback_query.message.answer_document.assert_awaited_once()
     sent_document = callback_query.message.answer_document.call_args.args[0]
-    assert sent_document.path == "/data/medical_card_10.docx"
+    assert sent_document.path == str(file_path)
     callback_query.answer.assert_awaited_once_with()
     scheduler.schedule_medical_record_generation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_ready_partial_record_sends_document_too():
+async def test_ready_partial_record_sends_document_too(tmp_path):
+    file_path = tmp_path / "medical_card_10.docx"
+    file_path.write_bytes(b"")
     record = MedicalRecord(
-        id=1, appointment_id=10, status=MedicalRecordStatus.READY_PARTIAL, file_path="/data/medical_card_10.docx",
+        id=1, appointment_id=10, status=MedicalRecordStatus.READY_PARTIAL, file_path=str(file_path),
     )
     callback_query = _callback_query()
     scheduler = _scheduler()
@@ -59,7 +64,7 @@ async def test_ready_partial_record_sends_document_too():
 
     callback_query.message.answer_document.assert_awaited_once()
     sent_document = callback_query.message.answer_document.call_args.args[0]
-    assert sent_document.path == "/data/medical_card_10.docx"
+    assert sent_document.path == str(file_path)
 
 
 @pytest.mark.parametrize("status", [MedicalRecordStatus.PENDING, MedicalRecordStatus.GENERATING])
@@ -111,4 +116,27 @@ async def test_no_prior_record_triggers_fallback_generation_and_shows_alert():
     callback_query.message.answer_document.assert_not_awaited()
     callback_query.answer.assert_awaited_once_with(
         "Документ ещё готовится, попробуйте через пару минут", show_alert=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ready_record_with_missing_file_triggers_regeneration_and_shows_alert(tmp_path):
+    """The DB row says ready but the .docx was deleted from disk (e.g. manual
+    cleanup). Must not crash on FileNotFoundError -- instead reset the record
+    to pending, kick off regeneration, and tell the caller to check back."""
+    missing_path = tmp_path / "medical_card_10.docx"
+    record = MedicalRecord(
+        id=1, appointment_id=10, status=MedicalRecordStatus.READY, file_path=str(missing_path),
+    )
+    callback_query = _callback_query()
+    scheduler = _scheduler()
+    service = _service(record)
+
+    await deliver_medical_record(callback_query, service, scheduler, 10)
+
+    callback_query.message.answer_document.assert_not_awaited()
+    service.mark_for_regeneration.assert_awaited_once_with(10)
+    scheduler.schedule_medical_record_generation.assert_awaited_once_with(10)
+    callback_query.answer.assert_awaited_once_with(
+        "Документ не найден, готовим заново — попробуйте через пару минут", show_alert=True,
     )
