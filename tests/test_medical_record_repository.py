@@ -8,6 +8,9 @@ import pytest_asyncio
 from bot.repositories.medical_record_repository import MedicalRecordRepository
 from bot.utils.medical_record_enums import MedicalRecordStatus
 
+TS = "2026-07-26 15:00:00"
+TS2 = "2026-07-26 15:05:00"
+
 
 @pytest_asyncio.fixture
 async def medical_record_repo():
@@ -24,11 +27,12 @@ async def medical_record_repo():
 
 @pytest.mark.asyncio
 async def test_create_pending_then_read_round_trip(medical_record_repo):
-    created = await medical_record_repo.create_pending(appointment_id=42)
+    created = await medical_record_repo.create_pending(appointment_id=42, created_at=TS)
 
     assert created.appointment_id == 42
     assert created.status is MedicalRecordStatus.PENDING
     assert created.file_path is None
+    assert created.created_at == TS
     assert created.id is not None
 
     fetched = await medical_record_repo.get_by_appointment_id(42)
@@ -42,31 +46,33 @@ async def test_get_by_appointment_id_returns_none_when_missing(medical_record_re
 
 @pytest.mark.asyncio
 async def test_mark_generating_updates_status(medical_record_repo):
-    record = await medical_record_repo.create_pending(appointment_id=1)
+    record = await medical_record_repo.create_pending(appointment_id=1, created_at=TS)
 
-    await medical_record_repo.mark_generating(record.id)
+    await medical_record_repo.mark_generating(record.id, TS2)
 
     updated = await medical_record_repo.get_by_appointment_id(1)
     assert updated.status is MedicalRecordStatus.GENERATING
+    assert updated.updated_at == TS2
 
 
 @pytest.mark.asyncio
 async def test_mark_ready_sets_status_and_file_path(medical_record_repo):
-    record = await medical_record_repo.create_pending(appointment_id=1)
-    await medical_record_repo.mark_generating(record.id)
+    record = await medical_record_repo.create_pending(appointment_id=1, created_at=TS)
+    await medical_record_repo.mark_generating(record.id, TS2)
 
-    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=False)
+    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=False, updated_at=TS2)
 
     updated = await medical_record_repo.get_by_appointment_id(1)
     assert updated.status is MedicalRecordStatus.READY
     assert updated.file_path == "/tmp/medical_card_1.docx"
+    assert updated.updated_at == TS2
 
 
 @pytest.mark.asyncio
 async def test_mark_ready_partial_sets_ready_partial_status(medical_record_repo):
-    record = await medical_record_repo.create_pending(appointment_id=1)
+    record = await medical_record_repo.create_pending(appointment_id=1, created_at=TS)
 
-    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=True)
+    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=True, updated_at=TS2)
 
     updated = await medical_record_repo.get_by_appointment_id(1)
     assert updated.status is MedicalRecordStatus.READY_PARTIAL
@@ -75,10 +81,10 @@ async def test_mark_ready_partial_sets_ready_partial_status(medical_record_repo)
 
 @pytest.mark.asyncio
 async def test_mark_pending_resets_status_and_clears_file_path(medical_record_repo):
-    record = await medical_record_repo.create_pending(appointment_id=1)
-    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=False)
+    record = await medical_record_repo.create_pending(appointment_id=1, created_at=TS)
+    await medical_record_repo.mark_ready(record.id, "/tmp/medical_card_1.docx", partial=False, updated_at=TS2)
 
-    await medical_record_repo.mark_pending(record.id)
+    await medical_record_repo.mark_pending(record.id, TS2)
 
     updated = await medical_record_repo.get_by_appointment_id(1)
     assert updated.status is MedicalRecordStatus.PENDING
@@ -87,9 +93,9 @@ async def test_mark_pending_resets_status_and_clears_file_path(medical_record_re
 
 @pytest.mark.asyncio
 async def test_mark_failed_sets_status_and_error_message(medical_record_repo):
-    record = await medical_record_repo.create_pending(appointment_id=1)
+    record = await medical_record_repo.create_pending(appointment_id=1, created_at=TS)
 
-    await medical_record_repo.mark_failed(record.id, "Ollama unavailable")
+    await medical_record_repo.mark_failed(record.id, "Ollama unavailable", TS2)
 
     updated = await medical_record_repo.get_by_appointment_id(1)
     assert updated.status is MedicalRecordStatus.FAILED
@@ -101,8 +107,8 @@ async def test_create_pending_is_idempotent_for_same_appointment_id(medical_reco
     """A second create_pending() for an appointment_id that already has a row
     (e.g. a completion job and a "get history" button press racing) must return
     the existing record instead of raising an IntegrityError or duplicating it."""
-    first = await medical_record_repo.create_pending(appointment_id=7)
-    second = await medical_record_repo.create_pending(appointment_id=7)
+    first = await medical_record_repo.create_pending(appointment_id=7, created_at=TS)
+    second = await medical_record_repo.create_pending(appointment_id=7, created_at=TS2)
 
     assert first.id == second.id
     assert second.appointment_id == 7
@@ -116,10 +122,10 @@ async def test_create_pending_idempotency_preserves_already_advanced_status(medi
     """If the existing row already advanced past PENDING (e.g. GENERATING) by
     the time a racing create_pending() call lands, the uniqueness fallback must
     return the CURRENT row, not silently reset it back to pending."""
-    record = await medical_record_repo.create_pending(appointment_id=7)
-    await medical_record_repo.mark_generating(record.id)
+    record = await medical_record_repo.create_pending(appointment_id=7, created_at=TS)
+    await medical_record_repo.mark_generating(record.id, TS2)
 
-    again = await medical_record_repo.create_pending(appointment_id=7)
+    again = await medical_record_repo.create_pending(appointment_id=7, created_at=TS2)
 
     assert again.id == record.id
     assert again.status is MedicalRecordStatus.GENERATING

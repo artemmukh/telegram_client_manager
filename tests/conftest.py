@@ -220,20 +220,21 @@ class FakeMedicalRecordRepository:
             (r.id for r in self.records_by_appointment_id.values() if r.id is not None),
             default=0,
         ) + 1
-        self.create_pending_calls: list[int] = []
-        self.mark_generating_calls: list[int] = []
-        self.mark_pending_calls: list[int] = []
-        self.mark_ready_calls: list[tuple[int, str, bool]] = []
-        self.mark_failed_calls: list[tuple[int, str]] = []
+        self.create_pending_calls: list[tuple[int, str]] = []
+        self.mark_generating_calls: list[tuple[int, str]] = []
+        self.mark_pending_calls: list[tuple[int, str]] = []
+        self.mark_ready_calls: list[tuple[int, str, bool, str]] = []
+        self.mark_failed_calls: list[tuple[int, str, str]] = []
 
-    async def create_pending(self, appointment_id: int) -> MedicalRecord:
-        self.create_pending_calls.append(appointment_id)
+    async def create_pending(self, appointment_id: int, created_at: str) -> MedicalRecord:
+        self.create_pending_calls.append((appointment_id, created_at))
         existing = self.records_by_appointment_id.get(appointment_id)
         if existing is not None:
             return existing
 
         record = MedicalRecord(
             id=self._next_id, appointment_id=appointment_id, status=MedicalRecordStatus.PENDING,
+            created_at=created_at,
         )
         self._next_id += 1
         self.records_by_appointment_id[appointment_id] = record
@@ -242,32 +243,36 @@ class FakeMedicalRecordRepository:
     async def get_by_appointment_id(self, appointment_id: int) -> MedicalRecord | None:
         return self.records_by_appointment_id.get(appointment_id)
 
-    async def mark_generating(self, id: int) -> None:
-        self.mark_generating_calls.append(id)
+    async def mark_generating(self, id: int, updated_at: str) -> None:
+        self.mark_generating_calls.append((id, updated_at))
         record = self._find_by_id(id)
         if record is not None:
             record.status = MedicalRecordStatus.GENERATING
+            record.updated_at = updated_at
 
-    async def mark_pending(self, id: int) -> None:
-        self.mark_pending_calls.append(id)
+    async def mark_pending(self, id: int, updated_at: str) -> None:
+        self.mark_pending_calls.append((id, updated_at))
         record = self._find_by_id(id)
         if record is not None:
             record.status = MedicalRecordStatus.PENDING
             record.file_path = None
+            record.updated_at = updated_at
 
-    async def mark_ready(self, id: int, file_path: str, partial: bool) -> None:
-        self.mark_ready_calls.append((id, file_path, partial))
+    async def mark_ready(self, id: int, file_path: str, partial: bool, updated_at: str) -> None:
+        self.mark_ready_calls.append((id, file_path, partial, updated_at))
         record = self._find_by_id(id)
         if record is not None:
             record.status = MedicalRecordStatus.READY_PARTIAL if partial else MedicalRecordStatus.READY
             record.file_path = file_path
+            record.updated_at = updated_at
 
-    async def mark_failed(self, id: int, error_message: str) -> None:
-        self.mark_failed_calls.append((id, error_message))
+    async def mark_failed(self, id: int, error_message: str, updated_at: str) -> None:
+        self.mark_failed_calls.append((id, error_message, updated_at))
         record = self._find_by_id(id)
         if record is not None:
             record.status = MedicalRecordStatus.FAILED
             record.error_message = error_message
+            record.updated_at = updated_at
 
     def _find_by_id(self, id: int) -> MedicalRecord | None:
         return next(

@@ -8,7 +8,7 @@ from bot.repositories.medical_record_repository import MedicalRecordRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.document_generator.pydocx import create_docx
 from bot.services.llm.agent import ChatLLM
-from bot.services.utils.date_parser import format_appointment_card_datetime
+from bot.services.utils.date_parser import format_appointment_card_datetime, get_current_tashkent_time
 from bot.utils import prompt_builder
 from bot.utils.medical_record_enums import MedicalRecordStatus
 
@@ -68,17 +68,23 @@ class MedicalRecordService:
         if existing is not None and existing.status in ALREADY_GENERATED_STATUSES:
             return existing
 
-        record = existing or await self.medical_record_repository.create_pending(appointment_id)
-        await self.medical_record_repository.mark_generating(record.id)
+        record = existing or await self.medical_record_repository.create_pending(
+            appointment_id, get_current_tashkent_time(),
+        )
+        await self.medical_record_repository.mark_generating(record.id, get_current_tashkent_time())
 
         appointment = await self.appointment_management.get_appointment_by_id(appointment_id)
         if appointment is None:
-            await self.medical_record_repository.mark_failed(record.id, "Запись не найдена.")
+            await self.medical_record_repository.mark_failed(
+                record.id, "Запись не найдена.", get_current_tashkent_time(),
+            )
             return None
 
         client = await self.appointment_management.get_client_by_id(appointment.client_id)
         if client is None:
-            await self.medical_record_repository.mark_failed(record.id, "Клиент не найден.")
+            await self.medical_record_repository.mark_failed(
+                record.id, "Клиент не найден.", get_current_tashkent_time(),
+            )
             return None
 
         template_path = MEDICAL_RECORD_TEMPLATE_BY_INSTANCE.get(self.instance)
@@ -88,7 +94,7 @@ class MedicalRecordService:
                 self.instance, appointment_id,
             )
             await self.medical_record_repository.mark_failed(
-                record.id, "Шаблон истории болезни не настроен для этой клиники.",
+                record.id, "Шаблон истории болезни не настроен для этой клиники.", get_current_tashkent_time(),
             )
             return None
 
@@ -109,10 +115,12 @@ class MedicalRecordService:
             file_path = await create_docx(data, tooth_map, appointment_id, template_path)
         except Exception as exc:
             logger.exception("Failed to render medical record docx for appointment %s: %s", appointment_id, exc)
-            await self.medical_record_repository.mark_failed(record.id, str(exc))
+            await self.medical_record_repository.mark_failed(record.id, str(exc), get_current_tashkent_time())
             return None
 
-        await self.medical_record_repository.mark_ready(record.id, file_path, partial=partial)
+        await self.medical_record_repository.mark_ready(
+            record.id, file_path, partial=partial, updated_at=get_current_tashkent_time(),
+        )
 
         return await self.medical_record_repository.get_by_appointment_id(appointment_id)
 
@@ -139,7 +147,7 @@ class MedicalRecordService:
         if record is not None:
             return record, False
 
-        record = await self.medical_record_repository.create_pending(appointment_id)
+        record = await self.medical_record_repository.create_pending(appointment_id, get_current_tashkent_time())
         return record, True
 
     async def mark_for_regeneration(self, appointment_id: int) -> None:
@@ -152,7 +160,7 @@ class MedicalRecordService:
         if record is None:
             return
 
-        await self.medical_record_repository.mark_pending(record.id)
+        await self.medical_record_repository.mark_pending(record.id, get_current_tashkent_time())
 
     async def _generate_ai_fields(self, purpose: str, client: User) -> tuple[dict, bool]:
         prompt = self._build_prompt(purpose, client)

@@ -256,7 +256,7 @@ async def test_get_or_generate_creates_pending_row_and_signals_generation_when_n
     assert record.appointment_id == 99
     assert record.status is MedicalRecordStatus.PENDING
     assert needs_generation is True
-    assert fake_medical_record_repo.create_pending_calls == [99]
+    assert [call[0] for call in fake_medical_record_repo.create_pending_calls] == [99]
 
 
 # --- mark_for_regeneration ---
@@ -271,7 +271,7 @@ async def test_mark_for_regeneration_resets_existing_record_to_pending(fake_medi
 
     await service.mark_for_regeneration(10)
 
-    assert fake_medical_record_repo.mark_pending_calls == [1]
+    assert [call[0] for call in fake_medical_record_repo.mark_pending_calls] == [1]
     updated = await fake_medical_record_repo.get_by_appointment_id(10)
     assert updated.status is MedicalRecordStatus.PENDING
     assert updated.file_path is None

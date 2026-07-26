@@ -60,14 +60,14 @@ class MedicalRecordRepository:
 
         await self.connection.commit()
 
-    async def create_pending(self, appointment_id: int) -> MedicalRecord:
+    async def create_pending(self, appointment_id: int, created_at: str) -> MedicalRecord:
         try:
             cursor = await self.connection.execute(
                 """
-                INSERT INTO medical_records(appointment_id, status)
-                VALUES (?, ?)
+                INSERT INTO medical_records(appointment_id, status, created_at)
+                VALUES (?, ?, ?)
                 """,
-                (appointment_id, MedicalRecordStatus.PENDING.value),
+                (appointment_id, MedicalRecordStatus.PENDING.value, created_at),
             )
             await self.connection.commit()
         except aiosqlite.IntegrityError:
@@ -98,48 +98,48 @@ class MedicalRecordRepository:
         )
         return self._row_to_medical_record(await cursor.fetchone())
 
-    async def mark_generating(self, id: int) -> None:
+    async def mark_generating(self, id: int, updated_at: str) -> None:
         await self.connection.execute(
             """
             UPDATE medical_records
-            SET status = ?, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (MedicalRecordStatus.GENERATING.value, id),
+            (MedicalRecordStatus.GENERATING.value, updated_at, id),
         )
         await self.connection.commit()
 
-    async def mark_pending(self, id: int) -> None:
+    async def mark_pending(self, id: int, updated_at: str) -> None:
         await self.connection.execute(
             """
             UPDATE medical_records
-            SET status = ?, file_path = NULL, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, file_path = NULL, updated_at = ?
             WHERE id = ?
             """,
-            (MedicalRecordStatus.PENDING.value, id),
+            (MedicalRecordStatus.PENDING.value, updated_at, id),
         )
         await self.connection.commit()
 
-    async def mark_ready(self, id: int, file_path: str, partial: bool) -> None:
+    async def mark_ready(self, id: int, file_path: str, partial: bool, updated_at: str) -> None:
         status = MedicalRecordStatus.READY_PARTIAL if partial else MedicalRecordStatus.READY
         await self.connection.execute(
             """
             UPDATE medical_records
-            SET status = ?, file_path = ?, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, file_path = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status.value, file_path, id),
+            (status.value, file_path, updated_at, id),
         )
         await self.connection.commit()
 
-    async def mark_failed(self, id: int, error_message: str) -> None:
+    async def mark_failed(self, id: int, error_message: str, updated_at: str) -> None:
         await self.connection.execute(
             """
             UPDATE medical_records
-            SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+            SET status = ?, error_message = ?, updated_at = ?
             WHERE id = ?
             """,
-            (MedicalRecordStatus.FAILED.value, error_message, id),
+            (MedicalRecordStatus.FAILED.value, error_message, updated_at, id),
         )
         await self.connection.commit()
 
