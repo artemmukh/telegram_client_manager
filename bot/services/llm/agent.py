@@ -10,7 +10,7 @@ from bot.utils import prompt_builder
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_KEYS = ("complaints", "diseases", "examination", "treatment")
+REQUIRED_KEYS = ("complaints", "diseases", "examination", "treatment", "tooth_map")
 MAX_ATTEMPTS = 3
 BASE_BACKOFF_SECONDS = 2
 
@@ -69,7 +69,8 @@ class ChatLLM:
 
         Retries up to MAX_ATTEMPTS times with exponential backoff on network
         errors, non-2xx responses, invalid JSON, or a JSON payload missing
-        any of REQUIRED_KEYS. Raises MedicalRecordGenerationError once every
+        any of REQUIRED_KEYS (complaints, diseases, examination, treatment,
+        tooth_map). Raises MedicalRecordGenerationError once every
         attempt is exhausted, never leaking the underlying SDK/JSON error.
 
         If an attempt that included the cached reference PDF fails, the

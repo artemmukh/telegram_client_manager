@@ -124,6 +124,18 @@ VALID_JSON = json.dumps(
         "diseases": "заболевания",
         "examination": "осмотр",
         "treatment": "лечение",
+        "tooth_map": [{"tooth": 37, "marker": "C"}],
+    },
+    ensure_ascii=False,
+)
+
+VALID_JSON_EMPTY_TOOTH_MAP = json.dumps(
+    {
+        "complaints": "жалобы",
+        "diseases": "заболевания",
+        "examination": "осмотр",
+        "treatment": "лечение",
+        "tooth_map": [],
     },
     ensure_ascii=False,
 )
@@ -133,6 +145,16 @@ MISSING_KEY_JSON = json.dumps(
         "complaints": "жалобы",
         "diseases": "заболевания",
         "examination": "осмотр",
+    },
+    ensure_ascii=False,
+)
+
+MISSING_TOOTH_MAP_JSON = json.dumps(
+    {
+        "complaints": "жалобы",
+        "diseases": "заболевания",
+        "examination": "осмотр",
+        "treatment": "лечение",
     },
     ensure_ascii=False,
 )
@@ -210,6 +232,30 @@ async def test_generate_missing_required_keys_retries_then_raises(sleep_calls):
     for call in client.chat.calls[1:]:
         content = call["messages"][1]["content"]
         assert not any(isinstance(c, DocumentURLChunk) for c in content)
+
+
+@pytest.mark.asyncio
+async def test_generate_missing_tooth_map_retries_then_raises(sleep_calls):
+    client = FakeMistralClient(
+        chat_responses=[_ok_response(MISSING_TOOTH_MAP_JSON)],
+    )
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    with pytest.raises(MedicalRecordGenerationError):
+        await chat_llm.generate("prompt text")
+
+    assert len(client.chat.calls) == MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_generate_accepts_empty_tooth_map_as_valid():
+    client = FakeMistralClient(chat_responses=[_ok_response(VALID_JSON_EMPTY_TOOTH_MAP)])
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    result = await chat_llm.generate("prompt text")
+
+    assert result == json.loads(VALID_JSON_EMPTY_TOOTH_MAP)
+    assert result["tooth_map"] == []
 
 
 @pytest.mark.asyncio

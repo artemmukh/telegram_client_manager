@@ -27,6 +27,7 @@ EMPTY_AI_FIELDS = {
     "diseases": "",
     "examination": "",
     "treatment": "",
+    "tooth_map": [],
 }
 
 
@@ -59,8 +60,9 @@ class MedicalRecordService:
 
         On LLM failure (after ChatLLM's own retries are exhausted), the
         document is still generated with empty strings for the four
-        AI-authored fields and the record is marked ready_partial, so the
-        "get document" button never blocks on the LLM being unavailable.
+        AI-authored fields, tooth_map defaulting to an empty list, and the
+        record is marked ready_partial, so the "get document" button never
+        blocks on the LLM being unavailable.
         """
         existing = await self.medical_record_repository.get_by_appointment_id(appointment_id)
         if existing is not None and existing.status in ALREADY_GENERATED_STATUSES:
@@ -91,6 +93,7 @@ class MedicalRecordService:
             return None
 
         ai_fields, partial = await self._generate_ai_fields(appointment.purpose, client)
+        tooth_map = ai_fields.pop("tooth_map")
 
         data = {
             "appointment_date": format_appointment_card_datetime(appointment.datetime),
@@ -103,7 +106,7 @@ class MedicalRecordService:
         }
 
         try:
-            file_path = await create_docx(data, appointment.purpose, appointment_id, template_path)
+            file_path = await create_docx(data, tooth_map, appointment_id, template_path)
         except Exception as exc:
             logger.exception("Failed to render medical record docx for appointment %s: %s", appointment_id, exc)
             await self.medical_record_repository.mark_failed(record.id, str(exc))
@@ -153,6 +156,7 @@ class MedicalRecordService:
             "examination": llm_response["examination"],
             "diseases": llm_response["diseases"],
             "treatment": llm_response["treatment"],
+            "tooth_map": llm_response["tooth_map"],
         }, False
 
     def _build_prompt(self, purpose: str, client: User) -> str:

@@ -60,6 +60,7 @@ LLM_RESPONSE = {
     "diseases": "Хронический гастрит",
     "examination": "Кариозная полость на жевательной поверхности",
     "treatment": "Пломбирование композитным материалом",
+    "tooth_map": [{"tooth": 37, "marker": "C"}],
 }
 
 
@@ -107,8 +108,8 @@ async def test_generate_success_creates_docx_and_marks_ready(fake_medical_record
     assert len(chat_llm.calls) == 1
 
     create_docx_mock.assert_awaited_once()
-    data_arg, raw_diagnosis_arg, appointment_id_arg, template_path_arg = create_docx_mock.call_args.args
-    assert raw_diagnosis_arg == appointment.purpose
+    data_arg, tooth_map_arg, appointment_id_arg, template_path_arg = create_docx_mock.call_args.args
+    assert tooth_map_arg == LLM_RESPONSE["tooth_map"]
     assert appointment_id_arg == appointment.id
     assert template_path_arg == "data/history_of_illness/medical_card_wisdom_tooth.docx"
     assert data_arg["complaints"] == LLM_RESPONSE["complaints"]
@@ -118,6 +119,7 @@ async def test_generate_success_creates_docx_and_marks_ready(fake_medical_record
     assert data_arg["treatment"] == LLM_RESPONSE["treatment"]
     assert data_arg["full_name"] == client.full_name
     assert data_arg["phone"] == client.phone
+    assert "tooth_map" not in data_arg
 
 
 @pytest.mark.asyncio
@@ -139,12 +141,14 @@ async def test_generate_falls_back_to_empty_ai_fields_when_llm_fails(fake_medica
     assert record.status is MedicalRecordStatus.READY_PARTIAL
     assert record.file_path == "/data/history_of_illness/generated/medical_card_1.docx"
 
-    data_arg = create_docx_mock.call_args.args[0]
+    data_arg, tooth_map_arg = create_docx_mock.call_args.args[0], create_docx_mock.call_args.args[1]
     assert data_arg["complaints"] == ""
     assert data_arg["diseases"] == ""
     assert data_arg["examination"] == ""
     assert data_arg["diagnosis"] == appointment.purpose
     assert data_arg["treatment"] == ""
+    assert "tooth_map" not in data_arg
+    assert tooth_map_arg == []
 
 
 @pytest.mark.parametrize("status", [
@@ -273,6 +277,7 @@ async def test_generate_ai_fields_returns_llm_response_keys_as_is(fake_medical_r
         "diseases": LLM_RESPONSE["diseases"],
         "examination": LLM_RESPONSE["examination"],
         "treatment": LLM_RESPONSE["treatment"],
+        "tooth_map": LLM_RESPONSE["tooth_map"],
     }
 
 
@@ -289,4 +294,5 @@ async def test_generate_ai_fields_returns_empty_strings_and_partial_true_on_llm_
         "diseases": "",
         "examination": "",
         "treatment": "",
+        "tooth_map": [],
     }
