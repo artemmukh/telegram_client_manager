@@ -14,15 +14,12 @@ from bot.config.config import load_config
 from bot.models.database import Database
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
-from bot.repositories.medical_record_repository import MedicalRecordRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
-from bot.services.llm.agent import ChatLLM
-from bot.services.medical_record.medical_record_management import MedicalRecordService
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
@@ -536,13 +533,6 @@ async def auto_complete_appointment_job(appointment_id: int) -> None:
 
         logger.info(f"Appointment {appointment_id} auto-completed (2h after appointment)")
 
-        try:
-            await generate_medical_record_job(appointment_id)
-        except Exception as e:
-            logger.warning(
-                f"Failed to generate medical record for auto-completed appointment {appointment_id}: {e}"
-            )
-
     except AppointmentNotFoundError:
         logger.warning(f"Auto-complete job: appointment {appointment_id} not found")
     except Exception as e:
@@ -553,50 +543,24 @@ async def auto_complete_appointment_job(appointment_id: int) -> None:
 
 
 async def generate_medical_record_job(appointment_id: int) -> None:
-    """Generate the medical history docx for a just-completed appointment.
+    """[LEGACY] Generate the medical history docx for a just-completed appointment.
 
-    Fires immediately after an appointment transitions to COMPLETED,
-    regardless of path (admin edit/skip at T+1h, or silent auto-complete
-    at T+2h). Creates its own bot/repositories/services to remain
-    independent, matching the pattern of other module-level job functions
-    in this file. Never lets an exception escape: generation failure must
-    never affect the appointment's already-committed COMPLETED status.
+    Previously scheduled immediately after an appointment transitioned to
+    COMPLETED. Medical record generation is no longer triggered
+    automatically — it now happens synchronously on demand, the first time
+    someone presses "Получить историю болезни"
+    (see bot.handlers.utils.medical_record_delivery.deliver_medical_record).
+    This function is kept only so an already-persisted job from before this
+    change doesn't crash the scheduler's job store on restart; it does
+    nothing.
 
     Args:
         appointment_id: The ID of the appointment that was just completed
     """
-    connection = None
-    try:
-        config = load_config()
-
-        db = Database(config.database_path)
-        connection = await db.connect()
-
-        appointment_repo = AppointmentRepository(connection)
-        user_repo = UserRepository(connection)
-        staff_repo = StaffRepository(connection)
-        clinic_repo = ClinicRepository(connection)
-        medical_record_repo = MedicalRecordRepository(connection)
-
-        appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        chat_llm = ChatLLM(config.mistral_api_key, config.mistral_model)
-        medical_record_service = MedicalRecordService(
-            medical_record_repo, appointment_management, chat_llm, instance=config.instance,
-        )
-
-        record = await medical_record_service.generate(appointment_id)
-
-        if record is None:
-            logger.warning(f"Medical record generation job: appointment {appointment_id} could not be generated")
-            return
-
-        logger.info(f"Medical record for appointment {appointment_id} generated with status {record.status.value}")
-
-    except Exception as e:
-        logger.exception(f"Error in generate_medical_record_job({appointment_id}): {e}")
-    finally:
-        if connection is not None:
-            await connection.close()
+    logger.warning(
+        f"generate_medical_record_job({appointment_id}) is a legacy no-op; "
+        "medical record generation now happens on demand"
+    )
 
 
 async def auto_confirm_pending_job(appointment_id: int) -> None:

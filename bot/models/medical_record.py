@@ -12,3 +12,4 @@ class MedicalRecord:
     created_at: str | None = None
     updated_at: str | None = None
     error_message: str | None = None
+    diagnosis: str = ""

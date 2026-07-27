@@ -33,7 +33,7 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     full_name_processing,
     phone_processing,
 )
-from bot.handlers.utils.medical_record_delivery import deliver_medical_record
+from bot.handlers.utils.medical_record_delivery import add_medical_record_document, deliver_medical_record
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptActionCB,
     ApptCalendarDayCB,
@@ -750,7 +750,7 @@ def create_admin_appointment_browser_router(
 
     # --- Medical record retrieval ---
 
-    if medical_record_service and appointment_scheduler:
+    if medical_record_service:
         @router.callback_query(ApptActionCB.filter(F.action == "get_medical_record"))
         async def get_medical_record(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
             appointment = await appt_mng.get_appointment_for_admin(
@@ -760,8 +760,19 @@ def create_admin_appointment_browser_router(
                 await callback_query.answer("Запись не найдена.", show_alert=True)
                 return
 
-            await deliver_medical_record(
-                callback_query, medical_record_service, appointment_scheduler, callback_data.appointment_id,
+            await deliver_medical_record(callback_query, medical_record_service, callback_data.appointment_id)
+
+        @router.callback_query(ApptActionCB.filter(F.action == "add_medical_record"))
+        async def add_medical_record(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext):
+            appointment = await appt_mng.get_appointment_for_admin(
+                callback_data.appointment_id, callback_query.from_user.id
+            )
+            if appointment is None:
+                await callback_query.answer("Запись не найдена.", show_alert=True)
+                return
+
+            await add_medical_record_document(
+                callback_query, medical_record_service, callback_data.appointment_id, appointment.purpose,
             )
 
     @router.callback_query(F.data == "noop")

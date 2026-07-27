@@ -72,3 +72,31 @@ def test_appointment_history_card_kb_shows_only_cancel_when_reschedule_not_allow
         ClientHistoryActionCB(action="cancel_ask", appointment_id=1, tab="confirmed", page=1).pack(),
         ClientHistoryPageCB(tab="confirmed", page=1).pack(),
     ]
+
+
+def test_appointment_history_card_kb_shows_get_and_add_medical_record_buttons_only_when_completed():
+    appointment = _appointment(status=AppointmentStatus.COMPLETED)
+
+    markup = appointment_history_card_kb(appointment, tab="completed", page=1, can_cancel=False, can_reschedule=False)
+
+    buttons = _all_buttons(markup)
+    callback_datas = [button.callback_data for button in buttons]
+
+    assert callback_datas == [
+        ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1).pack(),
+        ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1).pack(),
+        ClientHistoryPageCB(tab="completed", page=1).pack(),
+    ]
+
+
+def test_appointment_history_card_kb_hides_medical_record_buttons_when_not_completed():
+    appointment = _appointment(status=AppointmentStatus.CONFIRMED)
+
+    markup = appointment_history_card_kb(appointment, tab="confirmed", page=1, can_cancel=False, can_reschedule=False)
+
+    buttons = _all_buttons(markup)
+    callback_datas = [button.callback_data for button in buttons]
+
+    assert callback_datas == [
+        ClientHistoryPageCB(tab="confirmed", page=1).pack(),
+    ]

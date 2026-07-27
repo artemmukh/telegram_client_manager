@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import os
 from pathlib import Path
 
 from docx import Document
@@ -17,11 +18,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 TEETH_TABLE_INDEX = 1
 
 TOOTH_MAP = {
-    18: (2, 0), 17: (2, 1), 16: (2, 2), 15: (2, 3),
-    14: (2, 4), 13: (2, 5), 12: (2, 6), 11: (2, 7),
-    21: (2, 8), 22: (2, 9), 23: (2, 10), 24: (2, 11),
-    25: (2, 12), 26: (2, 13), 27: (2, 14), 28: (2, 15),
+    # Верхняя челюсть
+    18: (0, 0), 17: (0, 1), 16: (0, 2), 15: (0, 3),
+    14: (0, 4), 13: (0, 5), 12: (0, 6), 11: (0, 7),
+    21: (0, 8), 22: (0, 9), 23: (0, 10), 24: (0, 11),
+    25: (0, 12), 26: (0, 13), 27: (0, 14), 28: (0, 15),
 
+    # Нижняя челюсть
     48: (3, 0), 47: (3, 1), 46: (3, 2), 45: (3, 3),
     44: (3, 4), 43: (3, 5), 42: (3, 6), 41: (3, 7),
     31: (3, 8), 32: (3, 9), 33: (3, 10), 34: (3, 11),
@@ -87,12 +90,20 @@ def _render_docx_sync(data: dict, tooth_map: list[dict], output_path: Path, temp
     logger.info("Отмечены зубы: %s", tooth_map)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path))
+    tmp_path = output_path.with_name(output_path.name + ".tmp")
+
+    try:
+        doc.save(str(tmp_path))
+        os.replace(tmp_path, output_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
 
     logger.info("Документ сохранён: %s", output_path)
 
 
-async def create_docx(data: dict, tooth_map: list[dict], appointment_id: int, template_path: str) -> str:
+async def create_docx(data: dict, tooth_map: list[dict], output_path: Path, template_path: str) -> str:
     """Render the medical record template and mark the affected teeth.
 
     `data` must already contain every template placeholder (appointment_date,
@@ -101,12 +112,17 @@ async def create_docx(data: dict, tooth_map: list[dict], appointment_id: int, te
     applied by the caller. `tooth_map` is a list of dicts shaped
     `{"tooth": int, "marker": str}`, sourced from the LLM's structured
     output; it is an empty list when the diagnosis mentions no teeth.
-    `template_path` is the per-clinic-instance .docx template path resolved
-    by the caller (see MEDICAL_RECORD_TEMPLATE_BY_INSTANCE in
-    bot.config.clinic_instances).
+    `output_path` is the absolute destination path built by the caller (see
+    MedicalRecordService._build_output_path). `template_path` is the
+    per-clinic-instance .docx template path resolved by the caller (see
+    MEDICAL_RECORD_TEMPLATE_BY_INSTANCE in bot.config.clinic_instances).
+
+    The render is saved to a temp file next to output_path and moved into
+    place with os.replace, which is atomic on both POSIX and Windows, so a
+    caller reading output_path never observes a half-written document.
+
     Returns the path to the generated .docx file.
     """
-    output_path = OUTPUT_DIR / f"medical_card_{appointment_id}.docx"
     resolved_template_path = PROJECT_ROOT / template_path
 
     await asyncio.to_thread(_render_docx_sync, data, tooth_map, output_path, resolved_template_path)

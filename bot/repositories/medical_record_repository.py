@@ -11,6 +11,7 @@ MEDICAL_RECORD_SELECT = """
 SELECT
     id,
     appointment_id,
+    diagnosis,
     status,
     file_path,
     created_at,
@@ -28,23 +29,19 @@ class MedicalRecordRepository:
         await self.connection.execute("""
             CREATE TABLE IF NOT EXISTS medical_records(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                appointment_id INTEGER NOT NULL UNIQUE,
+                appointment_id INTEGER NOT NULL,
+                diagnosis TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'pending',
                 file_path TEXT DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT NULL,
                 error_message TEXT DEFAULT NULL,
 
-                FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+                FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+                UNIQUE(appointment_id, diagnosis)
             )
         """)
 
-        # Defensive migration guard, matching the PRAGMA table_info/ALTER TABLE
-        # pattern used by the other repositories in this project (see
-        # AppointmentRepository.init()) — currently a no-op since every column
-        # above already ships in the CREATE TABLE, but kept here so a future
-        # column addition follows the same additive-migration path instead of
-        # a fresh ad-hoc pattern.
         cursor = await self.connection.execute("PRAGMA table_info(medical_records)")
         columns = {row[1] for row in await cursor.fetchall()}
 
@@ -53,29 +50,114 @@ class MedicalRecordRepository:
                 "ALTER TABLE medical_records ADD COLUMN error_message TEXT DEFAULT NULL"
             )
 
-        # No explicit index on appointment_id: the UNIQUE constraint above
-        # already creates one (both SQLite and Postgres auto-index UNIQUE
-        # columns), and the only lookup paths are appointment_id (covered
-        # by that unique index) and id (covered by the primary key).
+        if "diagnosis" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE medical_records ADD COLUMN diagnosis TEXT NOT NULL DEFAULT ''"
+            )
+
+        await self._rebuild_if_legacy_unique_constraint()
 
         await self.connection.commit()
 
-    async def create_pending(self, appointment_id: int, created_at: str) -> MedicalRecord:
+    async def _rebuild_if_legacy_unique_constraint(self) -> None:
+        """One-time rebuild of medical_records for DBs created before the
+        appointment_id/diagnosis composite key.
+
+        SQLite cannot ALTER a UNIQUE constraint away, so this detects the old
+        auto-index SQLite creates for a single-column `UNIQUE(appointment_id)`
+        constraint (an index whose only column is appointment_id) and, if
+        found, rebuilds the table with the new schema via the standard
+        create-new/copy/drop/rename sequence. Diagnosis for pre-existing rows
+        is backfilled from the linked appointment's purpose (empty string if
+        the appointment no longer exists). No-op on a fresh or already
+        migrated database, and safe to run again since the rebuilt table's
+        composite unique index no longer matches the legacy shape.
+        """
+        cursor = await self.connection.execute("PRAGMA index_list(medical_records)")
+        indexes = await cursor.fetchall()
+
+        legacy_index_name = None
+        for index in indexes:
+            index_name, is_unique = index[1], index[2]
+            if not is_unique:
+                continue
+
+            info_cursor = await self.connection.execute(f"PRAGMA index_info({index_name})")
+            index_columns = [row[2] for row in await info_cursor.fetchall()]
+            if index_columns == ["appointment_id"]:
+                legacy_index_name = index_name
+                break
+
+        if legacy_index_name is None:
+            return
+
+        logger.info(
+            "Rebuilding medical_records: replacing legacy UNIQUE(appointment_id) "
+            "constraint (index %s) with UNIQUE(appointment_id, diagnosis)",
+            legacy_index_name,
+        )
+
+        await self.connection.execute("DROP TABLE IF EXISTS medical_records_new")
+
+        await self.connection.execute("BEGIN")
+        try:
+            await self.connection.execute("""
+                CREATE TABLE medical_records_new(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    appointment_id INTEGER NOT NULL,
+                    diagnosis TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    file_path TEXT DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT NULL,
+                    error_message TEXT DEFAULT NULL,
+
+                    FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+                    UNIQUE(appointment_id, diagnosis)
+                )
+            """)
+
+            await self.connection.execute("""
+                INSERT INTO medical_records_new(
+                    id, appointment_id, status, file_path, created_at, updated_at, error_message, diagnosis
+                )
+                SELECT
+                    medical_records.id,
+                    medical_records.appointment_id,
+                    medical_records.status,
+                    medical_records.file_path,
+                    medical_records.created_at,
+                    medical_records.updated_at,
+                    medical_records.error_message,
+                    COALESCE(appointments.purpose, '') AS diagnosis
+                FROM medical_records
+                LEFT JOIN appointments ON appointments.id = medical_records.appointment_id
+            """)
+
+            await self.connection.execute("DROP TABLE medical_records")
+            await self.connection.execute("ALTER TABLE medical_records_new RENAME TO medical_records")
+        except Exception:
+            await self.connection.rollback()
+            raise
+        else:
+            await self.connection.commit()
+
+    async def create_pending(self, appointment_id: int, diagnosis: str, created_at: str) -> MedicalRecord:
         try:
             cursor = await self.connection.execute(
                 """
-                INSERT INTO medical_records(appointment_id, status, created_at)
-                VALUES (?, ?, ?)
+                INSERT INTO medical_records(appointment_id, diagnosis, status, created_at)
+                VALUES (?, ?, ?, ?)
                 """,
-                (appointment_id, MedicalRecordStatus.PENDING.value, created_at),
+                (appointment_id, diagnosis, MedicalRecordStatus.PENDING.value, created_at),
             )
             await self.connection.commit()
         except aiosqlite.IntegrityError:
-            # A row for this appointment_id already exists — this is a
+            # A row for this (appointment_id, diagnosis) pair already exists — this is a
             # deliberate race guard for concurrent trigger paths (e.g. a
             # completion job and a "get history" button press both trying
-            # to create the pending row for the same appointment). Treat
-            # "already exists" the same as "just created" so callers get a
+            # to create the pending row for the same appointment/diagnosis).
+            # Treat "already exists" the same as "just created" so callers get a
             # uniform MedicalRecord back instead of a raw driver error.
             #
             # Roll back first: SQLite tolerates querying right after a failed
@@ -83,7 +165,7 @@ class MedicalRecordRepository:
             # integrity error and refuses every subsequent statement until a
             # ROLLBACK — required for this fallback to keep working post-migration.
             await self.connection.rollback()
-            existing = await self.get_by_appointment_id(appointment_id)
+            existing = await self.get_by_appointment_and_diagnosis(appointment_id, diagnosis)
             if existing is not None:
                 return existing
             raise
@@ -91,12 +173,24 @@ class MedicalRecordRepository:
         record_id = cursor.lastrowid
         return await self._get_by_id(record_id)
 
-    async def get_by_appointment_id(self, appointment_id: int) -> MedicalRecord | None:
+    async def get_by_appointment_and_diagnosis(self, appointment_id: int, diagnosis: str) -> MedicalRecord | None:
         cursor = await self.connection.execute(
-            MEDICAL_RECORD_SELECT + "\nWHERE appointment_id = ?",
-            (appointment_id,),
+            MEDICAL_RECORD_SELECT + "\nWHERE appointment_id = ? AND diagnosis = ?",
+            (appointment_id, diagnosis),
         )
         return self._row_to_medical_record(await cursor.fetchone())
+
+    async def list_ready_by_appointment_id(self, appointment_id: int) -> list[MedicalRecord]:
+        cursor = await self.connection.execute(
+            MEDICAL_RECORD_SELECT + """
+            WHERE appointment_id = ?
+              AND status IN (?, ?)
+              AND file_path IS NOT NULL
+            """,
+            (appointment_id, MedicalRecordStatus.READY.value, MedicalRecordStatus.READY_PARTIAL.value),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_medical_record(row) for row in rows]
 
     async def mark_generating(self, id: int, updated_at: str) -> None:
         await self.connection.execute(
@@ -156,9 +250,10 @@ class MedicalRecordRepository:
         return MedicalRecord(
             id=row[0],
             appointment_id=row[1],
-            status=MedicalRecordStatus(row[2]),
-            file_path=row[3],
-            created_at=row[4],
-            updated_at=row[5],
-            error_message=row[6],
+            diagnosis=row[2],
+            status=MedicalRecordStatus(row[3]),
+            file_path=row[4],
+            created_at=row[5],
+            updated_at=row[6],
+            error_message=row[7],
         )

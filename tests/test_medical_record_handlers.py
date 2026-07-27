@@ -28,6 +28,8 @@ from bot.utils.medical_record_enums import MedicalRecordStatus
 from bot.utils.role import Role
 
 
+_DEFAULT = object()
+
 ADMIN_TELEGRAM_ID = 999
 OTHER_ADMIN_TELEGRAM_ID = 1000
 CLIENT_TELEGRAM_ID = 555
@@ -47,24 +49,24 @@ def _callback_query(telegram_user_id):
     callback_query.answer = AsyncMock()
     callback_query.message.edit_text = AsyncMock()
     callback_query.message.answer_document = AsyncMock()
+    callback_query.message.answer = AsyncMock()
     return callback_query
 
 
-def _medical_record_service(record, needs_generation=False):
+def _medical_record_service(ready_documents=None, generate_result=None, ensure_file_exists_result=_DEFAULT):
     service = MagicMock()
-    service.get_or_generate = AsyncMock(return_value=(record, needs_generation))
-    service.mark_for_regeneration = AsyncMock()
+    service.get_ready_documents = AsyncMock(return_value=list(ready_documents or []))
+    service.generate = AsyncMock(return_value=generate_result)
+    if ensure_file_exists_result is _DEFAULT:
+        service.ensure_file_exists = AsyncMock(side_effect=lambda record: record)
+    else:
+        service.ensure_file_exists = AsyncMock(return_value=ensure_file_exists_result)
     return service
 
 
-def _appointment_scheduler():
-    scheduler = MagicMock()
-    scheduler.schedule_medical_record_generation = AsyncMock()
-    return scheduler
-
-
 READY_RECORD = MedicalRecord(
-    id=1, appointment_id=1, status=MedicalRecordStatus.READY, file_path="/data/medical_card_1.docx",
+    id=1, appointment_id=1, diagnosis="Консультация", status=MedicalRecordStatus.READY,
+    file_path="/data/medical_card_1.docx",
 )
 PENDING_RECORD = MedicalRecord(id=1, appointment_id=1, status=MedicalRecordStatus.PENDING, file_path=None)
 
@@ -126,13 +128,12 @@ def _admin_appointment(clinic_id=1, status=AppointmentStatus.COMPLETED):
     )
 
 
-def _admin_router(appointment, admin, medical_record_service, appointment_scheduler):
+def _admin_router(appointment, admin, medical_record_service):
     return create_admin_appointment_browser_router(
         FakeAdminAppointmentRepository(appointment),
         FakeAdminUserRepo(admin),
         FakeAdminStaffRepo(),
         FakeAdminClinicRepo(),
-        appointment_scheduler=appointment_scheduler,
         medical_record_service=medical_record_service,
     )
 
@@ -142,10 +143,10 @@ async def test_admin_get_medical_record_ready_sends_document(tmp_path):
     file_path = tmp_path / "medical_card_1.docx"
     file_path.write_bytes(b"")
     ready_record = MedicalRecord(
-        id=1, appointment_id=1, status=MedicalRecordStatus.READY, file_path=str(file_path),
+        id=1, appointment_id=1, diagnosis="Консультация", status=MedicalRecordStatus.READY, file_path=str(file_path),
     )
     router = _admin_router(
-        _admin_appointment(), _admin(), _medical_record_service(ready_record), _appointment_scheduler(),
+        _admin_appointment(), _admin(), _medical_record_service(ready_documents=[ready_record]),
     )
     handler = _find_handler(router, "get_medical_record")
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
@@ -160,10 +161,8 @@ async def test_admin_get_medical_record_ready_sends_document(tmp_path):
 
 @pytest.mark.asyncio
 async def test_admin_get_medical_record_pending_shows_alert_without_document():
-    scheduler = _appointment_scheduler()
-    router = _admin_router(
-        _admin_appointment(), _admin(), _medical_record_service(PENDING_RECORD), scheduler,
-    )
+    service = _medical_record_service(ready_documents=[], generate_result=PENDING_RECORD)
+    router = _admin_router(_admin_appointment(), _admin(), service)
     handler = _find_handler(router, "get_medical_record")
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
@@ -171,24 +170,22 @@ async def test_admin_get_medical_record_pending_shows_alert_without_document():
     await handler(callback_query, callback_data, AsyncMock())
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.answer.assert_awaited_once_with(
-        "Документ ещё готовится, попробуйте через пару минут", show_alert=True,
+    callback_query.message.answer.assert_awaited_once_with(
+        "Документ ещё готовится, попробуйте через пару минут",
     )
-    scheduler.schedule_medical_record_generation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_admin_get_medical_record_no_prior_record_triggers_fallback_generation():
-    scheduler = _appointment_scheduler()
-    service = _medical_record_service(PENDING_RECORD, needs_generation=True)
-    router = _admin_router(_admin_appointment(), _admin(), service, scheduler)
+    service = _medical_record_service(ready_documents=[], generate_result=PENDING_RECORD)
+    router = _admin_router(_admin_appointment(), _admin(), service)
     handler = _find_handler(router, "get_medical_record")
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
 
     await handler(callback_query, callback_data, AsyncMock())
 
-    scheduler.schedule_medical_record_generation.assert_awaited_once_with(1)
+    service.generate.assert_awaited_once_with(1)
     callback_query.message.answer_document.assert_not_awaited()
 
 
@@ -197,9 +194,8 @@ async def test_admin_get_medical_record_denies_access_to_other_clinic_appointmen
     """Ownership check: an admin from a different clinic must not be able to
     trigger/receive a medical record for an appointment outside their scope --
     deliver_medical_record must never even be reached."""
-    service = _medical_record_service(READY_RECORD)
-    scheduler = _appointment_scheduler()
-    router = _admin_router(_admin_appointment(clinic_id=2), _admin(clinic_id=1), service, scheduler)
+    service = _medical_record_service(ready_documents=[READY_RECORD])
+    router = _admin_router(_admin_appointment(clinic_id=2), _admin(clinic_id=1), service)
     handler = _find_handler(router, "get_medical_record")
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
@@ -208,8 +204,46 @@ async def test_admin_get_medical_record_denies_access_to_other_clinic_appointmen
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()
-    service.get_or_generate.assert_not_awaited()
-    scheduler.schedule_medical_record_generation.assert_not_awaited()
+    service.get_ready_documents.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_add_medical_record_generates_for_the_appointments_current_purpose(tmp_path):
+    """The "➕ Добавить документ" action must call add_medical_record_document
+    with the appointment's CURRENT purpose as the diagnosis, not whatever
+    diagnosis a prior record happens to carry."""
+    file_path = tmp_path / "medical_card_1.docx"
+    file_path.write_bytes(b"")
+    generated = MedicalRecord(
+        id=2, appointment_id=1, diagnosis="Консультация", status=MedicalRecordStatus.READY, file_path=str(file_path),
+    )
+    service = _medical_record_service(generate_result=generated)
+    router = _admin_router(_admin_appointment(), _admin(), service)
+    handler = _find_handler(router, "add_medical_record")
+    callback_query = _callback_query(ADMIN_TELEGRAM_ID)
+    callback_data = ApptActionCB(action="add_medical_record", appointment_id=1, mode="list", page=1)
+
+    await handler(callback_query, callback_data, AsyncMock())
+
+    service.generate.assert_awaited_once_with(1, "Консультация")
+    callback_query.message.answer_document.assert_awaited_once()
+    sent_document = callback_query.message.answer_document.call_args.args[0]
+    assert sent_document.path == str(file_path)
+
+
+@pytest.mark.asyncio
+async def test_admin_add_medical_record_denies_access_to_other_clinic_appointment():
+    service = _medical_record_service(generate_result=READY_RECORD)
+    router = _admin_router(_admin_appointment(clinic_id=2), _admin(clinic_id=1), service)
+    handler = _find_handler(router, "add_medical_record")
+    callback_query = _callback_query(ADMIN_TELEGRAM_ID)
+    callback_data = ApptActionCB(action="add_medical_record", appointment_id=1, mode="list", page=1)
+
+    await handler(callback_query, callback_data, AsyncMock())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.answer_document.assert_not_awaited()
+    service.generate.assert_not_awaited()
 
 
 # --- Client side (appointment_response.py) ---
@@ -253,14 +287,14 @@ def _client_appointment(client_id=7, status=AppointmentStatus.COMPLETED):
     )
 
 
-def _client_router(appointment, client, medical_record_service, appointment_scheduler):
+def _client_router(appointment, client, medical_record_service):
     appointment_management_service = FakeClientAppointmentManagementService(appointment, client)
     notification_service = MagicMock()
     return create_client_appointment_router(
         AppointmentPaginationService(MagicMock()),
         appointment_management_service,
         notification_service,
-        appointment_scheduler,
+        None,
         medical_record_service,
     ), appointment_management_service
 
@@ -270,10 +304,10 @@ async def test_client_get_medical_record_ready_sends_document(tmp_path):
     file_path = tmp_path / "medical_card_1.docx"
     file_path.write_bytes(b"")
     ready_record = MedicalRecord(
-        id=1, appointment_id=1, status=MedicalRecordStatus.READY, file_path=str(file_path),
+        id=1, appointment_id=1, diagnosis="Консультация", status=MedicalRecordStatus.READY, file_path=str(file_path),
     )
     router, _ = _client_router(
-        _client_appointment(), _client_user(), _medical_record_service(ready_record), _appointment_scheduler(),
+        _client_appointment(), _client_user(), _medical_record_service(ready_documents=[ready_record]),
     )
     handler = _find_handler(router, "history_action")
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
@@ -288,10 +322,8 @@ async def test_client_get_medical_record_ready_sends_document(tmp_path):
 
 @pytest.mark.asyncio
 async def test_client_get_medical_record_pending_shows_alert_without_document():
-    scheduler = _appointment_scheduler()
-    router, _ = _client_router(
-        _client_appointment(), _client_user(), _medical_record_service(PENDING_RECORD), scheduler,
-    )
+    service = _medical_record_service(ready_documents=[], generate_result=PENDING_RECORD)
+    router, _ = _client_router(_client_appointment(), _client_user(), service)
     handler = _find_handler(router, "history_action")
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
@@ -299,24 +331,22 @@ async def test_client_get_medical_record_pending_shows_alert_without_document():
     await handler(callback_query, callback_data, AsyncMock())
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.answer.assert_awaited_once_with(
-        "Документ ещё готовится, попробуйте через пару минут", show_alert=True,
+    callback_query.message.answer.assert_awaited_once_with(
+        "Документ ещё готовится, попробуйте через пару минут",
     )
-    scheduler.schedule_medical_record_generation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_client_get_medical_record_no_prior_record_triggers_fallback_generation():
-    scheduler = _appointment_scheduler()
-    service = _medical_record_service(PENDING_RECORD, needs_generation=True)
-    router, _ = _client_router(_client_appointment(), _client_user(), service, scheduler)
+    service = _medical_record_service(ready_documents=[], generate_result=PENDING_RECORD)
+    router, _ = _client_router(_client_appointment(), _client_user(), service)
     handler = _find_handler(router, "history_action")
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
 
     await handler(callback_query, callback_data, AsyncMock())
 
-    scheduler.schedule_medical_record_generation.assert_awaited_once_with(1)
+    service.generate.assert_awaited_once_with(1)
     callback_query.message.answer_document.assert_not_awaited()
 
 
@@ -325,11 +355,10 @@ async def test_client_get_medical_record_denies_access_to_other_clients_appointm
     """Ownership check: a client must not be able to fetch another client
     appointment history document -- deliver_medical_record must never be
     reached when get_appointment_for_client returns None."""
-    service = _medical_record_service(READY_RECORD)
-    scheduler = _appointment_scheduler()
+    service = _medical_record_service(ready_documents=[READY_RECORD])
     router, appointment_management_service = _client_router(
         _client_appointment(client_id=7), _client_user(telegram_user_id=OTHER_CLIENT_TELEGRAM_ID, client_id=8),
-        service, scheduler,
+        service,
     )
     handler = _find_handler(router, "history_action")
     callback_query = _callback_query(OTHER_CLIENT_TELEGRAM_ID)
@@ -339,8 +368,7 @@ async def test_client_get_medical_record_denies_access_to_other_clients_appointm
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()
-    service.get_or_generate.assert_not_awaited()
-    scheduler.schedule_medical_record_generation.assert_not_awaited()
+    service.get_ready_documents.assert_not_awaited()
     assert appointment_management_service.get_appointment_for_client_calls == [(1, OTHER_CLIENT_TELEGRAM_ID)]
 
 
@@ -350,11 +378,67 @@ async def test_client_get_medical_record_answers_unavailable_when_service_not_co
     (feature not wired up for this deployment), the handler must answer with
     a graceful "unavailable" alert instead of raising."""
     router, appointment_management_service = _client_router(
-        _client_appointment(), _client_user(), None, None,
+        _client_appointment(), _client_user(), None,
     )
     handler = _find_handler(router, "history_action")
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
+
+    await handler(callback_query, callback_data, AsyncMock())
+
+    callback_query.answer.assert_awaited_once_with("Функция недоступна.", show_alert=True)
+    callback_query.message.answer_document.assert_not_awaited()
+    assert appointment_management_service.get_appointment_for_client_calls == []
+
+
+@pytest.mark.asyncio
+async def test_client_add_medical_record_generates_for_the_appointments_current_purpose(tmp_path):
+    file_path = tmp_path / "medical_card_1.docx"
+    file_path.write_bytes(b"")
+    generated = MedicalRecord(
+        id=2, appointment_id=1, diagnosis="Консультация", status=MedicalRecordStatus.READY, file_path=str(file_path),
+    )
+    service = _medical_record_service(generate_result=generated)
+    router, _ = _client_router(_client_appointment(), _client_user(), service)
+    handler = _find_handler(router, "history_action")
+    callback_query = _callback_query(CLIENT_TELEGRAM_ID)
+    callback_data = ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1)
+
+    await handler(callback_query, callback_data, AsyncMock())
+
+    service.generate.assert_awaited_once_with(1, "Консультация")
+    callback_query.message.answer_document.assert_awaited_once()
+    sent_document = callback_query.message.answer_document.call_args.args[0]
+    assert sent_document.path == str(file_path)
+
+
+@pytest.mark.asyncio
+async def test_client_add_medical_record_denies_access_to_other_clients_appointment():
+    service = _medical_record_service(generate_result=READY_RECORD)
+    router, appointment_management_service = _client_router(
+        _client_appointment(client_id=7), _client_user(telegram_user_id=OTHER_CLIENT_TELEGRAM_ID, client_id=8),
+        service,
+    )
+    handler = _find_handler(router, "history_action")
+    callback_query = _callback_query(OTHER_CLIENT_TELEGRAM_ID)
+    callback_data = ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1)
+
+    await handler(callback_query, callback_data, AsyncMock())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.answer_document.assert_not_awaited()
+    service.generate.assert_not_awaited()
+    assert appointment_management_service.get_appointment_for_client_calls == [(1, OTHER_CLIENT_TELEGRAM_ID)]
+
+
+@pytest.mark.asyncio
+async def test_client_add_medical_record_answers_unavailable_when_service_not_configured():
+    router, appointment_management_service = _client_router(
+        _client_appointment(), _client_user(), None,
+    )
+    handler = _find_handler(router, "history_action")
+    callback_query = _callback_query(CLIENT_TELEGRAM_ID)
+    callback_data = ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1)
 
     await handler(callback_query, callback_data, AsyncMock())
 

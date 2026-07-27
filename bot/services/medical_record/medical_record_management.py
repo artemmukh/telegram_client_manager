@@ -1,14 +1,22 @@
 import logging
+import re
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from bot.config.clinic_instances import MEDICAL_RECORD_TEMPLATE_BY_INSTANCE
 from bot.exceptions.medical_record_exceptions import MedicalRecordGenerationError
+from bot.models.appointment import Appointment
 from bot.models.medical_record import MedicalRecord
 from bot.models.user import User
 from bot.repositories.medical_record_repository import MedicalRecordRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.document_generator.pydocx import create_docx
+from bot.services.document_generator.pydocx import OUTPUT_DIR, create_docx
 from bot.services.llm.agent import ChatLLM
-from bot.services.utils.date_parser import format_appointment_card_datetime, get_current_tashkent_time
+from bot.services.utils.date_parser import (
+    format_appointment_card_datetime,
+    get_current_tashkent_datetime,
+    get_current_tashkent_time,
+)
 from bot.utils import prompt_builder
 from bot.utils.medical_record_enums import MedicalRecordStatus
 
@@ -16,11 +24,9 @@ logger = logging.getLogger(__name__)
 
 GENDER_LABELS = {"male": "Мужской", "female": "Женский"}
 
-ALREADY_GENERATED_STATUSES = (
-    MedicalRecordStatus.READY,
-    MedicalRecordStatus.READY_PARTIAL,
-    MedicalRecordStatus.GENERATING,
-)
+READY_STATUSES = (MedicalRecordStatus.READY, MedicalRecordStatus.READY_PARTIAL)
+
+ALREADY_GENERATED_STATUSES = (*READY_STATUSES, MedicalRecordStatus.GENERATING)
 
 EMPTY_AI_FIELDS = {
     "complaints": "",
@@ -29,6 +35,40 @@ EMPTY_AI_FIELDS = {
     "treatment": "",
     "tooth_map": [],
 }
+
+DIAGNOSIS_SEGMENT_MAX_LENGTH = 30
+PATH_SEGMENT_MAX_LENGTH = 30
+STALE_GENERATING_MINUTES = 5
+
+_UNSAFE_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
+
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def _sanitize_path_segment(value: str, max_length: int | None = None) -> str:
+    """Make a string safe to use as a single filesystem path segment.
+
+    Replaces filesystem-unsafe characters and strips trailing dots/spaces
+    (both illegal at the end of a Windows path segment), guards against
+    Windows reserved device names, and optionally truncates. Cyrillic and
+    other non-ASCII text is preserved as-is.
+    """
+    sanitized = _UNSAFE_PATH_CHARS_RE.sub("_", value).strip(". ")
+
+    if not sanitized:
+        sanitized = "_"
+
+    if sanitized.upper() in _WINDOWS_RESERVED_NAMES:
+        sanitized = f"{sanitized}_"
+
+    if max_length is not None and len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip(". ")
+
+    return sanitized
 
 
 class MedicalRecordService:
@@ -50,13 +90,23 @@ class MedicalRecordService:
         self.chat_llm = chat_llm
         self.instance = instance
 
-    async def generate(self, appointment_id: int) -> MedicalRecord | None:
-        """Generate the medical record docx for a completed appointment.
+    async def generate(self, appointment_id: int, diagnosis: str | None = None) -> MedicalRecord | None:
+        """Generate the medical record docx for a given diagnosis.
 
-        Idempotent: if a record already exists with status ready, ready_partial,
-        or generating, the existing record is returned unchanged and no new
-        generation is started. If the appointment or its client cannot be
-        found, the record (if any) is marked failed and None is returned.
+        Keyed by (appointment_id, diagnosis): idempotent for the same
+        diagnosis (a record already ready/ready_partial/generating is
+        returned unchanged, no new file or row), but a changed diagnosis
+        (appointment.purpose edited since the last generation) always gets
+        its own new record and document instead of overwriting the old one.
+
+        `diagnosis` defaults to the appointment's current purpose. Callers
+        regenerating a specific existing record (e.g. its file went missing
+        from disk) must pass that record's own diagnosis explicitly, so the
+        appointment's purpose having since changed can't redirect the
+        regeneration onto a different record.
+
+        If the appointment or its client cannot be found, no record is
+        created/touched and None is returned.
 
         On LLM failure (after ChatLLM's own retries are exhausted), the
         document is still generated with empty strings for the four
@@ -64,21 +114,27 @@ class MedicalRecordService:
         record is marked ready_partial, so the "get document" button never
         blocks on the LLM being unavailable.
         """
-        existing = await self.medical_record_repository.get_by_appointment_id(appointment_id)
-        if existing is not None and existing.status in ALREADY_GENERATED_STATUSES:
-            return existing
-
-        record = existing or await self.medical_record_repository.create_pending(
-            appointment_id, get_current_tashkent_time(),
-        )
-        await self.medical_record_repository.mark_generating(record.id, get_current_tashkent_time())
-
         appointment = await self.appointment_management.get_appointment_by_id(appointment_id)
         if appointment is None:
-            await self.medical_record_repository.mark_failed(
-                record.id, "Запись не найдена.", get_current_tashkent_time(),
-            )
+            logger.warning("Medical record generation: appointment %s not found", appointment_id)
             return None
+
+        if diagnosis is None:
+            diagnosis = appointment.purpose
+        diagnosis = diagnosis or ""
+
+        existing = await self.medical_record_repository.get_by_appointment_and_diagnosis(appointment_id, diagnosis)
+        if existing is not None and existing.status in ALREADY_GENERATED_STATUSES:
+            stale_generating = (
+                existing.status is MedicalRecordStatus.GENERATING and self._is_stale_generating(existing)
+            )
+            if not stale_generating:
+                return existing
+
+        record = existing or await self.medical_record_repository.create_pending(
+            appointment_id, diagnosis, get_current_tashkent_time(),
+        )
+        await self.medical_record_repository.mark_generating(record.id, get_current_tashkent_time())
 
         client = await self.appointment_management.get_client_by_id(appointment.client_id)
         if client is None:
@@ -98,7 +154,7 @@ class MedicalRecordService:
             )
             return None
 
-        ai_fields, partial = await self._generate_ai_fields(appointment.purpose, client)
+        ai_fields, partial = await self._generate_ai_fields(diagnosis, client)
         tooth_map = ai_fields.pop("tooth_map")
 
         data = {
@@ -107,12 +163,14 @@ class MedicalRecordService:
             "gender": GENDER_LABELS.get(client.gender, ""),
             "birth_date": self._format_birth_date(client.birth_date),
             "phone": client.phone,
-            "diagnosis": appointment.purpose,
+            "diagnosis": diagnosis,
             **ai_fields,
         }
 
+        output_path = self._build_output_path(appointment, client, diagnosis, record.id)
+
         try:
-            file_path = await create_docx(data, tooth_map, appointment_id, template_path)
+            file_path = await create_docx(data, tooth_map, output_path, template_path)
         except Exception as exc:
             logger.exception("Failed to render medical record docx for appointment %s: %s", appointment_id, exc)
             await self.medical_record_repository.mark_failed(record.id, str(exc), get_current_tashkent_time())
@@ -122,45 +180,76 @@ class MedicalRecordService:
             record.id, file_path, partial=partial, updated_at=get_current_tashkent_time(),
         )
 
-        return await self.medical_record_repository.get_by_appointment_id(appointment_id)
+        return await self.medical_record_repository.get_by_appointment_and_diagnosis(appointment_id, diagnosis)
 
-    async def get_or_generate(self, appointment_id: int) -> tuple[MedicalRecord, bool]:
-        """Return the medical record for an appointment, creating it if needed.
+    async def get_ready_documents(self, appointment_id: int) -> list[MedicalRecord]:
+        """Return every already-generated, ready document for an appointment."""
+        return await self.medical_record_repository.list_ready_by_appointment_id(appointment_id)
 
-        Returns a (record, needs_generation) tuple with three possible
-        outcomes the caller must handle:
-
-        - record.status in (ready, ready_partial), needs_generation=False:
-          generation already finished, send record.file_path to the user.
-        - record.status in (pending, generating), needs_generation=False:
-          generation is already in flight (dispatched earlier by the
-          completion job/handler), tell the user to check back shortly.
-        - record.status == pending, needs_generation=True:
-          no record existed before this call (edge case - the appointment
-          reached COMPLETED without generation ever being triggered); a
-          pending row was just created here as a fallback. The caller MUST
-          call AppointmentScheduler.schedule_medical_record_generation
-          (or await generate_medical_record_job directly) to actually start
-          generation, then tell the user to check back shortly.
-        """
-        record = await self.medical_record_repository.get_by_appointment_id(appointment_id)
-        if record is not None:
-            return record, False
-
-        record = await self.medical_record_repository.create_pending(appointment_id, get_current_tashkent_time())
-        return record, True
-
-    async def mark_for_regeneration(self, appointment_id: int) -> None:
-        """Reset an existing record back to pending so it can be regenerated.
+    async def mark_for_regeneration(self, record_id: int) -> None:
+        """Reset a specific record back to pending so it can be regenerated.
 
         Used when the stored file_path no longer points at a document on
-        disk (e.g. it was deleted manually). No-op if no record exists yet.
+        disk (e.g. it was deleted manually). Takes the record id directly
+        since callers always already hold the record they want regenerated.
         """
-        record = await self.medical_record_repository.get_by_appointment_id(appointment_id)
-        if record is None:
-            return
+        await self.medical_record_repository.mark_pending(record_id, get_current_tashkent_time())
 
-        await self.medical_record_repository.mark_pending(record.id, get_current_tashkent_time())
+    async def ensure_file_exists(self, record: MedicalRecord) -> MedicalRecord | None:
+        """Return `record` unchanged if its file is present on disk, regenerating it in place otherwise.
+
+        Regeneration is keyed by the record's own diagnosis, not the
+        appointment's current purpose, so a since-changed purpose can never
+        redirect the regeneration onto a different record.
+
+        Returns None if regeneration fails to produce a usable file.
+        """
+        if record.file_path and Path(record.file_path).exists():
+            return record
+
+        logger.warning(
+            "Medical record file missing on disk for appointment %s: %s",
+            record.appointment_id, record.file_path,
+        )
+        await self.mark_for_regeneration(record.id)
+        regenerated = await self.generate(record.appointment_id, record.diagnosis)
+
+        if (
+            regenerated is None
+            or regenerated.status not in READY_STATUSES
+            or not regenerated.file_path
+            or not Path(regenerated.file_path).exists()
+        ):
+            return None
+
+        return regenerated
+
+    @staticmethod
+    def _is_stale_generating(record: MedicalRecord) -> bool:
+        if record.updated_at is None:
+            return True
+
+        try:
+            updated_at = datetime.fromisoformat(record.updated_at)
+        except ValueError:
+            return True
+
+        return get_current_tashkent_datetime() - updated_at > timedelta(minutes=STALE_GENERATING_MINUTES)
+
+    def _build_output_path(self, appointment: Appointment, client: User, diagnosis: str, record_id: int) -> Path:
+        clinic_segment = _sanitize_path_segment(appointment.clinic_name or "Клиника", max_length=PATH_SEGMENT_MAX_LENGTH)
+        doctor_segment = _sanitize_path_segment(
+            appointment.doctor_full_name or "Без_врача", max_length=PATH_SEGMENT_MAX_LENGTH,
+        )
+        patient_segment = _sanitize_path_segment(client.full_name or "Пациент", max_length=PATH_SEGMENT_MAX_LENGTH)
+        diagnosis_segment = _sanitize_path_segment(
+            diagnosis or "Без_диагноза", max_length=DIAGNOSIS_SEGMENT_MAX_LENGTH,
+        )
+        date_segment = _sanitize_path_segment(format_appointment_card_datetime(appointment.datetime))
+
+        filename = f"{date_segment}_{diagnosis_segment}_{record_id}.docx"
+
+        return OUTPUT_DIR / clinic_segment / doctor_segment / patient_segment / filename
 
     async def _generate_ai_fields(self, purpose: str, client: User) -> tuple[dict, bool]:
         prompt = self._build_prompt(purpose, client)

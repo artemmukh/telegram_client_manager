@@ -117,7 +117,6 @@ async def main():
         scheduler=scheduler,
         notification_service=notification_service,
         appointment_management=appointment_management_service,
-        medical_record_service=medical_record_service,
     )
 
     # Routers

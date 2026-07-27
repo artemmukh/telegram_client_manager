@@ -208,40 +208,55 @@ def fake_client_clinic_repo_factory():
 
 class FakeMedicalRecordRepository:
     """Drop-in for MedicalRecordRepository, matching its method names/signatures
-    (create_pending, get_by_appointment_id, mark_generating, mark_pending,
-    mark_ready, mark_failed). Mutates the same MedicalRecord object in place across calls
-    (mirroring the real repository, where a fresh get_by_appointment_id()
-    after a status update reflects the new state) so callers can assert on
-    both the returned record and the recorded call history."""
+    (create_pending, get_by_appointment_and_diagnosis,
+    list_ready_by_appointment_id, mark_generating,
+    mark_pending, mark_ready, mark_failed). Mutates the same MedicalRecord object
+    in place across calls (mirroring the real repository, where a fresh
+    get_by_appointment_and_diagnosis() after a status update reflects the new state) so
+    callers can assert on both the returned record and the recorded call
+    history.
+
+    Backed by a flat list of records (mirroring the real table's
+    UNIQUE(appointment_id, diagnosis) composite key -- multiple rows can share
+    an appointment_id as long as their diagnosis differs), rather than a dict
+    keyed only by appointment_id.
+    """
 
     def __init__(self, records_by_appointment_id=None):
-        self.records_by_appointment_id = dict(records_by_appointment_id or {})
+        self.records: list[MedicalRecord] = list((records_by_appointment_id or {}).values())
         self._next_id = max(
-            (r.id for r in self.records_by_appointment_id.values() if r.id is not None),
+            (r.id for r in self.records if r.id is not None),
             default=0,
         ) + 1
-        self.create_pending_calls: list[tuple[int, str]] = []
+        self.create_pending_calls: list[tuple[int, str, str]] = []
         self.mark_generating_calls: list[tuple[int, str]] = []
         self.mark_pending_calls: list[tuple[int, str]] = []
         self.mark_ready_calls: list[tuple[int, str, bool, str]] = []
         self.mark_failed_calls: list[tuple[int, str, str]] = []
 
-    async def create_pending(self, appointment_id: int, created_at: str) -> MedicalRecord:
-        self.create_pending_calls.append((appointment_id, created_at))
-        existing = self.records_by_appointment_id.get(appointment_id)
+    async def create_pending(self, appointment_id: int, diagnosis: str, created_at: str) -> MedicalRecord:
+        self.create_pending_calls.append((appointment_id, diagnosis, created_at))
+        existing = self._find_by_appointment_and_diagnosis(appointment_id, diagnosis)
         if existing is not None:
             return existing
 
         record = MedicalRecord(
-            id=self._next_id, appointment_id=appointment_id, status=MedicalRecordStatus.PENDING,
-            created_at=created_at,
+            id=self._next_id, appointment_id=appointment_id, diagnosis=diagnosis,
+            status=MedicalRecordStatus.PENDING, created_at=created_at,
         )
         self._next_id += 1
-        self.records_by_appointment_id[appointment_id] = record
+        self.records.append(record)
         return record
 
-    async def get_by_appointment_id(self, appointment_id: int) -> MedicalRecord | None:
-        return self.records_by_appointment_id.get(appointment_id)
+    async def get_by_appointment_and_diagnosis(self, appointment_id: int, diagnosis: str) -> MedicalRecord | None:
+        return self._find_by_appointment_and_diagnosis(appointment_id, diagnosis)
+
+    async def list_ready_by_appointment_id(self, appointment_id: int) -> list[MedicalRecord]:
+        ready_statuses = (MedicalRecordStatus.READY, MedicalRecordStatus.READY_PARTIAL)
+        return [
+            r for r in self.records
+            if r.appointment_id == appointment_id and r.status in ready_statuses and r.file_path is not None
+        ]
 
     async def mark_generating(self, id: int, updated_at: str) -> None:
         self.mark_generating_calls.append((id, updated_at))
@@ -275,8 +290,11 @@ class FakeMedicalRecordRepository:
             record.updated_at = updated_at
 
     def _find_by_id(self, id: int) -> MedicalRecord | None:
+        return next((r for r in self.records if r.id == id), None)
+
+    def _find_by_appointment_and_diagnosis(self, appointment_id: int, diagnosis: str) -> MedicalRecord | None:
         return next(
-            (r for r in self.records_by_appointment_id.values() if r.id == id), None,
+            (r for r in self.records if r.appointment_id == appointment_id and r.diagnosis == diagnosis), None,
         )
 
 
@@ -288,3 +306,51 @@ def fake_medical_record_repo() -> FakeMedicalRecordRepository:
 @pytest.fixture
 def fake_medical_record_repo_factory():
     return FakeMedicalRecordRepository
+
+
+class FakeAppointmentManagement:
+    """Drop-in for AppointmentManagement, matching only the two methods
+    MedicalRecordService actually calls (get_appointment_by_id,
+    get_client_by_id). Shared by test_medical_record_service.py and
+    test_medical_record_delivery.py, both of which drive a real
+    MedicalRecordService instance."""
+
+    def __init__(self, appointment=None, client=None):
+        self.appointment = appointment
+        self.client = client
+
+    async def get_appointment_by_id(self, appointment_id):
+        if self.appointment is not None and self.appointment.id == appointment_id:
+            return self.appointment
+        return None
+
+    async def get_client_by_id(self, user_id):
+        if self.client is not None and self.client.ID == user_id:
+            return self.client
+        return None
+
+
+LLM_RESPONSE = {
+    "complaints": "Боль при накусывании",
+    "diseases": "Хронический гастрит",
+    "examination": "Кариозная полость на жевательной поверхности",
+    "treatment": "Пломбирование композитным материалом",
+    "tooth_map": [{"tooth": 37, "marker": "C"}],
+}
+
+
+class FakeChatLLM:
+    """Drop-in for ChatLLM. Records every prompt it was called with so tests
+    can assert on LLM-call counts (e.g. idempotent generate() calls must
+    never reach the LLM at all)."""
+
+    def __init__(self, response=None, error: Exception | None = None):
+        self.response = response
+        self.error = error
+        self.calls: list[str] = []
+
+    async def generate(self, prompt: str) -> dict:
+        self.calls.append(prompt)
+        if self.error is not None:
+            raise self.error
+        return dict(self.response)

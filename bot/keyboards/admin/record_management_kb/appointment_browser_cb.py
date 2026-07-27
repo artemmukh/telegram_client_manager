@@ -29,7 +29,7 @@ class ApptCardCB(CallbackData, prefix="appt_card"):
 class ApptActionCB(CallbackData, prefix="appt_act"):
     """Действие в карточке записи: set_status, edit_datetime, edit_purpose, edit_price,
     finish_appointment, delete, confirm_delete, cancel_delete, confirm_delete_notify,
-    confirm_delete_silent, get_medical_record.
+    confirm_delete_silent, get_medical_record, add_medical_record.
 
     post_appt - выполняется ли действие в режиме послеприёмного редактирования
     (отдельно от mode, который сохраняет семантику списка/поиска).

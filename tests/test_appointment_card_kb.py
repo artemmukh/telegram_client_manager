@@ -120,6 +120,25 @@ def test_completed_shows_service_and_price_and_status_menu_no_status_no_time():
     assert _back_cb("list", 1, "completed") in callback_datas
 
 
+def test_completed_shows_get_and_add_medical_record_buttons():
+    markup = appointment_card_kb(1, "list", 1, status=AppointmentStatus.COMPLETED, tab="completed")
+    callback_datas = _callback_datas(markup)
+
+    assert _action_cb("get_medical_record", 1, "list", 1) in callback_datas
+    assert _action_cb("add_medical_record", 1, "list", 1) in callback_datas
+
+
+def test_medical_record_buttons_shown_only_for_completed():
+    for status in AppointmentStatus:
+        markup = appointment_card_kb(1, "list", 1, status=status)
+        callback_datas = _callback_datas(markup)
+        get_present = _action_cb("get_medical_record", 1, "list", 1) in callback_datas
+        add_present = _action_cb("add_medical_record", 1, "list", 1) in callback_datas
+        expected = status == AppointmentStatus.COMPLETED
+        assert get_present == expected, f"get_medical_record presence mismatch for status={status}"
+        assert add_present == expected, f"add_medical_record presence mismatch for status={status}"
+
+
 def test_cancelled_shows_status_menu_and_back_button_only():
     markup = appointment_card_kb(1, "list", 1, status=AppointmentStatus.CANCELLED, tab="cancelled")
     callback_datas = _callback_datas(markup)

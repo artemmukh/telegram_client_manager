@@ -86,6 +86,14 @@ def appointment_history_card_kb(
         )
         button_rows += 1
 
+        builder.button(
+            text="➕ Добавить документ",
+            callback_data=ClientHistoryActionCB(
+                action="add_medical_record", appointment_id=appointment.id, tab=tab, page=page,
+            ).pack(),
+        )
+        button_rows += 1
+
     builder.button(
         text="⬅️ Назад к списку",
         callback_data=ClientHistoryPageCB(tab=tab, page=page).pack(),

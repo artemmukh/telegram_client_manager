@@ -168,7 +168,6 @@ async def test_open_edit_resyncs_jobs_when_scheduler_provided():
     appointment_repo = FakeAppointmentRepository(_appointment())
     appointment_scheduler = MagicMock()
     appointment_scheduler.resync_appointment_jobs = AsyncMock()
-    appointment_scheduler.schedule_medical_record_generation = AsyncMock()
     router = _router(appointment_repo, appointment_scheduler)
     open_edit = _find_handler(router, "open_edit")
 
@@ -180,23 +179,6 @@ async def test_open_edit_resyncs_jobs_when_scheduler_provided():
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
     assert resynced_appointment.status is AppointmentStatus.COMPLETED
-
-
-@pytest.mark.asyncio
-async def test_open_edit_triggers_medical_record_generation_exactly_once():
-    appointment_repo = FakeAppointmentRepository(_appointment())
-    appointment_scheduler = MagicMock()
-    appointment_scheduler.resync_appointment_jobs = AsyncMock()
-    appointment_scheduler.schedule_medical_record_generation = AsyncMock()
-    router = _router(appointment_repo, appointment_scheduler)
-    open_edit = _find_handler(router, "open_edit")
-
-    callback_query = _callback_query()
-    callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
-
-    await open_edit(callback_query, callback_data, AsyncMock())
-
-    appointment_scheduler.schedule_medical_record_generation.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio
@@ -284,7 +266,6 @@ async def test_skip_edit_resyncs_jobs_when_scheduler_provided():
     appointment_repo = FakeAppointmentRepository(_appointment())
     appointment_scheduler = MagicMock()
     appointment_scheduler.resync_appointment_jobs = AsyncMock()
-    appointment_scheduler.schedule_medical_record_generation = AsyncMock()
     router = _router(appointment_repo, appointment_scheduler)
     skip_edit = _find_handler(router, "skip_edit")
 
@@ -296,23 +277,6 @@ async def test_skip_edit_resyncs_jobs_when_scheduler_provided():
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
     assert resynced_appointment.status is AppointmentStatus.COMPLETED
-
-
-@pytest.mark.asyncio
-async def test_skip_edit_triggers_medical_record_generation_exactly_once():
-    appointment_repo = FakeAppointmentRepository(_appointment())
-    appointment_scheduler = MagicMock()
-    appointment_scheduler.resync_appointment_jobs = AsyncMock()
-    appointment_scheduler.schedule_medical_record_generation = AsyncMock()
-    router = _router(appointment_repo, appointment_scheduler)
-    skip_edit = _find_handler(router, "skip_edit")
-
-    callback_query = _callback_query()
-    callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
-
-    await skip_edit(callback_query, callback_data)
-
-    appointment_scheduler.schedule_medical_record_generation.assert_awaited_once_with(1)
 
 
 @pytest.mark.asyncio
