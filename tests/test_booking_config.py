@@ -28,9 +28,12 @@ from bot.config.zb_data_parser_cfg import zb_cfg
 def test_generate_slots_zb_grid_has_no_lunch_break():
     slots = booking_config._generate_slots(zb_cfg)
 
+    # SLOT_STEP_MINUTES=15 (see zb_data_parser_cfg.py).
     assert slots == (
-        "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00", "13:30",
-        "14:00", "14:30", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30",
+        "10:00", "10:15", "10:30", "10:45", "11:00", "11:15", "11:30", "11:45",
+        "12:00", "12:15", "12:30", "12:45", "13:00", "13:15", "13:30", "13:45",
+        "14:00", "14:15", "14:30", "14:45", "15:00", "15:15", "15:30", "15:45",
+        "16:00", "16:15", "16:30", "16:45", "17:00", "17:15", "17:30",
     )
 
 
@@ -39,16 +42,17 @@ def test_generate_slots_mm_grid_excludes_lunch_hour():
 
     # BREAK_START is an inclusive bound and BREAK_END is exclusive in
     # _generate_slots (break_start <= current < break_end), so only the
-    # 13:00 lunch slot is skipped; 14:00 remains bookable.
+    # 13:00 lunch slot is skipped; 14:00 remains bookable. WORKING_HOURS_END
+    # is 17:00 (see mm_data_parser_cfg.py), so 17:00 is the last slot.
     assert "13:00" not in slots
     assert slots == (
-        "09:00", "10:00", "11:00", "12:00", "14:00", "15:00", "16:00", "17:00", "18:00",
+        "09:00", "10:00", "11:00", "12:00", "14:00", "15:00", "16:00", "17:00",
     )
 
 
 @pytest.mark.parametrize(
     "instance, expected_first_slot, expected_last_slot",
-    [("zb", "10:00", "17:30"), ("mm", "09:00", "18:00")],
+    [("zb", "10:00", "17:30"), ("mm", "09:00", "17:00")],
 )
 def test_booking_slots_resolve_from_bot_instance_env_var(
     monkeypatch, instance, expected_first_slot, expected_last_slot,

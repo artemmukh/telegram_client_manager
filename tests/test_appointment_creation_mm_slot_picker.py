@@ -300,8 +300,10 @@ async def test_pick_slot_with_valid_slot_updates_state_with_datetime_and_display
         appointment_datetime_display=expected_display,
     )
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.purpose)
+    # instance="mm" (this file's default router) gets the mm-specific prompt;
+    # only instance="zb" sees "Опишите услугу (например: Консультация):".
     callback_query.message.edit_text.assert_awaited_once_with(
-        "Опишите услугу (например: Консультация):",
+        "Опишите боль или проблему:",
         reply_markup=back_to_records_kb(),
     )
     callback_query.answer.assert_awaited_once()
