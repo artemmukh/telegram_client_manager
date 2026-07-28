@@ -101,19 +101,27 @@ class FakeAppointmentRepository:
 
 
 class FakeUserRepo:
-    def __init__(self, admins_by_telegram_id):
+    def __init__(self, admins_by_telegram_id, staff_by_clinic=None):
         self.admins = admins_by_telegram_id
+        self.staff_by_clinic = staff_by_clinic or {}
 
     async def get_user_by_telegram_id(self, telegram_user_id):
         return self.admins.get(telegram_user_id)
 
+    async def get_staff_users_by_clinic_id(self, clinic_id):
+        return self.staff_by_clinic.get(clinic_id, [])
+
 
 class FakeStaffRepo:
-    def __init__(self, staff_by_telegram_id):
+    def __init__(self, staff_by_telegram_id, staff_by_clinic=None):
         self.staff = staff_by_telegram_id
+        self.staff_by_clinic = staff_by_clinic or {}
 
     async def get_staff(self, telegram_user_id):
         return self.staff.get(telegram_user_id)
+
+    async def get_staff_by_clinic_id(self, clinic_id):
+        return self.staff_by_clinic.get(clinic_id, [])
 
 
 class FakeClinicRepo:
@@ -149,11 +157,27 @@ def _clinic_admin():
 
 
 def _build_router(appointment_repo, notification_service=None, appointment_scheduler=None):
-    user_repo = FakeUserRepo({OWN_ADMIN_TELEGRAM_ID: _own_admin(), CLINIC_ADMIN_TELEGRAM_ID: _clinic_admin()})
-    staff_repo = FakeStaffRepo({
-        OWN_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=OWN_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
-        CLINIC_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=CLINIC_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
-    })
+    own_admin = _own_admin()
+    clinic_admin = _clinic_admin()
+
+    # Mirrors production reality (see staff_repository.py's is_doctor migration):
+    # visibility_scope="clinic" admins have is_doctor=False, visibility_scope="own"
+    # doctors have is_doctor=True. Clinic 1 therefore resolves to exactly 1 doctor
+    # (OWN_ADMIN), keeping it below the >=2 threshold that would trigger the
+    # calendar doctor-filter picker in these scoping-only tests.
+    staff_records = {
+        OWN_ADMIN_TELEGRAM_ID: Staff(
+            telegram_user_id=OWN_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own", is_doctor=True,
+        ),
+        CLINIC_ADMIN_TELEGRAM_ID: Staff(
+            telegram_user_id=CLINIC_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic", is_doctor=False,
+        ),
+    }
+    user_repo = FakeUserRepo(
+        {OWN_ADMIN_TELEGRAM_ID: own_admin, CLINIC_ADMIN_TELEGRAM_ID: clinic_admin},
+        staff_by_clinic={1: [own_admin, clinic_admin]},
+    )
+    staff_repo = FakeStaffRepo(staff_records, staff_by_clinic={1: list(staff_records.values())})
     clinic_repo = FakeClinicRepo({1: Clinic(clinic_id=1, name="Zub Mudrosti", token="t")})
     return create_admin_appointment_browser_router(
         appointment_repo, user_repo, staff_repo, clinic_repo,

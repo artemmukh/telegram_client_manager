@@ -223,7 +223,17 @@ def create_admin_appointment_browser_router(
         )
         await state.set_state(AppointmentBrowserStates.calendar_day)
 
-        clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+        data = await state.get_data()
+        if "calendar_doctor_filter_id" not in data:
+            prompted = await maybe_prompt_doctor_filter(
+                callback_query, state, mode="calendar", page=1, tab="confirmed",
+                back_callback_data=ApptCalendarMonthCB(year=year, month=month).pack(),
+                back_label="⬅️ К календарю",
+            )
+            if prompted:
+                return
+
+        clinic_id, doctor_id = await resolve_filtered_doctor_id(callback_query.from_user.id, state, mode="calendar")
         await render_list(
             callback_query, state, mode="calendar", page=1, tab="confirmed", clinic_id=clinic_id, doctor_id=doctor_id,
         )
@@ -781,7 +791,12 @@ def create_admin_appointment_browser_router(
 
     # --- Shared renderers ---
 
-    FILTERABLE_MODES = {"list", "search", "phone"}
+    DOCTOR_FILTER_STATE_KEYS = {
+        "list": "doctor_filter_id",
+        "search": "doctor_filter_id",
+        "phone": "doctor_filter_id",
+        "calendar": "calendar_doctor_filter_id",
+    }
 
     async def notify_appointment_changed(appointment, appointment_id: int) -> None:
         if not notification_service:
@@ -796,6 +811,7 @@ def create_admin_appointment_browser_router(
 
     async def maybe_prompt_doctor_filter(
         callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, tab: str,
+        back_callback_data: str = "browse_appointments", back_label: str = "⬅️ К меню поиска",
     ) -> bool:
         doctors = await appt_mng.list_clinic_doctors_for_filter(callback_query.from_user.id)
         if not doctors:
@@ -806,17 +822,20 @@ def create_admin_appointment_browser_router(
         await callback_query.answer('')
         await callback_query.message.edit_text(
             "Выберите врача для фильтрации:",
-            reply_markup=appointment_doctor_filter_kb(doctors),
+            reply_markup=appointment_doctor_filter_kb(
+                doctors, back_callback_data=back_callback_data, back_label=back_label,
+            ),
         )
         await remember_tracked_message(state, callback_query.message)
         return True
 
     async def resolve_filtered_doctor_id(telegram_id: int, state: FSMContext, mode: str) -> tuple[int, int | None]:
         clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(telegram_id)
-        if mode in FILTERABLE_MODES:
+        state_key = DOCTOR_FILTER_STATE_KEYS.get(mode)
+        if state_key:
             data = await state.get_data()
-            if "doctor_filter_id" in data:
-                doctor_id = data["doctor_filter_id"]
+            if state_key in data:
+                doctor_id = data[state_key]
         return clinic_id, doctor_id
 
     @router.callback_query(AppointmentBrowserStates.pick_doctor_filter, ApptDoctorFilterCB.filter())
@@ -824,16 +843,19 @@ def create_admin_appointment_browser_router(
         callback_query: CallbackQuery, callback_data: ApptDoctorFilterCB, state: FSMContext,
     ):
         doctor_id = callback_data.doctor_id or None
-        await state.update_data(doctor_filter_id=doctor_id)
 
         data = await state.get_data()
         pending = data.get("pending_render", {})
         mode = pending.get("mode", "list")
+        state_key = DOCTOR_FILTER_STATE_KEYS.get(mode, "doctor_filter_id")
+        await state.update_data(**{state_key: doctor_id})
 
         clinic_id, doctor_id = await resolve_filtered_doctor_id(callback_query.from_user.id, state, mode)
 
         if mode in ("search", "phone"):
             await state.set_state(AppointmentBrowserStates.confirm_search)
+        elif mode == "calendar":
+            await state.set_state(AppointmentBrowserStates.calendar_day)
         else:
             await state.set_state(None)
 

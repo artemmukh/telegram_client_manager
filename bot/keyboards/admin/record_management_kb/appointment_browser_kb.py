@@ -112,13 +112,15 @@ def appointment_browser_confirm_phone_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def appointment_doctor_filter_kb(doctors: list[User]) -> InlineKeyboardMarkup:
+def appointment_doctor_filter_kb(
+    doctors: list[User], *, back_callback_data: str = "browse_appointments", back_label: str = "⬅️ К меню поиска",
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for doctor in doctors:
         builder.button(text=doctor.full_name, callback_data=ApptDoctorFilterCB(doctor_id=doctor.ID).pack())
     builder.button(text="👥 Все врачи", callback_data=ApptDoctorFilterCB(doctor_id=0).pack())
-    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    builder.button(text=back_label, callback_data=back_callback_data)
 
     builder.adjust(*([1] * len(doctors)), 1, 1)
     return builder.as_markup()

@@ -23,8 +23,13 @@ from bot.handlers.admin.appointment_management.appointment_browser import (
     create_admin_appointment_browser_router,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
+    ApptCalendarDayCB,
+    ApptCalendarMonthCB,
     ApptDoctorFilterCB,
     ApptPageCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
+    appointment_doctor_filter_kb,
 )
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
@@ -82,6 +87,7 @@ class FakeAppointmentRepository:
         self.status_page_calls = []
         self.name_page_calls = []
         self.date_page_calls = []
+        self.client_id_calls = []
 
     async def get_appointment_by_id(self, appointment_id):
         return next((a for a in self.appointments if a.id == appointment_id), None)
@@ -112,6 +118,7 @@ class FakeAppointmentRepository:
         return []
 
     async def get_appointments_by_client_id(self, client_id, clinic_id, doctor_id=None):
+        self.client_id_calls.append((client_id, clinic_id, doctor_id))
         return []
 
     async def count_appointments_by_date_and_status(
@@ -404,3 +411,212 @@ async def test_apply_doctor_filter_restores_confirm_search_state_for_search_mode
     assert appt_repo.name_page_calls
     _, _, _, _, doctor_id, _, _ = appt_repo.name_page_calls[-1]
     assert doctor_id == DOCTOR_COLLEAGUE_ID
+
+
+# --- pick_calendar_day (calendar mode's own doctor-filter step) ---
+
+@pytest.mark.asyncio
+async def test_pick_calendar_day_shows_picker_for_clinic_admin_with_two_or_more_doctors():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    pick_calendar_day = _find_handler(router, "pick_calendar_day")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
+
+    await pick_calendar_day(callback_query, callback_data, state)
+
+    assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
+    assert state.data["pending_render"] == {"mode": "calendar", "page": 1, "tab": "confirmed"}
+    # Picker takes over the screen -- render_list must never have run.
+    assert appt_repo.date_page_calls == []
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == "Выберите врача для фильтрации:"
+
+    back_target = ApptCalendarMonthCB(year=2026, month=7).pack()
+    expected_markup = appointment_doctor_filter_kb(
+        [_clinic_admin(), _doctor_colleague()], back_callback_data=back_target, back_label="⬅️ К календарю",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_pick_calendar_day_skips_picker_for_doctor_caller():
+    """An own-scope doctor always resolves a concrete doctor_id via
+    resolve_admin_appointment_filter, so list_clinic_doctors_for_filter
+    short-circuits to [] -- pick_calendar_day must render the day list
+    directly, exactly as before this feature existed."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    pick_calendar_day = _find_handler(router, "pick_calendar_day")
+
+    callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
+
+    await pick_calendar_day(callback_query, callback_data, state)
+
+    assert AppointmentBrowserStates.pick_doctor_filter not in state.states
+    assert "pending_render" not in state.data
+    assert appt_repo.date_page_calls
+    _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
+    assert doctor_id == OWN_ADMIN_ID
+
+
+@pytest.mark.asyncio
+async def test_pick_calendar_day_skips_picker_when_clinic_has_fewer_than_two_doctors():
+    """A clinic-scope admin whose clinic currently has only 1 doctor must not
+    be shown a one-option, no-op picker."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=False)
+    pick_calendar_day = _find_handler(router, "pick_calendar_day")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
+
+    await pick_calendar_day(callback_query, callback_data, state)
+
+    assert AppointmentBrowserStates.pick_doctor_filter not in state.states
+    assert "pending_render" not in state.data
+    assert appt_repo.date_page_calls
+    _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
+    assert doctor_id is None
+
+
+@pytest.mark.asyncio
+async def test_pick_calendar_day_honors_existing_specific_doctor_filter_in_state():
+    """A calendar_doctor_filter_id already present in state (chosen on a
+    previous day pick within the same calendar session) must be honored
+    directly, without re-prompting."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    pick_calendar_day = _find_handler(router, "pick_calendar_day")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(calendar_doctor_filter_id=DOCTOR_COLLEAGUE_ID)
+    callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
+
+    await pick_calendar_day(callback_query, callback_data, state)
+
+    assert AppointmentBrowserStates.pick_doctor_filter not in state.states
+    assert "pending_render" not in state.data
+    assert appt_repo.date_page_calls
+    _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
+    assert doctor_id == DOCTOR_COLLEAGUE_ID
+
+
+@pytest.mark.asyncio
+async def test_pick_calendar_day_honors_existing_all_doctors_sentinel_in_state():
+    """calendar_doctor_filter_id=None (the 'all doctors' sentinel written by
+    apply_doctor_filter for the '👥 Все врачи' choice) must override even an
+    own-scope doctor's normally-restricted own doctor_id, and must not
+    re-trigger the picker."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    pick_calendar_day = _find_handler(router, "pick_calendar_day")
+
+    callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
+    state = FakeState(calendar_doctor_filter_id=None)
+    callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
+
+    await pick_calendar_day(callback_query, callback_data, state)
+
+    assert AppointmentBrowserStates.pick_doctor_filter not in state.states
+    assert appt_repo.date_page_calls
+    _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
+    assert doctor_id is None
+
+
+# --- apply_doctor_filter (calendar mode) ---
+
+@pytest.mark.asyncio
+async def test_apply_doctor_filter_stores_calendar_filter_and_restores_calendar_day_state():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    apply_doctor_filter = _find_handler(router, "apply_doctor_filter")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(
+        pending_render={"mode": "calendar", "page": 1, "tab": "confirmed"},
+        calendar_date="2026-07-17", calendar_year=2026, calendar_month=7,
+    )
+    callback_data = ApptDoctorFilterCB(doctor_id=DOCTOR_COLLEAGUE_ID)
+
+    await apply_doctor_filter(callback_query, callback_data, state)
+
+    assert state.data["calendar_doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
+    assert "doctor_filter_id" not in state.data
+    assert state.states[-1] == AppointmentBrowserStates.calendar_day
+    assert appt_repo.date_page_calls
+    _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
+    assert doctor_id == DOCTOR_COLLEAGUE_ID
+
+
+@pytest.mark.asyncio
+async def test_apply_doctor_filter_calendar_all_sentinel_clears_filter_and_restores_calendar_day_state():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    apply_doctor_filter = _find_handler(router, "apply_doctor_filter")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(
+        pending_render={"mode": "calendar", "page": 1, "tab": "confirmed"},
+        calendar_date="2026-07-17", calendar_year=2026, calendar_month=7,
+    )
+    callback_data = ApptDoctorFilterCB(doctor_id=0)
+
+    await apply_doctor_filter(callback_query, callback_data, state)
+
+    assert "calendar_doctor_filter_id" in state.data
+    assert state.data["calendar_doctor_filter_id"] is None
+    assert state.states[-1] == AppointmentBrowserStates.calendar_day
+    assert appt_repo.date_page_calls
+    _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
+    assert doctor_id is None
+
+
+# --- calendar_doctor_filter_id isolation is bidirectional ---
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode, search_data",
+    [
+        ("list", None),
+        ("search", {"full_name": "Ivanov Ivan"}),
+        ("phone", {"client_id": 42}),
+    ],
+)
+async def test_calendar_doctor_filter_never_leaks_into_list_search_phone_pagination(mode, search_data):
+    """Mirror of test_paginate_calendar_mode_never_leaks_doctor_filter, in
+    the opposite direction: a calendar_doctor_filter_id picked while browsing
+    the calendar must never apply to list/search/phone mode, which only ever
+    read doctor_filter_id (resolve_filtered_doctor_id keys off
+    DOCTOR_FILTER_STATE_KEYS[mode], not the calendar-specific key)."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    paginate = _find_handler(router, "paginate")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state_kwargs = {"calendar_doctor_filter_id": DOCTOR_COLLEAGUE_ID}
+    if search_data is not None:
+        state_kwargs["search_data"] = search_data
+    state = FakeState(**state_kwargs)
+    callback_data = ApptPageCB(mode=mode, page=1, tab="confirmed")
+
+    await paginate(callback_query, callback_data, state)
+
+    if mode == "list":
+        assert appt_repo.status_page_calls
+        _, _, _, doctor_id, _, _ = appt_repo.status_page_calls[-1]
+    elif mode == "search":
+        assert appt_repo.name_page_calls
+        _, _, _, _, doctor_id, _, _ = appt_repo.name_page_calls[-1]
+    else:
+        assert appt_repo.client_id_calls
+        _, _, doctor_id = appt_repo.client_id_calls[-1]
+
+    assert doctor_id is None
