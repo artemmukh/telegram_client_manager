@@ -13,6 +13,7 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     remember_tracked_message,
 )
 from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    calendar_grid_back_target,
     clamp_calendar_date,
     clamp_month_to_range,
     format_calendar_date_display,
@@ -184,10 +185,16 @@ def create_admin_appointment_browser_router(
 
     @router.callback_query(F.data == "appt_search_calendar")
     async def open_calendar_callback(callback: CallbackQuery, state: FSMContext):
+        await state.clear()
+        if await maybe_prompt_doctor_filter(callback, state, mode="calendar_entry", page=1, tab="confirmed"):
+            return
         await show_calendar(callback, state)
 
     @router.message(F.text.in_({"/calendar", "📆 Календарь"}))
     async def open_calendar_message(message: Message, state: FSMContext):
+        await state.clear()
+        if await maybe_prompt_doctor_filter(message, state, mode="calendar_entry", page=1, tab="confirmed"):
+            return
         await show_calendar(message, state)
 
     @router.callback_query(ApptCalendarMonthCB.filter())
@@ -196,14 +203,18 @@ def create_admin_appointment_browser_router(
     ):
         year, month = clamp_month_to_range(callback_data.year, callback_data.month)
 
-        await state.update_data(calendar_year=year, calendar_month=month)
+        data = await state.update_data(calendar_year=year, calendar_month=month)
         await state.set_state(AppointmentBrowserStates.calendar_month)
         await callback_query.answer('')
+
+        back_callback_data, back_label = calendar_grid_back_target(data)
 
         try:
             await callback_query.message.edit_text(
                 f"📅 {format_month_label(year, month)}",
-                reply_markup=appointment_calendar_kb(year, month),
+                reply_markup=appointment_calendar_kb(
+                    year, month, back_callback_data=back_callback_data, back_label=back_label,
+                ),
             )
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e):
@@ -796,6 +807,7 @@ def create_admin_appointment_browser_router(
         "search": "doctor_filter_id",
         "phone": "doctor_filter_id",
         "calendar": "calendar_doctor_filter_id",
+        "calendar_entry": "calendar_doctor_filter_id",
     }
 
     async def notify_appointment_changed(appointment, appointment_id: int) -> None:
@@ -810,23 +822,28 @@ def create_admin_appointment_browser_router(
             )
 
     async def maybe_prompt_doctor_filter(
-        callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, tab: str,
+        event: CallbackQuery | Message, state: FSMContext, *, mode: str, page: int, tab: str,
         back_callback_data: str = "browse_appointments", back_label: str = "⬅️ К меню поиска",
     ) -> bool:
-        doctors = await appt_mng.list_clinic_doctors_for_filter(callback_query.from_user.id)
+        doctors = await appt_mng.list_clinic_doctors_for_filter(event.from_user.id)
         if not doctors:
             return False
 
         await state.update_data(pending_render={"mode": mode, "page": page, "tab": tab})
         await state.set_state(AppointmentBrowserStates.pick_doctor_filter)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            "Выберите врача для фильтрации:",
-            reply_markup=appointment_doctor_filter_kb(
-                doctors, back_callback_data=back_callback_data, back_label=back_label,
-            ),
+
+        markup = appointment_doctor_filter_kb(
+            doctors, back_callback_data=back_callback_data, back_label=back_label,
         )
-        await remember_tracked_message(state, callback_query.message)
+
+        if isinstance(event, CallbackQuery):
+            await event.answer('')
+            await event.message.edit_text("Выберите врача для фильтрации:", reply_markup=markup)
+            await remember_tracked_message(state, event.message)
+        else:
+            sent = await event.answer("Выберите врача для фильтрации:", reply_markup=markup)
+            await remember_tracked_message(state, sent)
+
         return True
 
     async def resolve_filtered_doctor_id(telegram_id: int, state: FSMContext, mode: str) -> tuple[int, int | None]:
@@ -849,6 +866,10 @@ def create_admin_appointment_browser_router(
         mode = pending.get("mode", "list")
         state_key = DOCTOR_FILTER_STATE_KEYS.get(mode, "doctor_filter_id")
         await state.update_data(**{state_key: doctor_id})
+
+        if mode == "calendar_entry":
+            await show_calendar(callback_query, state)
+            return
 
         clinic_id, doctor_id = await resolve_filtered_doctor_id(callback_query.from_user.id, state, mode)
 

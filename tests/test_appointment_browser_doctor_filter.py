@@ -19,6 +19,8 @@ and is reached via _find_handler like the rest of this test suite.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+from aiogram.types import CallbackQuery
+
 from bot.handlers.admin.appointment_management.appointment_browser import (
     create_admin_appointment_browser_router,
 )
@@ -29,6 +31,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptPageCB,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
+    appointment_calendar_kb,
     appointment_doctor_filter_kb,
 )
 from bot.models.clinic import Clinic
@@ -233,8 +236,16 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
+def _find_message_handler(router, name):
+    for handler in router.message.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback
+    raise AssertionError(f"message handler {name} not found")
+
+
 def _callback_query(telegram_user_id):
     callback_query = MagicMock()
+    callback_query.__class__ = CallbackQuery
     callback_query.from_user.id = telegram_user_id
     callback_query.answer = AsyncMock()
     callback_query.message.edit_text = AsyncMock()
@@ -620,3 +631,196 @@ async def test_calendar_doctor_filter_never_leaks_into_list_search_phone_paginat
         _, _, doctor_id = appt_repo.client_id_calls[-1]
 
     assert doctor_id is None
+
+
+# --- open_calendar / open_calendar_message (calendar_entry doctor-filter step) ---
+#
+# The doctor picker used to appear only after a day was picked (see the
+# pick_calendar_day tests above). It now appears immediately when the
+# calendar is opened, before the month grid is shown at all -- these tests
+# cover that reordering; the pick_calendar_day picker path above becomes a
+# defensive fallback that only fires if calendar_doctor_filter_id is
+# somehow still absent by the time a day is picked.
+
+@pytest.mark.asyncio
+async def test_open_calendar_shows_picker_for_clinic_admin_with_two_or_more_doctors():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    open_calendar_callback = _find_handler(router, "open_calendar_callback")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(stale_key="stale_value")
+
+    await open_calendar_callback(callback_query, state)
+
+    assert state.cleared == 1
+    assert "stale_key" not in state.data
+    assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
+    assert state.data["pending_render"] == {"mode": "calendar_entry", "page": 1, "tab": "confirmed"}
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0] == "Выберите врача для фильтрации:"
+
+    expected_markup = appointment_doctor_filter_kb(
+        [_clinic_admin(), _doctor_colleague()],
+        back_callback_data="browse_appointments", back_label="⬅️ К меню поиска",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_open_calendar_skips_picker_for_doctor_caller():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    open_calendar_callback = _find_handler(router, "open_calendar_callback")
+
+    callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+
+    await open_calendar_callback(callback_query, state)
+
+    assert AppointmentBrowserStates.pick_doctor_filter not in state.states
+    assert "pending_render" not in state.data
+    callback_query.message.edit_text.assert_awaited_once()
+    args, _ = callback_query.message.edit_text.await_args
+    assert "Выберите врача" not in args[0]
+
+
+@pytest.mark.asyncio
+async def test_open_calendar_skips_picker_when_clinic_has_fewer_than_two_doctors():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=False)
+    open_calendar_callback = _find_handler(router, "open_calendar_callback")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+
+    await open_calendar_callback(callback_query, state)
+
+    assert AppointmentBrowserStates.pick_doctor_filter not in state.states
+    assert "pending_render" not in state.data
+    callback_query.message.edit_text.assert_awaited_once()
+    args, _ = callback_query.message.edit_text.await_args
+    assert "Выберите врача" not in args[0]
+
+
+@pytest.mark.asyncio
+async def test_open_calendar_message_shows_picker_for_clinic_admin_with_two_or_more_doctors():
+    """Same as the callback_query entry point, but through the /calendar and
+    "📆 Календарь" message-triggered entry, exercising the Message branch of
+    maybe_prompt_doctor_filter (event.answer(...) instead of edit_text)."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    open_calendar_message = _find_message_handler(router, "open_calendar_message")
+
+    message = MagicMock()
+    message.from_user.id = CLINIC_ADMIN_TELEGRAM_ID
+    message.answer = AsyncMock()
+    state = FakeState()
+
+    await open_calendar_message(message, state)
+
+    assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
+    assert state.data["pending_render"] == {"mode": "calendar_entry", "page": 1, "tab": "confirmed"}
+
+    message.answer.assert_awaited_once()
+    args, kwargs = message.answer.await_args
+    assert args[0] == "Выберите врача для фильтрации:"
+    assert kwargs["reply_markup"] == appointment_doctor_filter_kb(
+        [_clinic_admin(), _doctor_colleague()],
+        back_callback_data="browse_appointments", back_label="⬅️ К меню поиска",
+    )
+
+
+# --- apply_doctor_filter (calendar_entry mode -> renders the grid, not a list) ---
+
+@pytest.mark.asyncio
+async def test_apply_doctor_filter_calendar_entry_renders_grid_with_back_to_doctor_picker():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    apply_doctor_filter = _find_handler(router, "apply_doctor_filter")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(pending_render={"mode": "calendar_entry", "page": 1, "tab": "confirmed"})
+    callback_data = ApptDoctorFilterCB(doctor_id=DOCTOR_COLLEAGUE_ID)
+
+    await apply_doctor_filter(callback_query, callback_data, state)
+
+    assert state.data["calendar_doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert "📅" in args[0]
+
+    expected_markup = appointment_calendar_kb(
+        state.data["calendar_year"], state.data["calendar_month"],
+        back_callback_data="appt_search_calendar", back_label="⬅️ К выбору врача",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_apply_doctor_filter_calendar_entry_all_sentinel_still_renders_grid():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    apply_doctor_filter = _find_handler(router, "apply_doctor_filter")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(pending_render={"mode": "calendar_entry", "page": 1, "tab": "confirmed"})
+    callback_data = ApptDoctorFilterCB(doctor_id=0)
+
+    await apply_doctor_filter(callback_query, callback_data, state)
+
+    assert "calendar_doctor_filter_id" in state.data
+    assert state.data["calendar_doctor_filter_id"] is None
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_calendar_kb(
+        state.data["calendar_year"], state.data["calendar_month"],
+        back_callback_data="appt_search_calendar", back_label="⬅️ К выбору врача",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+# --- change_calendar_month (month nav must preserve the doctor-picker back target) ---
+
+@pytest.mark.asyncio
+async def test_change_calendar_month_targets_doctor_picker_on_back_when_filter_active():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    change_calendar_month = _find_handler(router, "change_calendar_month")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(calendar_doctor_filter_id=DOCTOR_COLLEAGUE_ID)
+    callback_data = ApptCalendarMonthCB(year=2026, month=8)
+
+    await change_calendar_month(callback_query, callback_data, state)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_calendar_kb(
+        2026, 8, back_callback_data="appt_search_calendar", back_label="⬅️ К выбору врача",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_change_calendar_month_targets_search_menu_on_back_when_no_filter_active():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=False)
+    change_calendar_month = _find_handler(router, "change_calendar_month")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptCalendarMonthCB(year=2026, month=8)
+
+    await change_calendar_month(callback_query, callback_data, state)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_calendar_kb(
+        2026, 8, back_callback_data="browse_appointments", back_label="⬅️ К меню поиска",
+    )
+    assert kwargs["reply_markup"] == expected_markup

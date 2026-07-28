@@ -102,3 +102,16 @@ def format_month_label(year: int, month: int) -> str:
 def format_calendar_date_display(date_str: str) -> str:
     """Format an ISO 'YYYY-MM-DD' date string for display, e.g. '17.07.2026'."""
     return datetime.fromisoformat(date_str).strftime("%d.%m.%Y")
+
+
+def calendar_grid_back_target(state_data: dict) -> tuple[str, str]:
+    """Back button target for the month/day grid.
+
+    A doctor filter is now picked before the grid is shown (see
+    "calendar_entry" in appointment_browser.py), so once
+    calendar_doctor_filter_id is present, "back" must return to that
+    doctor-selection screen instead of the search menu.
+    """
+    if "calendar_doctor_filter_id" in state_data:
+        return "appt_search_calendar", "⬅️ К выбору врача"
+    return "browse_appointments", "⬅️ К меню поиска"

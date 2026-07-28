@@ -288,6 +288,7 @@ async def test_open_calendar_message_opens_grid_at_clamped_current_month(trigger
 
     message = MagicMock()
     message.text = trigger_text
+    message.from_user.id = OWN_ADMIN_TELEGRAM_ID
     message.answer = AsyncMock(return_value=sent_message)
     state = FakeState(stale_key="stale_value")
 

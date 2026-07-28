@@ -178,7 +178,9 @@ def appointment_list_kb(
     return builder.as_markup()
 
 
-def appointment_calendar_kb(year: int, month: int) -> InlineKeyboardMarkup:
+def appointment_calendar_kb(
+    year: int, month: int, *, back_callback_data: str = "browse_appointments", back_label: str = "⬅️ К меню поиска",
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     rows = []
 
@@ -206,7 +208,7 @@ def appointment_calendar_kb(year: int, month: int) -> InlineKeyboardMarkup:
     builder.button(text="➡️", callback_data=ApptCalendarMonthCB(year=next_year, month=next_month).pack())
     rows.append(2)
 
-    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    builder.button(text=back_label, callback_data=back_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)
