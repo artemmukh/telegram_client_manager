@@ -2,11 +2,15 @@ from datetime import datetime
 
 import pytz
 
+import bot.services.utils.date_parser as date_parser_module
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
+    MAX_YEARS_AHEAD,
     RESCHEDULE_NEGOTIATION_NOTE,
     build_reschedule_proposal_line,
     format_appointment_card_datetime,
+    format_datetime_for_confirmation,
+    format_datetime_for_display,
     get_current_tashkent_datetime,
     is_appointment_upcoming,
     parse_ru_datetime,
@@ -61,6 +65,110 @@ def test_parse_ru_datetime_rejects_text_over_fifty_chars_without_calling_datepar
 
     assert parse_ru_datetime(text) is None
     assert called is False
+
+
+def test_parse_ru_datetime_rejects_ambiguous_two_digit_year_misread():
+    """Regression test: dateparser used to misread the trailing '16' in
+    '30.07 16' as a 2-digit year (defaulting the time to 00:00), producing
+    2116-07-30 00:00:00 instead of failing. The MAX_YEARS_AHEAD guard now
+    rejects any parse result that lands too far in the future."""
+    assert parse_ru_datetime("30.07 16") is None
+
+
+def test_parse_ru_datetime_still_parses_explicit_time_with_colon():
+    now = get_current_tashkent_datetime()
+    expected_year = now.year if (now.month, now.day) <= (7, 30) else now.year + 1
+
+    result = parse_ru_datetime("30.07 16:00")
+
+    assert result is not None
+    assert (result.year, result.month, result.day, result.hour, result.minute) == (
+        expected_year, 7, 30, 16, 0,
+    )
+
+
+def test_parse_ru_datetime_still_parses_explicit_time_with_dot_separator():
+    now = get_current_tashkent_datetime()
+    expected_year = now.year if (now.month, now.day) <= (7, 30) else now.year + 1
+
+    result = parse_ru_datetime("30.07 16.00")
+
+    assert result is not None
+    assert (result.year, result.month, result.day, result.hour, result.minute) == (
+        expected_year, 7, 30, 16, 0,
+    )
+
+
+def test_parse_ru_datetime_uses_relative_base_deterministically(monkeypatch):
+    fixed_now = datetime(2026, 7, 29, 9, 0)
+    monkeypatch.setattr(date_parser_module, "get_current_tashkent_datetime", lambda: fixed_now)
+
+    result = parse_ru_datetime("завтра в 3 часа")
+
+    assert result is not None
+    assert (result.year, result.month, result.day, result.hour, result.minute) == (
+        2026, 7, 30, 15, 0,
+    )
+
+
+def test_parse_ru_datetime_relative_base_passed_to_dateparser(monkeypatch):
+    fixed_now = datetime(2026, 7, 29, 9, 0)
+    monkeypatch.setattr(date_parser_module, "get_current_tashkent_datetime", lambda: fixed_now)
+
+    captured_settings = {}
+
+    def _fake_parse(text, languages=None, date_formats=None, settings=None):
+        captured_settings.update(settings or {})
+        return None
+
+    monkeypatch.setattr(date_parser_module.dateparser, "parse", _fake_parse)
+
+    parse_ru_datetime("завтра в 3 часа")
+
+    assert captured_settings["RELATIVE_BASE"] == fixed_now
+
+
+def test_parse_ru_datetime_accepts_year_exactly_at_max_years_ahead_boundary(monkeypatch):
+    fixed_now = datetime(2026, 7, 29, 9, 0)
+    monkeypatch.setattr(date_parser_module, "get_current_tashkent_datetime", lambda: fixed_now)
+
+    boundary_dt = datetime(fixed_now.year + MAX_YEARS_AHEAD, 7, 30, 16, 0)
+    monkeypatch.setattr(date_parser_module.dateparser, "parse", lambda *a, **k: boundary_dt)
+
+    result = parse_ru_datetime("30.07 16:00")
+
+    assert result == boundary_dt
+
+
+def test_parse_ru_datetime_rejects_year_past_max_years_ahead_boundary(monkeypatch):
+    fixed_now = datetime(2026, 7, 29, 9, 0)
+    monkeypatch.setattr(date_parser_module, "get_current_tashkent_datetime", lambda: fixed_now)
+
+    over_boundary_dt = datetime(fixed_now.year + MAX_YEARS_AHEAD + 1, 7, 30, 16, 0)
+    monkeypatch.setattr(date_parser_module.dateparser, "parse", lambda *a, **k: over_boundary_dt)
+
+    result = parse_ru_datetime("30.07 16:00")
+
+    assert result is None
+
+
+def test_format_datetime_for_confirmation_prefixes_weekday_name():
+    dt = datetime(2026, 7, 30, 16, 0)
+    assert dt.weekday() == 3  # Thursday, verified independently via datetime.weekday()
+
+    result = format_datetime_for_confirmation(dt)
+
+    assert result == "четверг, " + format_datetime_for_display(dt)
+    assert result == "четверг, 30 июля 2026, 16:00"
+
+
+def test_format_datetime_for_confirmation_matches_display_for_another_weekday():
+    dt = datetime(2026, 8, 15, 15, 0)
+    assert dt.weekday() == 5  # Saturday
+
+    result = format_datetime_for_confirmation(dt)
+
+    assert result == "суббота, " + format_datetime_for_display(dt)
 
 
 def _appointment(**overrides):

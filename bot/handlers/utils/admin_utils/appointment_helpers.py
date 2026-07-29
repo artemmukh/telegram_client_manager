@@ -15,7 +15,7 @@ from bot.services.utils.date_parser import (
     RESCHEDULE_NEGOTIATION_NOTE,
     build_reschedule_proposal_line,
     format_appointment_card_datetime,
-    format_datetime_for_display,
+    format_datetime_for_confirmation,
     get_current_tashkent_datetime,
     parse_ru_datetime,
 )
@@ -127,9 +127,11 @@ async def show_appointments_with_actions(
 
 async def datetime_processing(message: Message, state: FSMContext, next_state: State) -> bool:
 
-    parsed_dt = parse_ru_datetime(message.text.strip())
+    raw_text = message.text.strip()
+    parsed_dt = parse_ru_datetime(raw_text)
 
     if parsed_dt is None:
+        logger.info("Failed to parse admin-typed datetime input: %r", raw_text)
         await message.answer(
             "Не смог распознать дату и время.\n"
             "Попробуйте снова:\n"
@@ -139,9 +141,11 @@ async def datetime_processing(message: Message, state: FSMContext, next_state: S
         )
         return False
 
+    logger.info("Parsed admin-typed datetime input %r as %s", raw_text, parsed_dt)
+
     await state.update_data(
         appointment_datetime_parsed=parsed_dt,
-        appointment_datetime_display=format_datetime_for_display(parsed_dt)
+        appointment_datetime_display=format_datetime_for_confirmation(parsed_dt)
     )
     await state.set_state(next_state)
     return True

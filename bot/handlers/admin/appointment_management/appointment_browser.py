@@ -63,8 +63,8 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
 from bot.services.utils.date_parser import (
+    format_datetime_for_confirmation,
     format_datetime_for_db,
-    format_datetime_for_display,
 )
 from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
 from bot.utils.appointment_enums import AppointmentStatus
@@ -572,7 +572,7 @@ def create_admin_appointment_browser_router(
                     f"Failed to notify client about proposed time for appointment {callback_data.appointment_id}: {e}"
                 )
 
-        old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime))
+        old_display = format_datetime_for_confirmation(datetime.fromisoformat(appointment.datetime))
 
         await callback_query.answer("Предложение отправлено клиенту")
         await callback_query.message.edit_text(

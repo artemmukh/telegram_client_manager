@@ -10,6 +10,8 @@ from bot.utils.appointment_enums import CreatedBy
 
 RESCHEDULE_NEGOTIATION_NOTE = "ℹ️ Ответить на предложение можно в уведомлении о переносе."
 
+MAX_YEARS_AHEAD = 1
+
 # 'в 4 часов' по умолчанию трактуется dateparser'ом либо как 4 утра,
 # либо вообще как "4-е число месяца". Нормализуем вручную под контекст
 # клиники: рабочий день днём/вечером, поэтому маленькие часы без
@@ -55,8 +57,9 @@ def parse_ru_datetime(text: str) -> Optional[datetime]:
         return None
 
     normalized = _normalize_colloquial_time(text)
+    now = get_current_tashkent_datetime()
 
-    return dateparser.parse(
+    parsed = dateparser.parse(
         normalized,
         languages=['ru'],
         date_formats=['%d.%m.%y %H:%M', '%d.%m.%y %H.%M', '%d.%m.%Y %H:%M', '%d.%m.%Y %H.%M'],
@@ -65,8 +68,14 @@ def parse_ru_datetime(text: str) -> Optional[datetime]:
             'TIMEZONE': 'Asia/Tashkent',
             'RETURN_AS_TIMEZONE_AWARE': True,
             'STRICT_PARSING': False,
+            'RELATIVE_BASE': now,
         }
     )
+
+    if parsed is not None and parsed.year > now.year + MAX_YEARS_AHEAD:
+        return None
+
+    return parsed
 
 
 def format_datetime_for_display(dt: datetime) -> str:
@@ -82,6 +91,21 @@ def format_datetime_for_display(dt: datetime) -> str:
     }
     month_name = months.get(dt.month, '')
     return f"{dt.day} {month_name} {dt.year}, {dt.hour:02d}:{dt.minute:02d}"
+
+
+def format_datetime_for_confirmation(dt: datetime) -> str:
+    """
+    Format datetime for the "did you mean" confirmation screen, with the
+    weekday name prefixed.
+
+    Example: "четверг, 30 июля 2026, 16:00"
+    """
+    weekdays = {
+        0: 'понедельник', 1: 'вторник', 2: 'среда', 3: 'четверг',
+        4: 'пятница', 5: 'суббота', 6: 'воскресенье'
+    }
+    weekday_name = weekdays[dt.weekday()]
+    return f"{weekday_name}, {format_datetime_for_display(dt)}"
 
 
 def format_appointment_card_datetime(appointment_time: str) -> str:
