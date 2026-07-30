@@ -58,3 +58,8 @@ class ApptCalendarDayCB(CallbackData, prefix="appt_cal_day"):
 class ApptDoctorFilterCB(CallbackData, prefix="appt_doc_filter"):
     """Выбор врача для фильтрации списка записей (0 = все врачи)."""
     doctor_id: int = 0
+
+
+class ApptDoctorFilterEntryCB(CallbackData, prefix="appt_doc_reentry"):
+    """Повторный вход в экран выбора врача из списка записей (mode="list"/"search"/"phone")."""
+    mode: str

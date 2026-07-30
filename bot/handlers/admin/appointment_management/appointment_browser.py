@@ -41,6 +41,7 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptCalendarMonthCB,
     ApptCardCB,
     ApptDoctorFilterCB,
+    ApptDoctorFilterEntryCB,
     ApptPageCB,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
@@ -810,6 +811,11 @@ def create_admin_appointment_browser_router(
         "calendar_entry": "calendar_doctor_filter_id",
     }
 
+    def list_doctor_filter_back_target(state_data: dict, mode: str) -> tuple[str, str]:
+        if DOCTOR_FILTER_STATE_KEYS.get(mode, "doctor_filter_id") in state_data:
+            return ApptDoctorFilterEntryCB(mode=mode).pack(), "⬅️ К выбору врача"
+        return "browse_appointments", "⬅️ К меню поиска"
+
     async def notify_appointment_changed(appointment, appointment_id: int) -> None:
         if not notification_service:
             return
@@ -855,6 +861,12 @@ def create_admin_appointment_browser_router(
                 doctor_id = data[state_key]
         return clinic_id, doctor_id
 
+    @router.callback_query(ApptDoctorFilterEntryCB.filter())
+    async def reenter_doctor_filter(
+        callback_query: CallbackQuery, callback_data: ApptDoctorFilterEntryCB, state: FSMContext,
+    ):
+        await maybe_prompt_doctor_filter(callback_query, state, mode=callback_data.mode, page=1, tab="confirmed")
+
     @router.callback_query(AppointmentBrowserStates.pick_doctor_filter, ApptDoctorFilterCB.filter())
     async def apply_doctor_filter(
         callback_query: CallbackQuery, callback_data: ApptDoctorFilterCB, state: FSMContext,
@@ -896,10 +908,12 @@ def create_admin_appointment_browser_router(
             back_label = "⬅️ К меню поиска"
 
             if mode == "list":
+                data = await state.get_data()
                 result = await pagination_service.paginate_all_appointments_by_tab(
                     tab, page, clinic_id, doctor_id
                 )
                 title = "📒 Все записи"
+                back_callback_data, back_label = list_doctor_filter_back_target(data, mode)
             elif mode == "calendar":
                 data = await state.get_data()
                 calendar_date = data.get("calendar_date")
@@ -913,9 +927,9 @@ def create_admin_appointment_browser_router(
                 back_callback_data = ApptCalendarMonthCB(year=calendar_year, month=calendar_month).pack()
                 back_label = "⬅️ К календарю"
             else:
+                data = await state.get_data()
                 search_data = None
                 if mode in ("search", "phone"):
-                    data = await state.get_data()
                     search_data = data.get("search_data") or {}
 
                 result = await pagination_service.paginate_appointments(
@@ -926,6 +940,7 @@ def create_admin_appointment_browser_router(
                     "phone": "📞 Записи клиента",
                 }
                 title = titles.get(mode, "📒 Записи")
+                back_callback_data, back_label = list_doctor_filter_back_target(data, mode)
 
             text = f"{prefix}{title} ({result.current_page} из {result.total_pages}) | Всего: {result.total_count}"
 

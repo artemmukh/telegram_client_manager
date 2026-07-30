@@ -28,11 +28,13 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptCalendarDayCB,
     ApptCalendarMonthCB,
     ApptDoctorFilterCB,
+    ApptDoctorFilterEntryCB,
     ApptPageCB,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_calendar_kb,
     appointment_doctor_filter_kb,
+    appointment_list_kb,
 )
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
@@ -824,3 +826,143 @@ async def test_change_calendar_month_targets_search_menu_on_back_when_no_filter_
         2026, 8, back_callback_data="browse_appointments", back_label="⬅️ К меню поиска",
     )
     assert kwargs["reply_markup"] == expected_markup
+
+
+# --- list_doctor_filter_back_target / render_list back-button target (list/search/phone) ---
+#
+# ApptDoctorFilterEntryCB(mode=...) lets the admin jump straight back to the
+# doctor picker from a filtered list, instead of "browse_appointments"
+# discarding the filter and dumping them at the top-level search menu. These
+# tests exercise render_list's list/search/phone branches (via the paginate
+# handler, ApptPageCB.filter()) rather than calling render_list directly,
+# consistent with the rest of this file treating the closures as private.
+
+@pytest.mark.asyncio
+async def test_paginate_list_mode_back_target_points_to_doctor_reentry_when_filter_active():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    paginate = _find_handler(router, "paginate")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(doctor_filter_id=DOCTOR_COLLEAGUE_ID)
+    callback_data = ApptPageCB(mode="list", page=1, tab="confirmed")
+
+    await paginate(callback_query, callback_data, state)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_list_kb(
+        [], "list", 1, 1, "confirmed",
+        back_callback_data=ApptDoctorFilterEntryCB(mode="list").pack(),
+        back_label="⬅️ К выбору врача",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_paginate_search_mode_back_target_points_to_doctor_reentry_when_filter_active():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    paginate = _find_handler(router, "paginate")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(
+        doctor_filter_id=DOCTOR_COLLEAGUE_ID, search_data={"full_name": "Ivanov Ivan"},
+    )
+    callback_data = ApptPageCB(mode="search", page=1, tab="confirmed")
+
+    await paginate(callback_query, callback_data, state)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_list_kb(
+        [], "search", 1, 1, "confirmed",
+        back_callback_data=ApptDoctorFilterEntryCB(mode="search").pack(),
+        back_label="⬅️ К выбору врача",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_paginate_phone_mode_back_target_points_to_doctor_reentry_when_filter_active():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    paginate = _find_handler(router, "paginate")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(
+        doctor_filter_id=DOCTOR_COLLEAGUE_ID, search_data={"client_id": 42},
+    )
+    callback_data = ApptPageCB(mode="phone", page=1, tab="confirmed")
+
+    await paginate(callback_query, callback_data, state)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_list_kb(
+        [], "phone", 1, 1, "confirmed",
+        back_callback_data=ApptDoctorFilterEntryCB(mode="phone").pack(),
+        back_label="⬅️ К выбору врача",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_paginate_list_mode_back_target_stays_default_when_no_filter_in_state():
+    """Single-doctor clinics (or a doctor caller) never populate
+    doctor_filter_id, so the list's back button must keep going to
+    browse_appointments -- this is the no-regression case."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=False)
+    paginate = _find_handler(router, "paginate")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptPageCB(mode="list", page=1, tab="confirmed")
+
+    await paginate(callback_query, callback_data, state)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_list_kb(
+        [], "list", 1, 1, "confirmed",
+        back_callback_data="browse_appointments", back_label="⬅️ К меню поиска",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+# --- reenter_doctor_filter (ApptDoctorFilterEntryCB handler) ---
+
+@pytest.mark.asyncio
+async def test_reenter_doctor_filter_reprompts_picker_for_requested_mode():
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    reenter_doctor_filter = _find_handler(router, "reenter_doctor_filter")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState()
+    callback_data = ApptDoctorFilterEntryCB(mode="search")
+
+    await reenter_doctor_filter(callback_query, callback_data, state)
+
+    assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
+    assert state.data["pending_render"] == {"mode": "search", "page": 1, "tab": "confirmed"}
+    callback_query.message.edit_text.assert_awaited_once()
+    args, _ = callback_query.message.edit_text.await_args
+    assert args[0] == "Выберите врача для фильтрации:"
+
+
+@pytest.mark.asyncio
+async def test_reenter_doctor_filter_does_not_clear_state():
+    """The whole point of this handler over browse_appointments is that it
+    must preserve search_data (name/phone the admin already entered) --
+    unlike browse_appointments, which calls state.clear()."""
+    appt_repo = FakeAppointmentRepository()
+    router = _build_router(appt_repo, clinic_has_two_doctors=True)
+    reenter_doctor_filter = _find_handler(router, "reenter_doctor_filter")
+
+    callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
+    state = FakeState(search_data={"full_name": "Ivanov Ivan"}, doctor_filter_id=DOCTOR_COLLEAGUE_ID)
+    callback_data = ApptDoctorFilterEntryCB(mode="search")
+
+    await reenter_doctor_filter(callback_query, callback_data, state)
+
+    assert state.cleared == 0
+    assert state.data["search_data"] == {"full_name": "Ivanov Ivan"}
+    assert state.data["doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
