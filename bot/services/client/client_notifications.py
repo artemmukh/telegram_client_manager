@@ -1,18 +1,18 @@
 ﻿import asyncio
 import logging
 
-from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
 
 class ClientNotificationService:
-    def __init__(self, bot: Bot, user_repository: UserRepository) -> None:
-        self.bot = bot
+    def __init__(self, notifier: TelegramNotifier, user_repository: UserRepository) -> None:
+        self.notifier = notifier
         self.user_repository = user_repository
 
     async def notify_admins_name_changed_on_registration(
@@ -35,7 +35,7 @@ class ClientNotificationService:
                 continue
 
             try:
-                await self.bot.send_message(
+                await self.notifier.send_message(
                     chat_id=admin.telegram_user_id,
                     text=message_text,
                 )
@@ -64,7 +64,7 @@ class ClientNotificationService:
                 continue
 
             try:
-                await self.bot.send_message(
+                await self.notifier.send_message(
                     chat_id=admin.telegram_user_id,
                     text=message_text,
                     reply_markup=reply_markup,
@@ -98,8 +98,8 @@ class ClientNotificationService:
                 continue
 
             try:
-                # await self.bot.send_message(chat_id=client.telegram_user_id, text=text)
-                await self.bot.send_message(
+                # await self.notifier.send_message(chat_id=client.telegram_user_id, text=text)
+                await self.notifier.send_message(
                     chat_id=client.telegram_user_id,
                     text=message_text,
                     reply_markup=reply_markup,

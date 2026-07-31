@@ -11,23 +11,18 @@ from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
 
-class FakeBotMessage:
-    def __init__(self, message_id=777):
-        self.message_id = message_id
-
-
-class FakeBotForIntegration:
+class FakeTelegramNotifierForIntegration:
     def __init__(self):
         self.sent_messages = []
 
-    async def send_message(self, chat_id, text, reply_markup=None, reply_parameters=None):
+    async def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None):
         self.sent_messages.append({
             'chat_id': chat_id,
             'text': text,
             'reply_markup': reply_markup,
-            'reply_parameters': reply_parameters,
+            'reply_to_message_id': reply_to_message_id,
         })
-        return FakeBotMessage()
+        return 777
 
 
 class FakeAppointmentRepoForIntegration:
@@ -85,7 +80,7 @@ async def test_phase2_complete_workflow():
     """Test complete Phase 2 workflow: create appointment, client responds, status updates."""
 
     # Setup
-    bot = FakeBotForIntegration()
+    notifier = FakeTelegramNotifierForIntegration()
     appt_repo = FakeAppointmentRepoForIntegration()
     user_repo = FakeUserRepoForIntegration()
     staff_repo = FakeStaffRepoForIntegration()
@@ -114,7 +109,7 @@ async def test_phase2_complete_workflow():
     appointment_mgmt = AppointmentManagement(
         appt_repo, user_repo, staff_repo, clinic_repo
     )
-    notification_svc = AppointmentNotificationService(bot, user_repo, appt_repo)
+    notification_svc = AppointmentNotificationService(notifier, user_repo, appt_repo)
 
     # Step 1: Create appointment
     appointment = Appointment(
@@ -131,13 +126,13 @@ async def test_phase2_complete_workflow():
     # Step 2: Notify client
     notification_sent = await notification_svc.notify_client_appointment_with_buttons(appointment)
     assert notification_sent == 777
-    assert len(bot.sent_messages) == 1
-    assert bot.sent_messages[0]['chat_id'] == 12345
-    assert "Вам назначена запись на прием" in bot.sent_messages[0]['text']
+    assert len(notifier.sent_messages) == 1
+    assert notifier.sent_messages[0]['chat_id'] == 12345
+    assert "Вам назначена запись на прием" in notifier.sent_messages[0]['text']
     # PR3: the initial invite now uses the 3-button appointment_invite_kb
     # (Confirm / Propose different time / Cancel), not the old 2-button
     # appointment_response_kb ("✅ Приду").
-    assert "✅ Подтвердить" in str(bot.sent_messages[0]['reply_markup'])
+    assert "✅ Подтвердить" in str(notifier.sent_messages[0]['reply_markup'])
 
     # Step 3: Client confirms appointment
     appointment = await appointment_mgmt.update_status(
@@ -156,9 +151,9 @@ async def test_phase2_complete_workflow():
     await notification_svc.notify_admin_confirmation(
         54321, appt_with_client, retrieved_client.full_name
     )
-    assert len(bot.sent_messages) == 2
-    assert bot.sent_messages[1]['chat_id'] == 54321
-    assert "подтвердил запись" in bot.sent_messages[1]['text']
+    assert len(notifier.sent_messages) == 2
+    assert notifier.sent_messages[1]['chat_id'] == 54321
+    assert "подтвердил запись" in notifier.sent_messages[1]['text']
 
 
 @pytest.mark.asyncio
@@ -166,7 +161,7 @@ async def test_phase2_cancellation_workflow():
     """Test Phase 2 cancellation workflow."""
 
     # Setup
-    bot = FakeBotForIntegration()
+    notifier = FakeTelegramNotifierForIntegration()
     appt_repo = FakeAppointmentRepoForIntegration()
     user_repo = FakeUserRepoForIntegration()
     staff_repo = FakeStaffRepoForIntegration()
@@ -186,7 +181,7 @@ async def test_phase2_cancellation_workflow():
     appointment_mgmt = AppointmentManagement(
         appt_repo, user_repo, staff_repo, clinic_repo
     )
-    notification_svc = AppointmentNotificationService(bot, user_repo, appt_repo)
+    notification_svc = AppointmentNotificationService(notifier, user_repo, appt_repo)
 
     # Step 1: Create appointment
     appointment = Appointment(
@@ -216,7 +211,7 @@ async def test_phase2_cancellation_workflow():
     await notification_svc.notify_admin_cancellation(
         54321, appt_with_client, retrieved_client.full_name
     )
-    assert len(bot.sent_messages) == 1
-    assert bot.sent_messages[0]['chat_id'] == 54321
-    assert "отменил запись" in bot.sent_messages[0]['text']
-    assert "Иванов Иван" in bot.sent_messages[0]['text']
+    assert len(notifier.sent_messages) == 1
+    assert notifier.sent_messages[0]['chat_id'] == 54321
+    assert "отменил запись" in notifier.sent_messages[0]['text']
+    assert "Иванов Иван" in notifier.sent_messages[0]['text']

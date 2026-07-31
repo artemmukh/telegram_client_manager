@@ -2,8 +2,10 @@ from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 
 from bot.config.config import load_config
+from bot.services.utils.telegram_notifier import TelegramNotifier
 
 _bot: Bot | None = None
+_notifier: TelegramNotifier | None = None
 
 
 def get_bot() -> Bot:
@@ -17,3 +19,15 @@ def get_bot() -> Bot:
         config = load_config()
         _bot = Bot(token=config.bot_token, default=DefaultBotProperties( parse_mode="HTML"))
     return _bot
+
+
+def get_notifier() -> TelegramNotifier:
+    """Get or create the TelegramNotifier singleton instance.
+
+    Wraps get_bot()'s Bot instance so services depend on the notifier
+    adapter instead of the raw aiogram Bot.
+    """
+    global _notifier
+    if _notifier is None:
+        _notifier = TelegramNotifier(get_bot())
+    return _notifier

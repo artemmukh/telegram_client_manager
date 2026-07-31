@@ -20,6 +20,7 @@ from bot.services.appointment.appointment_management import AppointmentManagemen
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
+from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
@@ -54,6 +55,7 @@ async def send_reminder_job(
     connection = None
     try:
         bot = get_bot()
+        notifier = TelegramNotifier(bot)
         config = load_config()
 
         db = Database(config.database_path)
@@ -64,7 +66,7 @@ async def send_reminder_job(
         staff_repo = StaffRepository(connection)
         clinic_repo = ClinicRepository(connection)
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+        notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
         appointment = await appointment_management.get_appointment_by_id(appointment_id)
 
@@ -262,6 +264,7 @@ async def expire_pending_request_job(appointment_id: int) -> None:
     connection = None
     try:
         bot = get_bot()
+        notifier = TelegramNotifier(bot)
         config = load_config()
 
         db = Database(config.database_path)
@@ -272,7 +275,7 @@ async def expire_pending_request_job(appointment_id: int) -> None:
         staff_repo = StaffRepository(connection)
         clinic_repo = ClinicRepository(connection)
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+        notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
         appointment = await appointment_management.expire_pending_request(appointment_id)
 
@@ -332,6 +335,7 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
     connection = None
     try:
         bot = get_bot()
+        notifier = TelegramNotifier(bot)
         config = load_config()
 
         db = Database(config.database_path)
@@ -342,7 +346,7 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
         staff_repo = StaffRepository(connection)
         clinic_repo = ClinicRepository(connection)
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+        notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
         appointment = await appointment_management.expire_reschedule_request(appointment_id)
 
@@ -385,6 +389,7 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
     connection = None
     try:
         bot = get_bot()
+        notifier = TelegramNotifier(bot)
         config = load_config()
 
         db = Database(config.database_path)
@@ -395,7 +400,7 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
         staff_repo = StaffRepository(connection)
         clinic_repo = ClinicRepository(connection)
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+        notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
         appointment = await appointment_management.get_appointment_by_id(appointment_id)
 
@@ -472,6 +477,7 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
     connection = None
     try:
         bot = get_bot()
+        notifier = TelegramNotifier(bot)
         config = load_config()
 
         db = Database(config.database_path)
@@ -482,7 +488,7 @@ async def mark_appointment_completed_job(appointment_id: int) -> None:
         staff_repo = StaffRepository(connection)
         clinic_repo = ClinicRepository(connection)
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+        notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
         await complete_appointment(appointment_management, notification_service, appointment_id)
 
@@ -582,6 +588,7 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
     connection = None
     try:
         bot = get_bot()
+        notifier = TelegramNotifier(bot)
         config = load_config()
 
         db = Database(config.database_path)
@@ -602,7 +609,7 @@ async def auto_confirm_pending_job(appointment_id: int) -> None:
         logger.info(f"Appointment {appointment_id} auto-confirmed (2h before)")
 
         # Notify client about auto-confirmation
-        notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
+        notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
         try:
             notification_sent = await notification_service.notify_client_auto_confirmed(appointment)

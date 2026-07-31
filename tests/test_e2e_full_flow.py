@@ -53,7 +53,7 @@ CLINIC_TOKEN = "x7A92JdPkLmQe81"
 ADMIN_TELEGRAM_ID = 685889801  # one of the 3 fixed staff rows seeded by StaffRepository.init()
 
 
-class FakeBot:
+class FakeTelegramNotifier:
     """Captures outbound Telegram calls instead of hitting the real Bot API."""
 
     def __init__(self):
@@ -61,13 +61,17 @@ class FakeBot:
         self.edited_messages: list[SimpleNamespace] = []
         self._next_message_id = 1
 
-    async def send_message(self, chat_id, text, **kwargs):
-        message = SimpleNamespace(message_id=self._next_message_id, chat_id=chat_id, text=text)
+    async def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None):
+        message_id = self._next_message_id
         self._next_message_id += 1
-        self.sent_messages.append(message)
-        return message
+        self.sent_messages.append(SimpleNamespace(message_id=message_id, chat_id=chat_id, text=text))
+        return message_id
 
-    async def edit_message_text(self, chat_id, message_id, text, **kwargs):
+    async def try_edit_message_text(self, chat_id, message_id, text, reply_markup=None):
+        self.edited_messages.append(SimpleNamespace(chat_id=chat_id, message_id=message_id, text=text))
+        return True
+
+    async def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
         self.edited_messages.append(SimpleNamespace(chat_id=chat_id, message_id=message_id, text=text))
 
 
@@ -106,14 +110,14 @@ async def e2e(tmp_path):
     )
     admin = await user_repo.get_user_by_telegram_id(ADMIN_TELEGRAM_ID)
 
-    fake_bot = FakeBot()
+    fake_notifier = FakeTelegramNotifier()
     scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
 
     client_management = ClientManagement(
         user_repo, staff_repo, clinic_repo, client_clinic_repository=client_clinic_repo,
         user_settings_repository=user_settings_repo,
     )
-    notification_service = AppointmentNotificationService(fake_bot, user_repo, appointment_repo)
+    notification_service = AppointmentNotificationService(fake_notifier, user_repo, appointment_repo)
     appointment_management = AppointmentManagement(
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management=client_management,
     )
@@ -126,7 +130,7 @@ async def e2e(tmp_path):
         staff_repo=staff_repo,
         appointment_repo=appointment_repo,
         admin=admin,
-        fake_bot=fake_bot,
+        fake_notifier=fake_notifier,
         scheduler=scheduler,
         registration_service=RegistrationService(user_repo, clinic_repo),
         client_management=client_management,
@@ -484,7 +488,7 @@ async def test_appointment_completion_follow_up_and_pagination_by_tab(e2e):
 
     untouched = await e2e.appointment_repo.get_appointment_by_id(confirmed_appt.id)
     assert untouched.status is AppointmentStatus.CONFIRMED
-    assert any(m.chat_id == ADMIN_TELEGRAM_ID for m in e2e.fake_bot.sent_messages)
+    assert any(m.chat_id == ADMIN_TELEGRAM_ID for m in e2e.fake_notifier.sent_messages)
 
     # The admin answers "Нет" (skip corrections): only this finalizes COMPLETED.
     finalized = await e2e.appointment_management.update_status(untouched, AppointmentStatus.COMPLETED)
@@ -532,12 +536,12 @@ async def test_reminder_and_completion_jobs_scheduled_delivered_and_cancelled(e2
         ADMIN_TELEGRAM_ID, booking, client.full_name
     )
 
-    assert any(m.chat_id == client.telegram_user_id for m in e2e.fake_bot.sent_messages)
-    assert any(m.chat_id == ADMIN_TELEGRAM_ID for m in e2e.fake_bot.sent_messages)
+    assert any(m.chat_id == client.telegram_user_id for m in e2e.fake_notifier.sent_messages)
+    assert any(m.chat_id == ADMIN_TELEGRAM_ID for m in e2e.fake_notifier.sent_messages)
 
     # Trigger the 1h completion follow-up delivery effect as well.
     await complete_appointment(e2e.appointment_management, e2e.notification_service, booking.id)
-    completion_messages = [m for m in e2e.fake_bot.sent_messages if m.chat_id == ADMIN_TELEGRAM_ID]
+    completion_messages = [m for m in e2e.fake_notifier.sent_messages if m.chat_id == ADMIN_TELEGRAM_ID]
     assert len(completion_messages) == 2  # upcoming-appointment reminder + completion follow-up
 
     # Clinic rejects the request: cancelling it must cancel every scheduled job.

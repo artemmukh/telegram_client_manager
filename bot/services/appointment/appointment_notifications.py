@@ -1,10 +1,6 @@
 import logging
 from datetime import datetime
 
-from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import ReplyParameters
-
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_request_kb
 from bot.keyboards.admin.record_management_kb.completion_followup_kb import completion_followup_kb
@@ -24,6 +20,7 @@ from bot.services.utils.date_parser import (
     build_reschedule_proposal_line,
     format_datetime_for_display,
 )
+from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 
 logger = logging.getLogger(__name__)
@@ -41,11 +38,11 @@ def _format_datetime_value(value: str) -> str:
 class AppointmentNotificationService:
     def __init__(
         self,
-        bot: Bot,
+        notifier: TelegramNotifier,
         user_repo: UserRepository,
         appointment_repo: AppointmentRepository
     ):
-        self.bot = bot
+        self.notifier = notifier
         self.user_repo = user_repo
         self.appointment_repo = appointment_repo
 
@@ -77,13 +74,11 @@ class AppointmentNotificationService:
             else appointment_reminder_details_kb(appointment.id)
         )
 
-        sent_message = await self.bot.send_message(
+        return await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
             reply_markup=reply_markup,
         )
-
-        return sent_message.message_id
 
     async def notify_client_reminder_without_buttons(self, appointment: Appointment) -> bool:
         """Send short appointment reminder to client as a reply, WITHOUT buttons (24h reminder).
@@ -95,11 +90,11 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=REMINDER_TEXT,
             reply_markup=appointment_reminder_details_kb(appointment.id),
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True
@@ -114,11 +109,11 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=REMINDER_TEXT,
             reply_markup=appointment_reminder_with_buttons_kb(appointment.id),
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True
@@ -145,20 +140,15 @@ class AppointmentNotificationService:
         else:
             reply_markup = appointment_reminder_details_kb(appointment.id)
 
-        if appointment.notification_message_id is not None:
-            try:
-                await self.bot.edit_message_text(
-                    chat_id=client.telegram_user_id,
-                    message_id=appointment.notification_message_id,
-                    text=message_text,
-                    reply_markup=reply_markup,
-                )
-                return True
-            except TelegramBadRequest as e:
-                if "message is not modified" in str(e):
-                    return True
+        if appointment.notification_message_id is not None and await self.notifier.try_edit_message_text(
+            chat_id=client.telegram_user_id,
+            message_id=appointment.notification_message_id,
+            text=message_text,
+            reply_markup=reply_markup,
+        ):
+            return True
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
             reply_markup=reply_markup,
@@ -175,10 +165,10 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text="❌ Ваша запись отменена администратором.",
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True
@@ -193,7 +183,7 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text="❌ Клиника отклонила вашу заявку на запись.",
         )
@@ -224,23 +214,11 @@ class AppointmentNotificationService:
     #
     #     return True
 
-    def _reply_parameters(self, appointment: Appointment) -> ReplyParameters | None:
-        if appointment.notification_message_id is None:
-            return None
+    def _reply_to_message_id(self, appointment: Appointment) -> int | None:
+        return appointment.notification_message_id
 
-        return ReplyParameters(
-            message_id=appointment.notification_message_id,
-            allow_sending_without_reply=True,
-        )
-
-    def _admin_reply_parameters(self, appointment: Appointment) -> ReplyParameters | None:
-        if appointment.admin_notification_message_id is None:
-            return None
-
-        return ReplyParameters(
-            message_id=appointment.admin_notification_message_id,
-            allow_sending_without_reply=True,
-        )
+    def _admin_reply_to_message_id(self, appointment: Appointment) -> int | None:
+        return appointment.admin_notification_message_id
 
     async def notify_admin_upcoming_appointment(
         self,
@@ -264,7 +242,7 @@ class AppointmentNotificationService:
         )
 
         try:
-            await self.bot.send_message(
+            await self.notifier.send_message(
                 chat_id=admin_telegram_id,
                 text=message_text,
             )
@@ -280,10 +258,10 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send cancellation notification to admin."""
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=f"Клиент {client_name} отменил запись.",
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
     async def notify_admin_client_changed_time(
@@ -293,13 +271,13 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify admin that the client changed the time of their own pending self-booking request."""
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=(
                 f"🕐 Клиент {client_name} изменил время заявки.\n"
                 f"📅 Новое время: {_format_datetime_value(appointment.datetime)}"
             ),
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
     async def notify_admin_confirmation(
@@ -309,10 +287,10 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send confirmation notification to admin."""
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=f"Клиент {client_name} подтвердил запись.",
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
     async def notify_admin_completion(self, admin_telegram_id: int, appointment: Appointment) -> int | None:
@@ -320,14 +298,12 @@ class AppointmentNotificationService:
 
         Returns the sent message's message_id on success.
         """
-        sent_message = await self.bot.send_message(
+        return await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text="Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?",
             reply_markup=completion_followup_kb(appointment.id),
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
-
-        return sent_message.message_id
 
     async def notify_staff_new_booking_request(
         self,
@@ -349,7 +325,7 @@ class AppointmentNotificationService:
         )
 
         try:
-            sent_message = await self.bot.send_message(
+            message_id = await self.notifier.send_message(
                 chat_id=staff_telegram_id,
                 text=message_text,
                 reply_markup=booking_request_kb(appointment.id),
@@ -359,7 +335,7 @@ class AppointmentNotificationService:
                 f"Не удалось отправить уведомление специалисту {staff_telegram_id}: {e}"
             ) from e
 
-        return sent_message.message_id
+        return message_id
 
     async def notify_client_auto_confirmed(self, appointment: Appointment) -> bool:
         """[LEGACY] Notify client that their appointment was auto-confirmed.
@@ -376,10 +352,10 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text="✅ Ваша запись подтверждена (автоматически за 2 часа до приема).",
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True
@@ -407,7 +383,7 @@ class AppointmentNotificationService:
         else:
             text = "⌛ Ваша заявка на запись истекла без ответа клиники."
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=text,
         )
@@ -431,14 +407,12 @@ class AppointmentNotificationService:
             "Согласны на новое время?"
         )
 
-        sent_message = await self.bot.send_message(
+        return await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
             reply_markup=reschedule_proposal_kb(appointment.id),
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
-
-        return sent_message.message_id
 
     async def notify_client_appointment_reschedule_proposed(self, appointment: Appointment) -> int | None:
         """Notify client that the clinic proposed a different time for their confirmed appointment.
@@ -458,14 +432,12 @@ class AppointmentNotificationService:
             "Согласны на новое время?"
         )
 
-        sent_message = await self.bot.send_message(
+        return await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
             reply_markup=reschedule_proposal_kb(appointment.id),
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
-
-        return sent_message.message_id
 
     async def notify_client_proposal_reminder(self, appointment: Appointment) -> bool:
         """Remind client that the clinic's proposed time is still awaiting a response.
@@ -487,17 +459,10 @@ class AppointmentNotificationService:
             "иначе заявка скоро автоматически аннулируется."
         )
 
-        reply_parameters = None
-        if appointment.proposal_message_id is not None:
-            reply_parameters = ReplyParameters(
-                message_id=appointment.proposal_message_id,
-                allow_sending_without_reply=True,
-            )
-
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
-            reply_parameters=reply_parameters,
+            reply_to_message_id=appointment.proposal_message_id,
         )
 
         return True
@@ -524,17 +489,10 @@ class AppointmentNotificationService:
             "иначе предложение скоро автоматически аннулируется."
         )
 
-        reply_parameters = None
-        if appointment.proposal_message_id is not None:
-            reply_parameters = ReplyParameters(
-                message_id=appointment.proposal_message_id,
-                allow_sending_without_reply=True,
-            )
-
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
-            reply_parameters=reply_parameters,
+            reply_to_message_id=appointment.proposal_message_id,
         )
 
         return True
@@ -543,7 +501,7 @@ class AppointmentNotificationService:
         self, chat_id: int, message_id: int, text: str = "Это предложение больше не актуально."
     ) -> None:
         """Edit a stale reschedule-proposal message so it no longer looks actionable."""
-        await self.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+        await self.notifier.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
     async def invalidate_stale_decision_message(
         self, chat_id: int, message_id: int, decided_by_label: str, outcome_text: str
@@ -555,16 +513,14 @@ class AppointmentNotificationService:
         "message is not modified") is logged and swallowed so it doesn't abort a loop
         of invalidation calls across multiple recipients.
         """
-        try:
-            await self.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=f"{decided_by_label} уже принял(а) решение: {outcome_text}.",
-                reply_markup=None,
-            )
-        except TelegramBadRequest as e:
+        if not await self.notifier.try_edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"{decided_by_label} уже принял(а) решение: {outcome_text}.",
+            reply_markup=None,
+        ):
             logger.warning(
-                f"Failed to invalidate stale decision message {message_id} in chat {chat_id}: {e}"
+                f"Failed to invalidate stale decision message {message_id} in chat {chat_id}"
             )
 
     async def notify_staff_proposal_accepted(
@@ -574,10 +530,10 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify staff that the client accepted the proposed new time."""
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=f"✅ Клиент {client_name} согласился на предложенное время.",
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
     async def notify_staff_proposal_rejected(
@@ -587,10 +543,10 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify staff that the client rejected the proposed new time."""
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=f"❌ Клиент {client_name} отклонил предложенное время.",
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
     async def notify_admin_proposal_reminder(self, telegram_id: int, appointment: Appointment) -> None:
@@ -600,10 +556,10 @@ class AppointmentNotificationService:
         PENDING admin-created invite, and a client-requested reschedule on a CONFIRMED
         appointment. Sent as a reply to the original admin notification message.
         """
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=telegram_id,
             text="⏰ Клиент предложил другое время, ответ ещё не получен.",
-            reply_parameters=self._admin_reply_parameters(appointment),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
     async def notify_staff_reschedule_requested(
@@ -628,7 +584,7 @@ class AppointmentNotificationService:
         )
 
         try:
-            sent_message = await self.bot.send_message(
+            message_id = await self.notifier.send_message(
                 chat_id=staff_telegram_id,
                 text=message_text,
                 reply_markup=reschedule_request_kb(appointment.id),
@@ -638,7 +594,7 @@ class AppointmentNotificationService:
                 f"Не удалось отправить уведомление специалисту {staff_telegram_id}: {e}"
             ) from e
 
-        return sent_message.message_id
+        return message_id
 
     async def notify_client_reschedule_accepted(self, appointment: Appointment) -> bool:
         """Notify client that the clinic accepted their reschedule request.
@@ -655,10 +611,10 @@ class AppointmentNotificationService:
             f"Новое время: {_format_datetime_value(appointment.datetime)}"
         )
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True
@@ -681,10 +637,10 @@ class AppointmentNotificationService:
             "Если запись всё ещё нужна, свяжитесь с клиникой или отправьте новую заявку."
         )
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True
@@ -710,10 +666,10 @@ class AppointmentNotificationService:
             "Актуальную информацию по записи смотрите в разделе «Мои записи»."
         )
 
-        await self.bot.send_message(
+        await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=message_text,
-            reply_parameters=self._reply_parameters(appointment),
+            reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
         return True

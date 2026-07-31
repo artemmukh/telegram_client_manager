@@ -6,7 +6,7 @@ from aiogram.types import BotCommandScopeDefault
 from bot.config.booking_config import MAX_BOOKINGS_PER_SLOT
 from bot.handlers.client.geolocation import create_price_geo_router
 from bot.handlers.client.price_list import create_price_list_router
-from bot.loader import get_bot
+from bot.loader import get_bot, get_notifier
 from bot.create_bot import dp, db, config
 
 bot = get_bot()
@@ -97,8 +97,9 @@ async def main():
         appointment_repo, user_repo, staff_repo, clinic_repo,
         client_clinic_repository=client_clinic_repo,
     )
-    notification_service = AppointmentNotificationService(bot, user_repo, appointment_repo)
-    client_notification_service = ClientNotificationService(bot, user_repo)
+    notifier = get_notifier()
+    notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    client_notification_service = ClientNotificationService(notifier, user_repo)
     appointment_pagination_service = AppointmentPaginationService(appointment_repo)
     chat_llm = ChatLLM(config.mistral_api_key, config.mistral_model)
     medical_record_service = MedicalRecordService(
