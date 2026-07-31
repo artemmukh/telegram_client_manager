@@ -151,7 +151,9 @@ def create_client_reschedule_router(
 
         now = get_current_tashkent_datetime()
         data = await state.get_data()
-        slots = await appointment_management_service.get_available_slots(data["doctor_id"], day, now)
+        slots = await appointment_management_service.get_available_slots(
+            data["doctor_id"], day, now, exclude_appointment_id=data["appointment_id"]
+        )
 
         if not slots:
             await callback_query.answer("На этот день больше нет доступных слотов.", show_alert=True)

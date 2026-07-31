@@ -599,6 +599,7 @@ class AppointmentManagement:
         if is_own_pending_self_booking:
             # Собственная ещё не решённая клиникой заявка клиента — правим datetime
             # напрямую, без согласования (клиника и так ещё ничего не подтверждала).
+            await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id, appointment.client_id)
             appointment.datetime = validated
             await self.appointment_repository.update_appointment(appointment_id, appointment)
             return appointment
@@ -911,26 +912,61 @@ class AppointmentManagement:
                 raise SlotUnavailableError(DUPLICATE_CLIENT_SLOT_MESSAGE)
 
         if MAX_BOOKINGS_PER_SLOT is None:
-            if any(a.status == AppointmentStatus.CONFIRMED for a in active_at_slot):
+            if active_at_slot:
                 raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE)
             return
 
         if len(active_at_slot) >= MAX_BOOKINGS_PER_SLOT:
             raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE)
 
-    async def get_available_slots(self, doctor_id: int, day: date, now: datetime) -> list[str]:
+    async def get_available_slots(
+        self, doctor_id: int, day: date, now: datetime, exclude_appointment_id: int | None = None
+    ) -> list[str]:
         slots = generate_available_slots(day, now)
 
         if MAX_BOOKINGS_PER_SLOT is None:
-            confirmed = await self.appointment_repository.get_appointments_by_doctor_and_date(doctor_id, day.isoformat())
-            booked_times = {appointment.datetime.split(" ")[1] for appointment in confirmed}
+            occupying = await self.appointment_repository.get_appointments_by_doctor_and_date(
+                doctor_id, day.isoformat(), statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
+            )
+            booked_times = {
+                appointment.datetime.split(" ")[1]
+                for appointment in occupying
+                if appointment.id != exclude_appointment_id
+            }
             return [slot for slot in slots if slot not in booked_times]
 
         appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
             doctor_id, day.isoformat(), statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
         )
-        counts = Counter(appointment.datetime.split(" ")[1] for appointment in appointments)
+        counts = Counter(
+            appointment.datetime.split(" ")[1]
+            for appointment in appointments
+            if appointment.id != exclude_appointment_id
+        )
         return [slot for slot in slots if counts[slot] < MAX_BOOKINGS_PER_SLOT]
+
+    async def get_day_slot_occupancy(
+        self, doctor_id: int, day: date, now: datetime, exclude_appointment_id: int | None = None
+    ) -> list[tuple[str, list[Appointment]]]:
+        """Return every generated slot for the day paired with the appointments
+        occupying it (CONFIRMED or PENDING). Normally 0 or 1 occupants under the
+        current single-occupant-per-slot rule, but legacy mm slots booked before
+        the capacity was collapsed to 1 may still carry 2-3 -- all occupants are
+        returned rather than picking one, leaving the choice to the caller."""
+        slots = generate_available_slots(day, now)
+
+        appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
+            doctor_id, day.isoformat(), statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
+        )
+
+        occupants_by_slot: dict[str, list[Appointment]] = {}
+        for appointment in appointments:
+            if appointment.id == exclude_appointment_id:
+                continue
+            slot_time = appointment.datetime.split(" ")[1]
+            occupants_by_slot.setdefault(slot_time, []).append(appointment)
+
+        return [(slot, occupants_by_slot.get(slot, [])) for slot in slots]
 
     async def get_working_days(self, reference_date: date, week_offset: int) -> list[date]:
         return generate_working_days(reference_date, week_offset)
