@@ -21,3 +21,10 @@ class ErrorMiddleware(BaseMiddleware):
         except BotException:
             logger.exception("Unexpected")
             await event.answer("Произошла ошибка.")
+
+        except Exception:
+            logger.exception("Unhandled exception")
+            try:
+                await event.answer("Произошла ошибка, мы уже разбираемся")
+            except Exception:
+                logger.exception("Failed to notify user about unhandled exception")

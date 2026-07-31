@@ -224,6 +224,7 @@ def create_client_booking_router(
             try:
                 recipients = await appointment_management_service.resolve_notification_recipients(appointment)
             except Exception:
+                logger.exception(f"Failed to resolve notification recipients for appointment {appointment.id}")
                 recipients = []
             for recipient in recipients:
                 try:
@@ -246,7 +247,10 @@ def create_client_booking_router(
                             appointment.id, recipient.telegram_user_id, admin_message_id, kind="booking",
                         )
                 except Exception:
-                    pass  # Graceful fail если не получилось отправить
+                    logger.exception(
+                        f"Failed to send booking notification to {recipient.telegram_user_id} "
+                        f"for appointment {appointment.id}"
+                    )
 
         if appointment_scheduler:
             await appointment_scheduler.schedule_pending_expiry(appointment)

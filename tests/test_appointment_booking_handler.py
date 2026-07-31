@@ -196,6 +196,33 @@ async def test_submit_booking_does_not_notify_when_notification_service_missing(
 
 
 @pytest.mark.asyncio
+async def test_submit_booking_swallows_recipient_resolution_failure_and_skips_notifications(caplog):
+    """If resolve_notification_recipients itself raises (e.g. a doctor/clinic
+    lookup blows up), submit_booking must not crash -- it logs and falls back
+    to an empty recipient list, so no notification send is attempted and the
+    booking confirmation to the client (already sent above) still stands."""
+    created_appointment = _created_appointment()
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.create_self_booking = AsyncMock(return_value=created_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        side_effect=Exception("lookup boom")
+    )
+
+    notification_service = MagicMock()
+    notification_service.notify_staff_new_booking_request = AsyncMock()
+
+    router = _build_router(appointment_management_service, notification_service)
+    submit_booking = _get_handler_by_name(router, "submit_booking")
+
+    with caplog.at_level("ERROR"):
+        await submit_booking(_make_callback_query(), _make_state(), _current_user())
+
+    notification_service.notify_staff_new_booking_request.assert_not_awaited()
+    assert "Failed to resolve notification recipients" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_state_or_slots():
     """Defensive guard around date.fromisoformat(callback_data.day_iso): a
     malformed/forged day_iso must short-circuit before any slot lookup or
