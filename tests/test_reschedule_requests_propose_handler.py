@@ -34,6 +34,8 @@ class FakeAppointmentRepository:
         self.proposed_datetime_updates = []
         self.proposed_by_updates = []
         self.proposal_message_id_updates = []
+        self.notifications = []
+        self.get_notifications_calls = []
 
     async def get_appointment_by_id(self, appointment_id):
         return self.appointment
@@ -52,6 +54,10 @@ class FakeAppointmentRepository:
     async def update_proposal_message_id(self, appointment_id, message_id):
         self.proposal_message_id_updates.append((appointment_id, message_id))
 
+    async def get_appointment_notifications(self, appointment_id, kind):
+        self.get_notifications_calls.append((appointment_id, kind))
+        return [n for n in self.notifications if n[0] == appointment_id and n[1] == kind]
+
     async def try_propose_new_datetime(
         self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
     ):
@@ -68,8 +74,23 @@ class FakeAppointmentRepository:
         self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
         return True
 
+    async def try_apply_new_datetime_immediately(
+        self, appointment_id, new_datetime, decided_by_user_id, status_updated_at, expected_status
+    ):
+        if self.appointment.status.value != expected_status:
+            return False
+        if self.appointment.proposed_datetime is not None and self.appointment.proposed_by == CreatedBy.ADMIN:
+            return False
+
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
+        return True
+
 
 class FakeUserRepo:
+    def __init__(self, client=None):
+        self.client = client
+
     async def get_user_by_telegram_id(self, telegram_user_id):
         return User(
             full_name="Петров Петр",
@@ -86,6 +107,9 @@ class FakeUserRepo:
         # AppointmentAlreadyDecidedError race test below, where the winning
         # colleague resolves to the generic "Другой сотрудник" fallback label.
         return None
+
+    async def get_client_by_id(self, user_id):
+        return self.client
 
 
 class FakeStaffRepo:
@@ -262,3 +286,52 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
     )
     outcome_text = notification_service.invalidate_stale_decision_message.call_args.args[3]
     assert outcome_text != "отклонена"
+
+
+@pytest.mark.asyncio
+async def test_approve_propose_datetime_immediately_applies_when_client_has_no_telegram_account():
+    """A client with no linked Telegram account can never confirm a counter-
+    proposal, so the service applies the new time immediately (status ->
+    CONFIRMED, proposed_datetime -> None). The handler must then skip the
+    notify_client_appointment_reschedule_proposed call and the "waiting on
+    client" message, while sibling-invalidation and FSM cleanup still run."""
+    appointment = _confirmed_appointment_with_client_proposal()
+    appt_repo = FakeAppointmentRepository(appointment)
+    client = User(
+        full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=None,
+    )
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_client_appointment_reschedule_proposed = AsyncMock(return_value=654)
+
+    router = create_admin_reschedule_requests_router(
+        appt_repo, FakeUserRepo(client), FakeStaffRepo(), FakeClinicRepo(),
+        notification_service=notification_service, appointment_scheduler=appointment_scheduler,
+    )
+    approve_propose_datetime = _get_approve_propose_datetime_handler(router)
+    state = _make_state()
+    callback_query = _make_callback_query()
+
+    await approve_propose_datetime(
+        callback_query,
+        RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=1),
+        state,
+    )
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appointment.proposed_datetime is None
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
+
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(appointment)
+    notification_service.notify_client_appointment_reschedule_proposed.assert_not_awaited()
+    assert appt_repo.proposal_message_id_updates == []
+
+    message_text = callback_query.message.edit_text.await_args.args[0]
+    assert "Ожидаем ответа клиента" not in message_text
+
+    assert appt_repo.get_notifications_calls == [(1, "reschedule")]
+    state.clear.assert_awaited_once()

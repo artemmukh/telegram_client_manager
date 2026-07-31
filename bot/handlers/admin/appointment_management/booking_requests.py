@@ -243,6 +243,15 @@ def create_admin_booking_requests_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
+        if appointment.proposed_datetime is None:
+            await callback_query.answer("Время записи изменено")
+            await callback_query.message.edit_text(
+                f"✅ Время записи изменено: {_format_datetime_value(appointment.datetime)}"
+            )
+            await invalidate_booking_siblings(callback_query, appointment)
+            await state.clear()
+            return
+
         if notification_service:
             try:
                 message_id = await notification_service.notify_client_reschedule_proposed(appointment)

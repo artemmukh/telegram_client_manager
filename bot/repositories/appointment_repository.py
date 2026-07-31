@@ -551,6 +551,38 @@ class AppointmentRepository:
 
         return cursor.rowcount > 0
 
+    async def try_apply_new_datetime_immediately(
+        self,
+        appointment_id: int,
+        new_datetime: str,
+        decided_by_user_id: int,
+        status_updated_at: str,
+        expected_status: str,
+    ) -> bool:
+        # Used when the client has no linked Telegram account and therefore can never
+        # confirm an admin proposal, so the new time is applied immediately instead of
+        # waiting on a negotiation. Pins on expected_status the same way
+        # try_propose_new_datetime does (true CAS), and still blocks racing in on top
+        # of an in-progress admin proposal.
+        sql = """
+            UPDATE appointments
+            SET datetime = ?, status = 'confirmed', decided_by_user_id = ?, status_updated_at = ?,
+                proposed_datetime = NULL, proposed_by = NULL
+            WHERE id = ?
+                AND status = ?
+                AND NOT (proposed_datetime IS NOT NULL AND proposed_by = 'admin')
+        """
+        params = (new_datetime, decided_by_user_id, status_updated_at, appointment_id, expected_status)
+        try:
+            cursor = await self.connection.execute(sql, params)
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
+
+        return cursor.rowcount > 0
+
     async def try_resolve_client_reschedule(
         self,
         appointment_id: int,

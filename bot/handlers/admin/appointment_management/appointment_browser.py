@@ -563,6 +563,16 @@ def create_admin_appointment_browser_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
+        old_display = format_datetime_for_confirmation(datetime.fromisoformat(owned_appointment.datetime))
+
+        if appointment.proposed_datetime is None:
+            await callback_query.answer("Время записи изменено")
+            await callback_query.message.edit_text(
+                f"✅ Время записи изменено: {old_display} → {data.get('appointment_datetime_display')}"
+            )
+            await state.clear()
+            return
+
         if notification_service:
             try:
                 message_id = await notification_service.notify_client_appointment_reschedule_proposed(appointment)
@@ -572,8 +582,6 @@ def create_admin_appointment_browser_router(
                 logger.warning(
                     f"Failed to notify client about proposed time for appointment {callback_data.appointment_id}: {e}"
                 )
-
-        old_display = format_datetime_for_confirmation(datetime.fromisoformat(appointment.datetime))
 
         await callback_query.answer("Предложение отправлено клиенту")
         await callback_query.message.edit_text(

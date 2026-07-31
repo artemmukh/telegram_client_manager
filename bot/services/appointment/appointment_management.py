@@ -471,6 +471,25 @@ class AppointmentManagement:
         await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id, appointment.client_id)
 
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
+
+        client = await self.user_repository.get_client_by_id(appointment.client_id)
+        if client is not None and client.telegram_user_id is None:
+            status_updated_at = get_current_tashkent_time()
+            applied = await self.appointment_repository.try_apply_new_datetime_immediately(
+                appointment_id, validated, acting_user_id, status_updated_at, appointment.status.value
+            )
+            if not applied:
+                await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind=kind)
+
+            appointment.datetime = validated
+            appointment.status = AppointmentStatus.CONFIRMED
+            appointment.proposed_datetime = None
+            appointment.proposed_by = None
+            appointment.decided_by_user_id = acting_user_id
+            appointment.status_updated_at = status_updated_at
+
+            return appointment
+
         proposed = await self.appointment_repository.try_propose_new_datetime(
             appointment_id, validated, CreatedBy.ADMIN.value, acting_user_id, appointment.status.value
         )

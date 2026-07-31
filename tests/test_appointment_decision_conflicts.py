@@ -66,6 +66,9 @@ class FakeUserRepo:
     async def get_user_by_id(self, user_id):
         return self.by_id.get(user_id)
 
+    async def get_client_by_id(self, user_id):
+        return None
+
 
 class FakeStaffRepo:
     async def get_staff(self, telegram_user_id):

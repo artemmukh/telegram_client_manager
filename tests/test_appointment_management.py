@@ -63,6 +63,8 @@ class FakeAppointmentRepository:
         self.proposed_by_updates = []
         self.price_updates = []
         self.notifications: list[AppointmentNotification] = []
+        self.apply_immediately_calls = []
+        self.apply_immediately_lost_races = set()
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -142,6 +144,30 @@ class FakeAppointmentRepository:
 
         self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
         self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        return True
+
+    async def try_apply_new_datetime_immediately(
+        self, appointment_id, new_datetime, decided_by_user_id, status_updated_at, expected_status
+    ):
+        # Mirrors the real CAS: WHERE status = expected_status AND NOT already
+        # negotiating an admin proposal. apply_immediately_lost_races is a
+        # test-only knob for simulating a lost race, since expected_status is
+        # always read from this same in-memory appointment (there is no
+        # natural way for it to mismatch within a single fake instance).
+        self.apply_immediately_calls.append((appointment_id, new_datetime, decided_by_user_id, expected_status))
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status.value != expected_status:
+            return False
+        if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+            return False
+        if appointment_id in self.apply_immediately_lost_races:
+            return False
+
+        self.status_updates.append((appointment_id, AppointmentStatus.CONFIRMED))
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
         return True
 
     async def try_resolve_client_reschedule(
@@ -298,8 +324,11 @@ def _clinic_repo(clinic_id=1):
     return FakeClinicRepo(Clinic(clinic_id=clinic_id, name="Зуб Мудрости", token="t"))
 
 
-def _client():
-    return User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7)
+def _client(telegram_user_id=None):
+    return User(
+        full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7,
+        telegram_user_id=telegram_user_id,
+    )
 
 
 def _future_datetime(days: int = 2, time_str: str = "14:30") -> str:
@@ -2029,7 +2058,9 @@ async def test_reject_pending_request_blocked_when_proposal_pending():
 async def test_propose_new_datetime_sets_proposed_without_touching_status_or_datetime():
     appt_repo = FakeAppointmentRepository([_pending_client_request()])
     admin, staff = _admin_with_scope("clinic")
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(telegram_user_id=555), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
     proposed_datetime = _future_datetime(days=3, time_str="10:00")
 
     appointment = await service.propose_new_datetime(
@@ -2078,7 +2109,9 @@ async def test_propose_new_datetime_overwrites_when_proposed_by_client():
         )]
     )
     admin, staff = _admin_with_scope("clinic")
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(telegram_user_id=555), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
 
     appointment = await service.propose_new_datetime(
         1, staff_telegram_id=999, proposed_datetime=new_proposed_datetime, kind="reschedule"
@@ -2102,7 +2135,9 @@ async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_ou
         [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.CONFIRMED)]
     )
     admin, staff = _admin_with_scope("clinic")
-    service = AppointmentManagement(appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo())
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(telegram_user_id=555), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
 
     appointment = await service.propose_new_datetime(
         1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="reschedule"
@@ -2127,6 +2162,146 @@ async def test_propose_new_datetime_raises_when_finalized():
         await service.propose_new_datetime(
             1, staff_telegram_id=999, proposed_datetime="2026-07-11 10:00", kind="booking"
         )
+
+
+# --- propose_new_datetime: immediate-apply for clients with no Telegram account ---
+#
+# A client with no linked Telegram account can never see or respond to a
+# negotiation proposal, so propose_new_datetime applies the new time
+# immediately (status -> CONFIRMED) instead of leaving it in
+# proposed_datetime/proposed_by limbo. _client() defaults to
+# telegram_user_id=None, which is exactly this scenario.
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_immediately_confirms_when_client_has_no_telegram_account():
+    appt_repo = FakeAppointmentRepository([_pending_client_request()])
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
+    proposed_datetime = _future_datetime(days=3, time_str="10:00")
+
+    appointment = await service.propose_new_datetime(
+        1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="booking"
+    )
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appointment.datetime == proposed_datetime
+    assert appointment.proposed_datetime is None
+    assert appointment.proposed_by is None
+    assert appointment.decided_by_user_id == admin.ID
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
+    assert appt_repo.apply_immediately_calls == [(1, proposed_datetime, admin.ID, AppointmentStatus.PENDING.value)]
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_raises_already_decided_when_immediate_apply_race_lost():
+    """Two admins race on the same broadcast for a client with no Telegram
+    account: by the time this admin's decision reaches the repository, the
+    other admin's own immediate-apply/decision already won, so the atomic
+    try_apply_new_datetime_immediately guard returns False."""
+    winner = _winning_admin()
+    already_decided = _pending_client_request()
+    already_decided.decided_by_user_id = winner.ID
+    appt_repo = FakeAppointmentRepository([already_decided])
+    appt_repo.apply_immediately_lost_races.add(1)
+    admin, staff = _admin_with_scope("clinic")
+    user_repo = FakeUserRepo(_client(), admin=admin, users_by_id={winner.ID: winner})
+    staff_repo = FakeStaffRepo({
+        999: staff,
+        winner.telegram_user_id: Staff(telegram_user_id=winner.telegram_user_id, clinic_id=1, visibility_scope="clinic"),
+    })
+    service = AppointmentManagement(appt_repo, user_repo, staff_repo, _clinic_repo())
+
+    with pytest.raises(AppointmentAlreadyDecidedError, match="Иванова Анна"):
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime=_future_datetime(days=3, time_str="10:00"), kind="booking"
+        )
+
+    assert appt_repo.status_updates == []
+    assert appt_repo.proposed_datetime_updates == []
+    assert appt_repo.proposed_by_updates == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_negotiation_guard_applies_before_null_telegram_branch():
+    """The outstanding-admin-proposal guard runs before the client lookup /
+    immediate-apply branch, even for a client with no Telegram account."""
+    appt_repo = FakeAppointmentRepository(
+        [_pending_client_request(proposed_datetime="2026-07-11 10:00", proposed_by=CreatedBy.ADMIN)]
+    )
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
+
+    with pytest.raises(NegotiationInProgressError):
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00", kind="booking"
+        )
+
+    assert appt_repo.apply_immediately_calls == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_slot_unavailable_blocks_before_null_telegram_branch():
+    """_ensure_slot_available still runs, and still raises, before the client
+    lookup / immediate-apply branch is reached for a client with no Telegram
+    account."""
+    proposed_datetime = _future_datetime(days=3, time_str="10:00")
+    own = _appt(1, 50, "2026-07-10 14:30", AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT, client_id=7)
+    other = _appt(2, 50, proposed_datetime, AppointmentStatus.CONFIRMED, client_id=8)
+    appt_repo = FakeAppointmentRepository([own, other])
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
+
+    with pytest.raises(SlotUnavailableError):
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="booking"
+        )
+
+    assert appt_repo.apply_immediately_calls == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_raises_not_found_before_null_telegram_branch():
+    """AppointmentNotFoundError still fires before any client lookup happens,
+    for a client that would otherwise hit the null-telegram branch."""
+    appt_repo = FakeAppointmentRepository([])
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
+
+    with pytest.raises(AppointmentNotFoundError):
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00", kind="booking"
+        )
+
+    assert appt_repo.apply_immediately_calls == []
+
+
+@pytest.mark.asyncio
+async def test_propose_new_datetime_finalized_blocks_before_null_telegram_branch():
+    """The finalized-appointment guard still fires before the client lookup /
+    immediate-apply branch, for a client with no Telegram account."""
+    appt_repo = FakeAppointmentRepository([_pending_client_request(status=AppointmentStatus.CANCELLED)])
+    admin, staff = _admin_with_scope("clinic")
+    service = AppointmentManagement(
+        appt_repo, FakeUserRepo(_client(), admin=admin), FakeStaffRepo(staff), _clinic_repo()
+    )
+
+    with pytest.raises(AppointmentAlreadyFinalizedError):
+        await service.propose_new_datetime(
+            1, staff_telegram_id=999, proposed_datetime="2026-07-12 10:00", kind="booking"
+        )
+
+    assert appt_repo.apply_immediately_calls == []
 
 
 @pytest.mark.asyncio
