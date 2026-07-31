@@ -32,6 +32,6 @@ def create_start_router():
         current_user: User,
     ):
         await state.clear()
-        await show_main_client_menu(message, current_user.full_name)
+        await show_main_client_menu(message, current_user.full_name, current_user.clinic_name)
 
     return router
