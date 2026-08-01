@@ -10,8 +10,8 @@ from bot.keyboards.client.appointment_response_kb import (
     reschedule_proposal_kb,
 )
 from bot.services.appointment.appointment_notifications import (
-    REMINDER_TEXT,
     AppointmentNotificationService,
+    reminder_text,
 )
 from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
 from bot.utils.role import Role
@@ -68,15 +68,19 @@ class FakeTelegramNotifier:
 
 
 class FakeUserRepo:
-    def __init__(self, user=None, admin=None):
+    def __init__(self, user=None, admin=None, recipient_by_telegram_id=None):
         self.user = user
         self.admin = admin
+        self.recipient_by_telegram_id = recipient_by_telegram_id
 
     async def get_client_by_id(self, client_id):
         return self.user
 
     async def get_user_by_id(self, user_id):
         return self.admin
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        return self.recipient_by_telegram_id
 
 
 class FakeAppointmentRepo:
@@ -376,7 +380,7 @@ async def test_notify_client_reminder_without_buttons_replies_when_message_id_se
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 12345
-    assert msg['text'] == REMINDER_TEXT
+    assert msg['text'] == reminder_text("ru")
     assert msg['reply_markup'] == appointment_reminder_details_kb(appointment.id)
     assert msg['reply_to_message_id'] == 555
 
@@ -396,7 +400,7 @@ async def test_notify_client_reminder_without_buttons_no_reply_parameters_when_m
     assert result is True
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
-    assert msg['text'] == REMINDER_TEXT
+    assert msg['text'] == reminder_text("ru")
     assert msg['reply_markup'] == appointment_reminder_details_kb(appointment.id)
     assert msg['reply_to_message_id'] is None
 
@@ -434,7 +438,7 @@ async def test_notify_client_reminder_with_buttons_replies_when_message_id_set()
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 12345
-    assert msg['text'] == REMINDER_TEXT
+    assert msg['text'] == reminder_text("ru")
     assert msg['reply_markup'] == appointment_reminder_with_buttons_kb(appointment.id)
     assert msg['reply_to_message_id'] == 555
 
@@ -454,7 +458,7 @@ async def test_notify_client_reminder_with_buttons_no_reply_parameters_when_mess
     assert result is True
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
-    assert msg['text'] == REMINDER_TEXT
+    assert msg['text'] == reminder_text("ru")
     assert msg['reply_markup'] is not None
     assert msg['reply_to_message_id'] is None
 

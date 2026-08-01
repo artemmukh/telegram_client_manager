@@ -25,7 +25,380 @@ from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentSt
 
 logger = logging.getLogger(__name__)
 
-REMINDER_TEXT = "Напоминаем вам о записи."
+_REMINDER_TEXT = {
+    "ru": "Напоминаем вам о записи.",
+    "uz": "Sizga qabul haqida eslatib o'tamiz.",
+}
+
+_APPOINTMENT_CANCELLED_BY_ADMIN = {
+    "ru": "❌ Ваша запись отменена администратором.",
+    "uz": "❌ Sizning yozuvingiz administrator tomonidan bekor qilindi.",
+}
+
+_BOOKING_REQUEST_REJECTED = {
+    "ru": "❌ Клиника отклонила вашу заявку на запись.",
+    "uz": "❌ Klinika sizning yozilish arizangizni rad etdi.",
+}
+
+_APPOINTMENT_CHANGED = {
+    "ru": "✏️ Детали вашей записи изменены администратором\n\nДата и время: {datetime}\nУслуга: {purpose}",
+    "uz": "✏️ Yozuvingiz tafsilotlari administrator tomonidan o'zgartirildi\n\nSana va vaqt: {datetime}\nXizmat: {purpose}",
+}
+
+_ADMIN_UPCOMING_APPOINTMENT = {
+    "ru": (
+        "📌 Предстоящая запись:\n\n"
+        "👤 Клиент: {client_name}\n"
+        "📱 Номер: {client_phone}\n"
+        "📅 Дата и время: {datetime}\n"
+        "🏥 Услуга: {purpose}"
+    ),
+    "uz": (
+        "📌 Yaqinlashib kelayotgan yozuv:\n\n"
+        "👤 Mijoz: {client_name}\n"
+        "📱 Raqam: {client_phone}\n"
+        "📅 Sana va vaqt: {datetime}\n"
+        "🏥 Xizmat: {purpose}"
+    ),
+}
+
+_ADMIN_CANCELLATION = {
+    "ru": "Клиент {client_name} отменил запись.",
+    "uz": "Mijoz {client_name} yozuvni bekor qildi.",
+}
+
+_ADMIN_CLIENT_CHANGED_TIME = {
+    "ru": "🕐 Клиент {client_name} изменил время заявки.\n📅 Новое время: {datetime}",
+    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.\n📅 Yangi vaqt: {datetime}",
+}
+
+_ADMIN_CONFIRMATION = {
+    "ru": "Клиент {client_name} подтвердил запись.",
+    "uz": "Mijoz {client_name} yozuvni tasdiqladi.",
+}
+
+_ADMIN_COMPLETION_PROMPT = {
+    "ru": "Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?",
+    "uz": "Qabul yakunlangan deb belgilandi. Tahrirlash uchun yozuvni ochish (holat/xizmat/narx)?",
+}
+
+_STAFF_NEW_BOOKING_REQUEST = {
+    "ru": "🆕 Новая заявка на запись\n\n👤 Клиент: {client_name}\n📅 Дата и время: {datetime}\n📝 Жалоба: {purpose}",
+    "uz": "🆕 Yozilish uchun yangi ariza\n\n👤 Mijoz: {client_name}\n📅 Sana va vaqt: {datetime}\n📝 Shikoyat: {purpose}",
+}
+
+_CLIENT_AUTO_CONFIRMED = {
+    "ru": "✅ Ваша запись подтверждена (автоматически за 2 часа до приема).",
+    "uz": "✅ Sizning yozuvingiz tasdiqlandi (qabuldan 2 soat oldin avtomatik).",
+}
+
+_PENDING_REQUEST_EXPIRED_PROPOSAL = {
+    "ru": "⌛ Предложение по времени записи осталось без ответа, заявка на запись истекла.",
+    "uz": "⌛ Yozuv vaqti bo'yicha taklifga javob berilmadi, ariza muddati tugadi.",
+}
+
+_PENDING_REQUEST_EXPIRED_ADMIN_INVITE = {
+    "ru": "⌛ Вы не ответили на приглашение клиники на запись, заявка истекла.",
+    "uz": "⌛ Siz klinikaning yozilish taklifiga javob bermadingiz, ariza muddati tugadi.",
+}
+
+_PENDING_REQUEST_EXPIRED_CLIENT_REQUEST = {
+    "ru": "⌛ Ваша заявка на запись истекла без ответа клиники.",
+    "uz": "⌛ Sizning yozilish arizangiz klinika javobisiz muddati tugadi.",
+}
+
+_RESCHEDULE_PROPOSED = {
+    "ru": (
+        "🔁 Клиника предложила другое время для вашей заявки\n\n"
+        "Предложенное время: {proposed}\n\n"
+        "Согласны на новое время?"
+    ),
+    "uz": (
+        "🔁 Klinika arizangiz uchun boshqa vaqt taklif qildi\n\n"
+        "Taklif qilingan vaqt: {proposed}\n\n"
+        "Yangi vaqtga roziligingizmi?"
+    ),
+}
+
+_APPOINTMENT_RESCHEDULE_PROPOSED = {
+    "ru": (
+        "🔁 Клиника предлагает перенести вашу запись на другое время\n\n"
+        "Текущее время: {current}\n"
+        "Предложенное время: {proposed}\n\n"
+        "Согласны на новое время?"
+    ),
+    "uz": (
+        "🔁 Klinika yozuvingizni boshqa vaqtga ko'chirishni taklif qilmoqda\n\n"
+        "Hozirgi vaqt: {current}\n"
+        "Taklif qilingan vaqt: {proposed}\n\n"
+        "Yangi vaqtga roziligingizmi?"
+    ),
+}
+
+_PROPOSAL_REMINDER = {
+    "ru": (
+        "⏰ Напоминаем: клиника предложила другое время для вашей заявки\n\n"
+        "Предложенное время: {proposed}\n\n"
+        "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
+        "иначе заявка скоро автоматически аннулируется."
+    ),
+    "uz": (
+        "⏰ Eslatma: klinika arizangiz uchun boshqa vaqt taklif qildi\n\n"
+        "Taklif qilingan vaqt: {proposed}\n\n"
+        "Iltimos, tugmalari bo'lgan oldingi xabarga javob bering, "
+        "aks holda ariza tez orada avtomatik bekor qilinadi."
+    ),
+}
+
+_APPOINTMENT_RESCHEDULE_REMINDER = {
+    "ru": (
+        "⏰ Напоминаем: клиника предлагает перенести вашу запись на другое время\n\n"
+        "Текущее время: {current}\n"
+        "Предложенное время: {proposed}\n\n"
+        "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
+        "иначе предложение скоро автоматически аннулируется."
+    ),
+    "uz": (
+        "⏰ Eslatma: klinika yozuvingizni boshqa vaqtga ko'chirishni taklif qilmoqda\n\n"
+        "Hozirgi vaqt: {current}\n"
+        "Taklif qilingan vaqt: {proposed}\n\n"
+        "Iltimos, tugmalari bo'lgan oldingi xabarga javob bering, "
+        "aks holda taklif tez orada avtomatik bekor qilinadi."
+    ),
+}
+
+_STALE_PROPOSAL_DEFAULT_TEXT = {
+    "ru": "Это предложение больше не актуально.",
+    "uz": "Bu taklif endi dolzarb emas.",
+}
+
+_STALE_DECISION_TEXT = {
+    "ru": "{label} уже принял(а) решение: {outcome}.",
+    "uz": "{label} allaqachon qaror qabul qildi: {outcome}.",
+}
+
+_STAFF_PROPOSAL_ACCEPTED = {
+    "ru": "✅ Клиент {client_name} согласился на предложенное время.",
+    "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.",
+}
+
+_STAFF_PROPOSAL_REJECTED = {
+    "ru": "❌ Клиент {client_name} отклонил предложенное время.",
+    "uz": "❌ Mijoz {client_name} taklif qilingan vaqtni rad etdi.",
+}
+
+_ADMIN_PROPOSAL_REMINDER = {
+    "ru": "⏰ Клиент предложил другое время, ответ ещё не получен.",
+    "uz": "⏰ Mijoz boshqa vaqt taklif qildi, javob hali olinmadi.",
+}
+
+_STAFF_RESCHEDULE_REQUESTED = {
+    "ru": (
+        "🔁 Клиент просит перенести запись\n\n"
+        "👤 Клиент: {client_name}\n"
+        "📱 Номер: {phone}\n"
+        "📅 Текущее время: {current}\n"
+        "🆕 Предложенное время: {proposed}\n"
+        "📝 Услуга: {purpose}"
+    ),
+    "uz": (
+        "🔁 Mijoz yozuvni ko'chirishni so'ramoqda\n\n"
+        "👤 Mijoz: {client_name}\n"
+        "📱 Raqam: {phone}\n"
+        "📅 Hozirgi vaqt: {current}\n"
+        "🆕 Taklif qilingan vaqt: {proposed}\n"
+        "📝 Xizmat: {purpose}"
+    ),
+}
+
+_CLIENT_RESCHEDULE_ACCEPTED = {
+    "ru": "✅ Клиника приняла ваш перенос записи\n\nНовое время: {datetime}",
+    "uz": "✅ Klinika yozuvingizni ko'chirishni qabul qildi\n\nYangi vaqt: {datetime}",
+}
+
+_CLIENT_RESCHEDULE_REJECTED = {
+    "ru": (
+        "❌ Клиника не смогла подтвердить перенос записи, запись отменена\n\n"
+        "Если запись всё ещё нужна, свяжитесь с клиникой или отправьте новую заявку."
+    ),
+    "uz": (
+        "❌ Klinika yozuvni ko'chirishni tasdiqlay olmadi, yozuv bekor qilindi\n\n"
+        "Agar yozuv hali ham kerak bo'lsa, klinika bilan bog'laning yoki yangi ariza yuboring."
+    ),
+}
+
+_CLIENT_RESCHEDULE_REQUEST_EXPIRED = {
+    "ru": (
+        "⌛ Предложение по времени записи истекло без ответа\n\n"
+        "Ваша запись остаётся в силе на прежнее время: {datetime}\n"
+        "Актуальную информацию по записи смотрите в разделе «Мои записи»."
+    ),
+    "uz": (
+        "⌛ Yozuv vaqti bo'yicha taklif javobsiz muddati tugadi\n\n"
+        "Sizning yozuvingiz avvalgi vaqtda kuchda qoladi: {datetime}\n"
+        "Yozuv bo'yicha dolzarb ma'lumotni «Mening yozuvlarim» bo'limida ko'ring."
+    ),
+}
+
+_APPOINTMENT_MESSAGE_HEADER = {
+    "ru": "Вам назначена запись на прием",
+    "uz": "Sizga qabulga yozuv belgilandi",
+}
+
+_APPOINTMENT_MESSAGE_ADMIN_INFO = {
+    "ru": "👨‍⚕️ Администратор: {full_name}\n📱 Номер: {phone}\n\n",
+    "uz": "👨‍⚕️ Administrator: {full_name}\n📱 Raqam: {phone}\n\n",
+}
+
+_APPOINTMENT_MESSAGE_RESCHEDULED_CTA = {
+    "ru": "Клиника изменила время вашей записи. Пожалуйста, подтвердите новое время.",
+    "uz": "Klinika yozuvingiz vaqtini o'zgartirdi. Iltimos, yangi vaqtni tasdiqlang.",
+}
+
+_APPOINTMENT_MESSAGE_CONFIRM_CTA = {
+    "ru": "Пожалуйста, подтвердите вашу готовность посетить запись",
+    "uz": "Iltimos, qabulga borishga tayyorligingizni tasdiqlang",
+}
+
+_APPOINTMENT_MESSAGE_BODY = {
+    "ru": "{header}\n\n{admin_info}Дата и время: {datetime}\nУслуга: {purpose}\nКлиника: {clinic}\n\n{last_line}",
+    "uz": "{header}\n\n{admin_info}Sana va vaqt: {datetime}\nXizmat: {purpose}\nKlinika: {clinic}\n\n{last_line}",
+}
+
+_NO_CLINIC_INFO = {
+    "ru": "Информация не доступна",
+    "uz": "Ma'lumot mavjud emas",
+}
+
+
+def reminder_text(lang: str = "ru") -> str:
+    return _REMINDER_TEXT.get(lang, _REMINDER_TEXT["ru"])
+
+
+def appointment_cancelled_by_admin_text(lang: str = "ru") -> str:
+    return _APPOINTMENT_CANCELLED_BY_ADMIN.get(lang, _APPOINTMENT_CANCELLED_BY_ADMIN["ru"])
+
+
+def booking_request_rejected_text(lang: str = "ru") -> str:
+    return _BOOKING_REQUEST_REJECTED.get(lang, _BOOKING_REQUEST_REJECTED["ru"])
+
+
+def appointment_changed_text(datetime_value: str, purpose: str, lang: str = "ru") -> str:
+    return _APPOINTMENT_CHANGED.get(lang, _APPOINTMENT_CHANGED["ru"]).format(
+        datetime=datetime_value, purpose=purpose,
+    )
+
+
+def admin_upcoming_appointment_text(
+    client_name: str, client_phone: str, datetime_value: str, purpose: str, lang: str = "ru",
+) -> str:
+    return _ADMIN_UPCOMING_APPOINTMENT.get(lang, _ADMIN_UPCOMING_APPOINTMENT["ru"]).format(
+        client_name=client_name, client_phone=client_phone, datetime=datetime_value, purpose=purpose,
+    )
+
+
+def admin_cancellation_text(client_name: str, lang: str = "ru") -> str:
+    return _ADMIN_CANCELLATION.get(lang, _ADMIN_CANCELLATION["ru"]).format(client_name=client_name)
+
+
+def admin_client_changed_time_text(client_name: str, datetime_value: str, lang: str = "ru") -> str:
+    return _ADMIN_CLIENT_CHANGED_TIME.get(lang, _ADMIN_CLIENT_CHANGED_TIME["ru"]).format(
+        client_name=client_name, datetime=datetime_value,
+    )
+
+
+def admin_confirmation_text(client_name: str, lang: str = "ru") -> str:
+    return _ADMIN_CONFIRMATION.get(lang, _ADMIN_CONFIRMATION["ru"]).format(client_name=client_name)
+
+
+def admin_completion_prompt(lang: str = "ru") -> str:
+    return _ADMIN_COMPLETION_PROMPT.get(lang, _ADMIN_COMPLETION_PROMPT["ru"])
+
+
+def staff_new_booking_request_text(client_name: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+    return _STAFF_NEW_BOOKING_REQUEST.get(lang, _STAFF_NEW_BOOKING_REQUEST["ru"]).format(
+        client_name=client_name, datetime=datetime_value, purpose=purpose,
+    )
+
+
+def client_auto_confirmed_text(lang: str = "ru") -> str:
+    return _CLIENT_AUTO_CONFIRMED.get(lang, _CLIENT_AUTO_CONFIRMED["ru"])
+
+
+def pending_request_expired_proposal_text(lang: str = "ru") -> str:
+    return _PENDING_REQUEST_EXPIRED_PROPOSAL.get(lang, _PENDING_REQUEST_EXPIRED_PROPOSAL["ru"])
+
+
+def pending_request_expired_admin_invite_text(lang: str = "ru") -> str:
+    return _PENDING_REQUEST_EXPIRED_ADMIN_INVITE.get(lang, _PENDING_REQUEST_EXPIRED_ADMIN_INVITE["ru"])
+
+
+def pending_request_expired_client_request_text(lang: str = "ru") -> str:
+    return _PENDING_REQUEST_EXPIRED_CLIENT_REQUEST.get(lang, _PENDING_REQUEST_EXPIRED_CLIENT_REQUEST["ru"])
+
+
+def reschedule_proposed_text(proposed: str, lang: str = "ru") -> str:
+    return _RESCHEDULE_PROPOSED.get(lang, _RESCHEDULE_PROPOSED["ru"]).format(proposed=proposed)
+
+
+def appointment_reschedule_proposed_text(current: str, proposed: str, lang: str = "ru") -> str:
+    return _APPOINTMENT_RESCHEDULE_PROPOSED.get(lang, _APPOINTMENT_RESCHEDULE_PROPOSED["ru"]).format(
+        current=current, proposed=proposed,
+    )
+
+
+def proposal_reminder_text(proposed: str, lang: str = "ru") -> str:
+    return _PROPOSAL_REMINDER.get(lang, _PROPOSAL_REMINDER["ru"]).format(proposed=proposed)
+
+
+def appointment_reschedule_reminder_text(current: str, proposed: str, lang: str = "ru") -> str:
+    return _APPOINTMENT_RESCHEDULE_REMINDER.get(lang, _APPOINTMENT_RESCHEDULE_REMINDER["ru"]).format(
+        current=current, proposed=proposed,
+    )
+
+
+def stale_proposal_default_text(lang: str = "ru") -> str:
+    return _STALE_PROPOSAL_DEFAULT_TEXT.get(lang, _STALE_PROPOSAL_DEFAULT_TEXT["ru"])
+
+
+def stale_decision_text(decided_by_label: str, outcome_text: str, lang: str = "ru") -> str:
+    return _STALE_DECISION_TEXT.get(lang, _STALE_DECISION_TEXT["ru"]).format(
+        label=decided_by_label, outcome=outcome_text,
+    )
+
+
+def staff_proposal_accepted_text(client_name: str, lang: str = "ru") -> str:
+    return _STAFF_PROPOSAL_ACCEPTED.get(lang, _STAFF_PROPOSAL_ACCEPTED["ru"]).format(client_name=client_name)
+
+
+def staff_proposal_rejected_text(client_name: str, lang: str = "ru") -> str:
+    return _STAFF_PROPOSAL_REJECTED.get(lang, _STAFF_PROPOSAL_REJECTED["ru"]).format(client_name=client_name)
+
+
+def admin_proposal_reminder_text(lang: str = "ru") -> str:
+    return _ADMIN_PROPOSAL_REMINDER.get(lang, _ADMIN_PROPOSAL_REMINDER["ru"])
+
+
+def staff_reschedule_requested_text(
+    client_name: str, phone: str, current: str, proposed: str, purpose: str, lang: str = "ru",
+) -> str:
+    return _STAFF_RESCHEDULE_REQUESTED.get(lang, _STAFF_RESCHEDULE_REQUESTED["ru"]).format(
+        client_name=client_name, phone=phone, current=current, proposed=proposed, purpose=purpose,
+    )
+
+
+def client_reschedule_accepted_text(datetime_value: str, lang: str = "ru") -> str:
+    return _CLIENT_RESCHEDULE_ACCEPTED.get(lang, _CLIENT_RESCHEDULE_ACCEPTED["ru"]).format(datetime=datetime_value)
+
+
+def client_reschedule_rejected_text(lang: str = "ru") -> str:
+    return _CLIENT_RESCHEDULE_REJECTED.get(lang, _CLIENT_RESCHEDULE_REJECTED["ru"])
+
+
+def client_reschedule_request_expired_text(datetime_value: str, lang: str = "ru") -> str:
+    return _CLIENT_RESCHEDULE_REQUEST_EXPIRED.get(lang, _CLIENT_RESCHEDULE_REQUEST_EXPIRED["ru"]).format(
+        datetime=datetime_value,
+    )
 
 
 def _format_datetime_value(value: str) -> str:
@@ -45,6 +418,10 @@ class AppointmentNotificationService:
         self.notifier = notifier
         self.user_repo = user_repo
         self.appointment_repo = appointment_repo
+
+    async def _resolve_lang(self, telegram_id: int) -> str:
+        user = await self.user_repo.get_user_by_telegram_id(telegram_id)
+        return user.language if user is not None else "ru"
 
     async def notify_client_appointment_with_buttons(
         self, appointment: Appointment, use_invite_kb: bool = True, rescheduled: bool = False
@@ -71,7 +448,9 @@ class AppointmentNotificationService:
             return None
 
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
-        message_text = self._build_appointment_message(appointment, admin, rescheduled=rescheduled)
+        message_text = self._build_appointment_message(
+            appointment, admin, rescheduled=rescheduled, lang=client.language,
+        )
 
         reply_markup = (
             appointment_invite_kb(appointment.id) if use_invite_kb
@@ -96,7 +475,7 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text=REMINDER_TEXT,
+            text=reminder_text(client.language),
             reply_markup=appointment_reminder_details_kb(appointment.id),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
@@ -115,7 +494,7 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text=REMINDER_TEXT,
+            text=reminder_text(client.language),
             reply_markup=appointment_reminder_with_buttons_kb(appointment.id),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
@@ -137,7 +516,7 @@ class AppointmentNotificationService:
             return False
 
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
-        message_text = self._build_appointment_message(appointment, admin)
+        message_text = self._build_appointment_message(appointment, admin, lang=client.language)
 
         if appointment.status == AppointmentStatus.PENDING:
             reply_markup = appointment_invite_kb(appointment.id)
@@ -171,7 +550,7 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text="❌ Ваша запись отменена администратором.",
+            text=appointment_cancelled_by_admin_text(client.language),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
@@ -189,7 +568,7 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text="❌ Клиника отклонила вашу заявку на запись.",
+            text=booking_request_rejected_text(client.language),
         )
 
         return True
@@ -206,11 +585,7 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text=(
-                "✏️ Детали вашей записи изменены администратором\n\n"
-                f"Дата и время: {appointment.datetime}\n"
-                f"Услуга: {appointment.purpose}"
-            ),
+            text=appointment_changed_text(appointment.datetime, appointment.purpose, client.language),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
@@ -234,13 +609,10 @@ class AppointmentNotificationService:
         """
         client = await self.user_repo.get_client_by_id(appointment.client_id)
         client_phone = client.phone if client else "—"
+        lang = await self._resolve_lang(admin_telegram_id)
 
-        message_text = (
-            f"📌 Предстоящая запись:\n\n"
-            f"👤 Клиент: {client_name}\n"
-            f"📱 Номер: {client_phone}\n"
-            f"📅 Дата и время: {appointment.datetime}\n"
-            f"🏥 Услуга: {appointment.purpose}"
+        message_text = admin_upcoming_appointment_text(
+            client_name, client_phone, appointment.datetime, appointment.purpose, lang,
         )
 
         try:
@@ -260,9 +632,10 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send cancellation notification to admin."""
+        lang = await self._resolve_lang(admin_telegram_id)
         await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text=f"Клиент {client_name} отменил запись.",
+            text=admin_cancellation_text(client_name, lang),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
@@ -273,11 +646,11 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify admin that the client changed the time of their own pending self-booking request."""
+        lang = await self._resolve_lang(admin_telegram_id)
         await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text=(
-                f"🕐 Клиент {client_name} изменил время заявки.\n"
-                f"📅 Новое время: {_format_datetime_value(appointment.datetime)}"
+            text=admin_client_changed_time_text(
+                client_name, _format_datetime_value(appointment.datetime), lang,
             ),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
@@ -289,9 +662,10 @@ class AppointmentNotificationService:
         client_name: str
     ) -> None:
         """Send confirmation notification to admin."""
+        lang = await self._resolve_lang(admin_telegram_id)
         await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text=f"Клиент {client_name} подтвердил запись.",
+            text=admin_confirmation_text(client_name, lang),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
@@ -300,9 +674,10 @@ class AppointmentNotificationService:
 
         Returns the sent message's message_id on success.
         """
+        lang = await self._resolve_lang(admin_telegram_id)
         return await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text="Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?",
+            text=admin_completion_prompt(lang),
             reply_markup=completion_followup_kb(appointment.id),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
@@ -319,11 +694,9 @@ class AppointmentNotificationService:
         Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
         """
-        message_text = (
-            f"🆕 Новая заявка на запись\n\n"
-            f"👤 Клиент: {client_name}\n"
-            f"📅 Дата и время: {appointment.datetime}\n"
-            f"📝 Жалоба: {appointment.purpose}"
+        lang = await self._resolve_lang(staff_telegram_id)
+        message_text = staff_new_booking_request_text(
+            client_name, appointment.datetime, appointment.purpose, lang,
         )
 
         try:
@@ -356,7 +729,7 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text="✅ Ваша запись подтверждена (автоматически за 2 часа до приема).",
+            text=client_auto_confirmed_text(client.language),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
@@ -379,11 +752,11 @@ class AppointmentNotificationService:
             return False
 
         if appointment.proposed_datetime is not None:
-            text = "⌛ Предложение по времени записи осталось без ответа, заявка на запись истекла."
+            text = pending_request_expired_proposal_text(client.language)
         elif appointment.created_by == CreatedBy.ADMIN:
-            text = "⌛ Вы не ответили на приглашение клиники на запись, заявка истекла."
+            text = pending_request_expired_admin_invite_text(client.language)
         else:
-            text = "⌛ Ваша заявка на запись истекла без ответа клиники."
+            text = pending_request_expired_client_request_text(client.language)
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
@@ -403,10 +776,8 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return None
 
-        message_text = (
-            "🔁 Клиника предложила другое время для вашей заявки\n\n"
-            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
-            "Согласны на новое время?"
+        message_text = reschedule_proposed_text(
+            _format_datetime_value(appointment.proposed_datetime), client.language,
         )
 
         return await self.notifier.send_message(
@@ -427,11 +798,10 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return None
 
-        message_text = (
-            "🔁 Клиника предлагает перенести вашу запись на другое время\n\n"
-            f"Текущее время: {_format_datetime_value(appointment.datetime)}\n"
-            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
-            "Согласны на новое время?"
+        message_text = appointment_reschedule_proposed_text(
+            _format_datetime_value(appointment.datetime),
+            _format_datetime_value(appointment.proposed_datetime),
+            client.language,
         )
 
         return await self.notifier.send_message(
@@ -454,11 +824,8 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = (
-            "⏰ Напоминаем: клиника предложила другое время для вашей заявки\n\n"
-            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
-            "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
-            "иначе заявка скоро автоматически аннулируется."
+        message_text = proposal_reminder_text(
+            _format_datetime_value(appointment.proposed_datetime), client.language,
         )
 
         await self.notifier.send_message(
@@ -483,12 +850,10 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = (
-            "⏰ Напоминаем: клиника предлагает перенести вашу запись на другое время\n\n"
-            f"Текущее время: {_format_datetime_value(appointment.datetime)}\n"
-            f"Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n\n"
-            "Пожалуйста, ответьте на предыдущее сообщение с кнопками, "
-            "иначе предложение скоро автоматически аннулируется."
+        message_text = appointment_reschedule_reminder_text(
+            _format_datetime_value(appointment.datetime),
+            _format_datetime_value(appointment.proposed_datetime),
+            client.language,
         )
 
         await self.notifier.send_message(
@@ -500,9 +865,12 @@ class AppointmentNotificationService:
         return True
 
     async def close_reschedule_proposal_message(
-        self, chat_id: int, message_id: int, text: str = "Это предложение больше не актуально."
+        self, chat_id: int, message_id: int, text: str | None = None
     ) -> None:
         """Edit a stale reschedule-proposal message so it no longer looks actionable."""
+        if text is None:
+            text = stale_proposal_default_text(await self._resolve_lang(chat_id))
+
         await self.notifier.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
     async def invalidate_stale_decision_message(
@@ -515,10 +883,11 @@ class AppointmentNotificationService:
         "message is not modified") is logged and swallowed so it doesn't abort a loop
         of invalidation calls across multiple recipients.
         """
+        lang = await self._resolve_lang(chat_id)
         if not await self.notifier.try_edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=f"{decided_by_label} уже принял(а) решение: {outcome_text}.",
+            text=stale_decision_text(decided_by_label, outcome_text, lang),
             reply_markup=None,
         ):
             logger.warning(
@@ -532,9 +901,10 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify staff that the client accepted the proposed new time."""
+        lang = await self._resolve_lang(staff_telegram_id)
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=f"✅ Клиент {client_name} согласился на предложенное время.",
+            text=staff_proposal_accepted_text(client_name, lang),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
@@ -545,9 +915,10 @@ class AppointmentNotificationService:
         client_name: str,
     ) -> None:
         """Notify staff that the client rejected the proposed new time."""
+        lang = await self._resolve_lang(staff_telegram_id)
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=f"❌ Клиент {client_name} отклонил предложенное время.",
+            text=staff_proposal_rejected_text(client_name, lang),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
@@ -558,9 +929,10 @@ class AppointmentNotificationService:
         PENDING admin-created invite, and a client-requested reschedule on a CONFIRMED
         appointment. Sent as a reply to the original admin notification message.
         """
+        lang = await self._resolve_lang(telegram_id)
         await self.notifier.send_message(
             chat_id=telegram_id,
-            text="⏰ Клиент предложил другое время, ответ ещё не получен.",
+            text=admin_proposal_reminder_text(lang),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 
@@ -576,13 +948,14 @@ class AppointmentNotificationService:
         Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
         """
-        message_text = (
-            f"🔁 Клиент просит перенести запись\n\n"
-            f"👤 Клиент: {client_name}\n"
-            f"📱 Номер: {appointment.client_phone or '—'}\n"
-            f"📅 Текущее время: {_format_datetime_value(appointment.datetime)}\n"
-            f"🆕 Предложенное время: {_format_datetime_value(appointment.proposed_datetime)}\n"
-            f"📝 Услуга: {appointment.purpose}"
+        lang = await self._resolve_lang(staff_telegram_id)
+        message_text = staff_reschedule_requested_text(
+            client_name,
+            appointment.client_phone or '—',
+            _format_datetime_value(appointment.datetime),
+            _format_datetime_value(appointment.proposed_datetime),
+            appointment.purpose,
+            lang,
         )
 
         try:
@@ -608,9 +981,8 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = (
-            "✅ Клиника приняла ваш перенос записи\n\n"
-            f"Новое время: {_format_datetime_value(appointment.datetime)}"
+        message_text = client_reschedule_accepted_text(
+            _format_datetime_value(appointment.datetime), client.language,
         )
 
         await self.notifier.send_message(
@@ -634,10 +1006,7 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = (
-            "❌ Клиника не смогла подтвердить перенос записи, запись отменена\n\n"
-            "Если запись всё ещё нужна, свяжитесь с клиникой или отправьте новую заявку."
-        )
+        message_text = client_reschedule_rejected_text(client.language)
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
@@ -662,10 +1031,8 @@ class AppointmentNotificationService:
         if client is None or client.telegram_user_id is None:
             return False
 
-        message_text = (
-            "⌛ Предложение по времени записи истекло без ответа\n\n"
-            f"Ваша запись остаётся в силе на прежнее время: {_format_datetime_value(appointment.datetime)}\n"
-            "Актуальную информацию по записи смотрите в разделе «Мои записи»."
+        message_text = client_reschedule_request_expired_text(
+            _format_datetime_value(appointment.datetime), client.language,
         )
 
         await self.notifier.send_message(
@@ -681,28 +1048,32 @@ class AppointmentNotificationService:
         appointment: Appointment,
         admin: User | None = None,
         rescheduled: bool = False,
+        lang: str = "ru",
     ) -> str:
         """Build appointment notification message for client."""
         admin_info = ""
         if admin:
-            admin_info = f"👨‍⚕️ Администратор: {admin.full_name}\n📱 Номер: {admin.phone or '—'}\n\n"
+            admin_info = _APPOINTMENT_MESSAGE_ADMIN_INFO.get(lang, _APPOINTMENT_MESSAGE_ADMIN_INFO["ru"]).format(
+                full_name=admin.full_name, phone=admin.phone or '—',
+            )
 
         if appointment.status == AppointmentStatus.PENDING:
             last_line = (
-                "Клиника изменила время вашей записи. Пожалуйста, подтвердите новое время."
+                _APPOINTMENT_MESSAGE_RESCHEDULED_CTA.get(lang, _APPOINTMENT_MESSAGE_RESCHEDULED_CTA["ru"])
                 if rescheduled
-                else "Пожалуйста, подтвердите вашу готовность посетить запись"
+                else _APPOINTMENT_MESSAGE_CONFIRM_CTA.get(lang, _APPOINTMENT_MESSAGE_CONFIRM_CTA["ru"])
             )
         else:
-            last_line = f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}"
+            status_label = APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)
+            last_line = f"Статус: {status_label}"
 
-        message = (
-            "Вам назначена запись на прием\n\n"
-            f"{admin_info}"
-            f"Дата и время: {appointment.datetime}\n"
-            f"Услуга: {appointment.purpose}\n"
-            f"Клиника: {appointment.clinic_name or 'Информация не доступна'}\n\n"
-            f"{last_line}"
+        message = _APPOINTMENT_MESSAGE_BODY.get(lang, _APPOINTMENT_MESSAGE_BODY["ru"]).format(
+            header=_APPOINTMENT_MESSAGE_HEADER.get(lang, _APPOINTMENT_MESSAGE_HEADER["ru"]),
+            admin_info=admin_info,
+            datetime=appointment.datetime,
+            purpose=appointment.purpose,
+            clinic=appointment.clinic_name or _NO_CLINIC_INFO.get(lang, _NO_CLINIC_INFO["ru"]),
+            last_line=last_line,
         )
 
         if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is not None:

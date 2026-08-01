@@ -66,6 +66,12 @@ class FakeUserRepoForIntegration:
                 return user
         return None
 
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        for user in self.users.values():
+            if user.telegram_user_id == telegram_user_id:
+                return user
+        return None
+
 
 class FakeStaffRepoForIntegration:
     pass
