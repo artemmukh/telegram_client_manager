@@ -2,6 +2,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+import bot.messages.booking as msg
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_button_text
 from bot.keyboards.client.appointment_manage_cb import (
     ClientManageActionCB,
@@ -70,7 +71,7 @@ def appointment_manage_list_kb(
 
 def appointment_manage_empty_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ К меню записей", callback_data="client_appointment_menu")
+    builder.button(text=msg.BACK_TO_APPOINTMENTS_MENU, callback_data="client_appointment_menu")
     return builder.as_markup()
 
 

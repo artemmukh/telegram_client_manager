@@ -1,6 +1,6 @@
 from datetime import date
 
-from bot.handlers.utils.client_utils.booking_helpers import build_booking_confirmation_text
+from bot.messages.booking import build_booking_confirmation_text
 
 
 def test_build_booking_confirmation_text_contains_key_fields():

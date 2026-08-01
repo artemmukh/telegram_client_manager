@@ -3,6 +3,7 @@ from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, BotCommandScopeChat
 
+import bot.messages.common as msg
 from bot.exceptions.user_exceptions import ContactOwnershipMismatchError, PhoneAlreadyExistsError, \
     UserAlreadyExistsError
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
@@ -26,7 +27,6 @@ from bot.services.utils.registration import RegistrationService
 from bot.states.register_states import RegisterStates
 from bot.utils.commands import ADMIN_COMMANDS, CLIENT_COMMANDS
 from bot.utils.info import (
-    display_registration_guide_msg,
     show_main_admin_menu,
     show_main_client_menu,
 )
@@ -77,7 +77,7 @@ def create_reg_router(
 
     @router.callback_query(F.data == "reg_guide")
     async def show_registration_guide(callback: CallbackQuery) -> None:
-        await callback.message.edit_text(display_registration_guide_msg(), reply_markup=None)
+        await callback.message.edit_text(msg.REGISTRATION_GUIDE, reply_markup=None)
         await callback.answer()
 
     # ---------- registration ----------

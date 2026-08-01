@@ -3,6 +3,7 @@ from datetime import date
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+import bot.messages.booking as msg
 from bot.keyboards.client.booking_cb import (
     ClientBookDayCB,
     ClientBookDayPageCB,
@@ -16,7 +17,7 @@ _WEEKDAY_LABELS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 
 def booking_cancel_kb(cancel_callback_data: str = "client_appointment_menu") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
+    builder.button(text=msg.BOOKING_CANCEL_KB_CANCEL, callback_data=cancel_callback_data)
     return builder.as_markup()
 
 
@@ -32,7 +33,7 @@ def booking_doctor_kb(
         )
     rows = [1] * len(staff_list)
 
-    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
+    builder.button(text=msg.BOOKING_DOCTOR_KB_CANCEL, callback_data=cancel_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)
@@ -59,20 +60,20 @@ def booking_day_kb(
     nav_buttons = 0
     if can_go_back:
         builder.button(
-            text="⬅️ Назад",
+            text=msg.BOOKING_DAY_KB_BACK,
             callback_data=ClientBookDayPageCB(week_offset=week_offset - 1).pack(),
         )
         nav_buttons += 1
     if can_go_forward:
         builder.button(
-            text="➡️ Дальше",
+            text=msg.BOOKING_DAY_KB_FORWARD,
             callback_data=ClientBookDayPageCB(week_offset=week_offset + 1).pack(),
         )
         nav_buttons += 1
     if nav_buttons:
         rows.append(nav_buttons)
 
-    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
+    builder.button(text=msg.BOOKING_DAY_KB_CANCEL, callback_data=cancel_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)
@@ -91,7 +92,7 @@ def booking_slot_kb(
     if len(slots) % 4:
         rows.append(len(slots) % 4)
 
-    builder.button(text="❌ Отмена", callback_data=cancel_callback_data)
+    builder.button(text=msg.BOOKING_SLOT_KB_CANCEL, callback_data=cancel_callback_data)
     rows.append(1)
 
     builder.adjust(*rows)
@@ -101,9 +102,9 @@ def booking_slot_kb(
 def booking_confirm_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="✅ Отправить", callback_data="client_book_submit")
-    builder.button(text="✏️ Изменить", callback_data="client_book_restart")
-    builder.button(text="❌ Отмена", callback_data="client_appointment_menu")
+    builder.button(text=msg.BOOKING_CONFIRM_KB_SUBMIT, callback_data="client_book_submit")
+    builder.button(text=msg.BOOKING_CONFIRM_KB_RESTART, callback_data="client_book_restart")
+    builder.button(text=msg.BOOKING_CONFIRM_KB_CANCEL, callback_data="client_appointment_menu")
 
     builder.adjust(1, 1, 1)
 

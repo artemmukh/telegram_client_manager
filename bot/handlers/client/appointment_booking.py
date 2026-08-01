@@ -5,8 +5,8 @@ from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+import bot.messages.booking as msg
 from bot.exceptions.exceptions import BotException
-from bot.handlers.utils.client_utils.booking_helpers import build_booking_confirmation_text
 from bot.keyboards.client.booking_cb import (
     ClientBookDayCB,
     ClientBookDayPageCB,
@@ -55,7 +55,7 @@ def create_client_booking_router(
 
         if not staff_list:
             await callback_query.message.edit_text(
-                "В вашей клинике сейчас нет доступных врачей для записи.",
+                msg.NO_AVAILABLE_STAFF,
                 reply_markup=booking_cancel_kb(),
             )
             await callback_query.answer()
@@ -70,7 +70,7 @@ def create_client_booking_router(
         await state.update_data(staff_options={str(staff.ID): staff.full_name for staff in staff_list})
         await state.set_state(ClientBookingStates.choose_doctor)
         await callback_query.message.edit_text(
-            "Выберите специалиста:",
+            msg.CHOOSE_SPECIALIST,
             reply_markup=booking_doctor_kb(staff_list),
         )
         await callback_query.answer()
@@ -94,7 +94,7 @@ def create_client_booking_router(
         await state.set_state(ClientBookingStates.choose_day)
 
         await callback_query.message.edit_text(
-            "Выберите день записи:",
+            msg.CHOOSE_DAY,
             reply_markup=booking_day_kb(days, week_offset, can_go_back, can_go_forward),
         )
         await callback_query.answer()
@@ -111,7 +111,7 @@ def create_client_booking_router(
     async def pick_doctor(callback_query: CallbackQuery, callback_data: ClientBookDoctorCB, state: FSMContext) -> None:
         data = await state.get_data()
         staff_options = data.get("staff_options", {})
-        staff_name = staff_options.get(str(callback_data.staff_user_id), "Специалист")
+        staff_name = staff_options.get(str(callback_data.staff_user_id), msg.DEFAULT_STAFF_NAME_FALLBACK)
 
         await state.update_data(staff_user_id=callback_data.staff_user_id, staff_name=staff_name)
         await render_day_selection_start(callback_query, state)
@@ -125,7 +125,7 @@ def create_client_booking_router(
         try:
             day = date.fromisoformat(callback_data.day_iso)
         except ValueError:
-            await callback_query.answer("Некорректная дата, попробуйте ещё раз.", show_alert=True)
+            await callback_query.answer(msg.INVALID_DATE, show_alert=True)
             return
 
         now = get_current_tashkent_datetime()
@@ -133,14 +133,14 @@ def create_client_booking_router(
         slots = await appointment_management_service.get_available_slots(data["staff_user_id"], day, now)
 
         if not slots:
-            await callback_query.answer("На этот день больше нет доступных слотов.", show_alert=True)
+            await callback_query.answer(msg.NO_SLOTS_FOR_DAY, show_alert=True)
             return
 
         await state.update_data(day_iso=callback_data.day_iso)
         await state.set_state(ClientBookingStates.choose_slot)
 
         await callback_query.message.edit_text(
-            f"Выберите время на {day.strftime('%d.%m.%Y')}:",
+            msg.choose_time_prompt(day),
             reply_markup=booking_slot_kb(slots, cancel_callback_data="client_book_back_to_day"),
         )
         await callback_query.answer()
@@ -156,7 +156,7 @@ def create_client_booking_router(
         try:
             datetime.strptime(callback_data.slot, "%H:%M")
         except ValueError:
-            await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
+            await callback_query.answer(msg.INVALID_TIME, show_alert=True)
             return
 
         data = await state.get_data()
@@ -166,7 +166,7 @@ def create_client_booking_router(
         await state.set_state(ClientBookingStates.complaint)
 
         await callback_query.message.edit_text(
-            "Опишите жалобу или причину визита (от 2 до 100 символов):",
+            msg.COMPLAINT_PROMPT,
             reply_markup=booking_cancel_kb(cancel_callback_data="client_book_back_to_day"),
         )
         await callback_query.answer()
@@ -185,7 +185,7 @@ def create_client_booking_router(
         data = await state.get_data()
         day = date.fromisoformat(data["day_iso"])
 
-        text = build_booking_confirmation_text(
+        text = msg.build_booking_confirmation_text(
             doctor_name=data["staff_name"],
             day=day,
             slot=data["slot"],
@@ -215,7 +215,7 @@ def create_client_booking_router(
         await state.clear()
 
         await callback_query.message.edit_text(
-            "✅ Заявка отправлена. Ожидайте подтверждения от клиники.",
+            msg.SUBMITTED,
             reply_markup=appointment_manage_empty_kb(),
         )
         await callback_query.answer()
