@@ -97,7 +97,7 @@ async def render_client_card(
     await callback_query.answer('')
     await callback_query.message.edit_text(
         build_client_card_text(user, lang),
-        reply_markup=client_card_kb(client_id, mode, page),
+        reply_markup=client_card_kb(client_id, mode, page, lang),
     )
     await remember_tracked_message(state, callback_query.message)
     return True

@@ -95,6 +95,13 @@ def router(user_repo, client, fake_client_clinic_repo_factory):
     )
 
 
+def _admin_user():
+    return User(
+        ID=1, full_name="Админ Админов", phone="+998900000000", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID,
+    )
+
+
 def _callback(user_id, action="approve"):
     callback = MagicMock()
     callback.from_user.id = ADMIN_TELEGRAM_ID
@@ -112,7 +119,7 @@ async def test_approve_name_change_updates_name_and_notifies_client(router, user
     approve_name_change = _get_handler(router.callback_query, "approve_name_change")
     callback, callback_data = _callback(client.ID, action="approve")
 
-    await approve_name_change(callback, callback_data)
+    await approve_name_change(callback, callback_data, _admin_user())
 
     assert user_repo.approved_ids == [client.ID]
     callback.message.edit_text.assert_awaited_once()
@@ -127,7 +134,7 @@ async def test_reject_name_change_keeps_old_name_and_notifies_client(router, use
     reject_name_change = _get_handler(router.callback_query, "reject_name_change")
     callback, callback_data = _callback(client.ID, action="reject")
 
-    await reject_name_change(callback, callback_data)
+    await reject_name_change(callback, callback_data, _admin_user())
 
     assert user_repo.rejected_ids == [client.ID]
     assert client.full_name == "Иван Иванов"
@@ -141,7 +148,7 @@ async def test_approve_name_change_already_resolved_shows_alert(router, user_rep
     approve_name_change = _get_handler(router.callback_query, "approve_name_change")
     callback, callback_data = _callback(client.ID, action="approve")
 
-    await approve_name_change(callback, callback_data)
+    await approve_name_change(callback, callback_data, _admin_user())
 
     callback.answer.assert_awaited_once()
     assert callback.answer.call_args.kwargs.get("show_alert") is True
@@ -156,7 +163,7 @@ async def test_reject_name_change_already_resolved_shows_alert(router, user_repo
     reject_name_change = _get_handler(router.callback_query, "reject_name_change")
     callback, callback_data = _callback(client.ID, action="reject")
 
-    await reject_name_change(callback, callback_data)
+    await reject_name_change(callback, callback_data, _admin_user())
 
     callback.answer.assert_awaited_once()
     assert callback.answer.call_args.kwargs.get("show_alert") is True

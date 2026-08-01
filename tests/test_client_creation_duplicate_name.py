@@ -64,6 +64,10 @@ def _callback_query():
     return callback_query
 
 
+def _current_user():
+    return User(full_name="Админ Админов", phone="+998900000000", role=Role.ADMIN, telegram_user_id=ADMIN_TELEGRAM_ID, ID=1)
+
+
 @pytest.fixture
 def fsm_context():
     storage = MemoryStorage()
@@ -83,7 +87,7 @@ async def test_finish_creates_directly_when_no_duplicate(fsm_context):
     finish = _find_handler(router, "client_creation_finish")
 
     await _seed_data(fsm_context)
-    await finish(_callback_query(), fsm_context)
+    await finish(_callback_query(), fsm_context, _current_user())
 
     assert len(user_repo.created_users) == 1
     assert user_repo.created_users[0].full_name == "Иванов Иван"
@@ -98,7 +102,7 @@ async def test_finish_shows_warning_when_duplicate_found(fsm_context):
 
     await _seed_data(fsm_context)
     callback_query = _callback_query()
-    await finish(callback_query, fsm_context)
+    await finish(callback_query, fsm_context, _current_user())
 
     assert user_repo.created_users == []
     state = await fsm_context.get_state()
@@ -118,7 +122,7 @@ async def test_duplicate_confirm_creates_client(fsm_context):
     await _seed_data(fsm_context)
     await fsm_context.set_state(ClientCreationStates.confirm_duplicate_name)
 
-    await confirm(_callback_query(), fsm_context)
+    await confirm(_callback_query(), fsm_context, _current_user())
 
     assert len(user_repo.created_users) == 1
     assert user_repo.created_users[0].full_name == "Иванов Иван"
@@ -135,7 +139,7 @@ async def test_duplicate_cancel_returns_to_confirm_create_without_creating(fsm_c
     await fsm_context.set_state(ClientCreationStates.confirm_duplicate_name)
 
     callback_query = _callback_query()
-    await cancel(callback_query, fsm_context)
+    await cancel(callback_query, fsm_context, _current_user())
 
     assert user_repo.created_users == []
     state = await fsm_context.get_state()

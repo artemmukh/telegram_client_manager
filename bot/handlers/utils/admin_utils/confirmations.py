@@ -69,14 +69,15 @@ async def show_confirmation(
 async def show_success(
     callback_query: CallbackQuery,
     title: str,
+    lang: str = "ru",
     **kwargs,
 ) -> None:
 
-    text = build_client_text(title, kwargs)
+    text = build_client_text(title, kwargs, lang)
 
     await callback_query.answer('')
     await callback_query.message.edit_text(
-        text=text, reply_markup=back_to_menu_kb()
+        text=text, reply_markup=back_to_menu_kb(lang)
     )
 
 

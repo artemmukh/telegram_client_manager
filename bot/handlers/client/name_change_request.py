@@ -1,4 +1,4 @@
-﻿from aiogram import F, Router
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -12,9 +12,38 @@ from bot.states.name_change_states import NameChangeStates
 from bot.utils.role import RoleFilter
 from bot.validators.validators import FULL_NAME_PATTERN
 
-_BACK_TO_PROFILE_KB = InlineKeyboardMarkup(
-    inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="profile_personal_data")]]
-)
+_BACK_BUTTON_TEXT = {
+    "ru": "⬅️ Назад",
+    "uz": "⬅️ Orqaga",
+}
+
+_ENTER_NEW_NAME_PROMPT = {
+    "ru": (
+        "👤 Введите ваше новое ФИ.\n\n"
+        "Пожалуйста, используйте реальные данные.\n"
+        "Они будут отображаться врачу во время записи на приём."
+    ),
+    "uz": (
+        "👤 Yangi F.I.Sh.ingizni kiriting.\n\n"
+        "Iltimos, haqiqiy ma'lumotlardan foydalaning.\n"
+        "Ular qabulga yozilishda shifokorga ko'rsatiladi."
+    ),
+}
+
+_REQUEST_SENT = {
+    "ru": "✅ Запрос на смену ФИ отправлен администратору клиники. Ожидайте решения.",
+    "uz": "✅ F.I.Sh.ni o'zgartirish so'rovi klinika administratoriga yuborildi. Qarorni kuting.",
+}
+
+
+def _back_to_profile_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text=_BACK_BUTTON_TEXT.get(lang, _BACK_BUTTON_TEXT["ru"]), callback_data="profile_personal_data",
+            )
+        ]]
+    )
 
 
 def create_name_change_request_router(
@@ -27,18 +56,18 @@ def create_name_change_request_router(
     router.callback_query.filter(RoleFilter("*"))
 
     @router.callback_query(F.data == "profile_change_name")
-    async def start_name_change(callback_query: CallbackQuery, state: FSMContext):
+    async def start_name_change(callback_query: CallbackQuery, state: FSMContext, current_user: User | None = None):
+        lang = current_user.language if current_user else "ru"
         await state.set_state(NameChangeStates.entering_name)
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            "👤 Введите ваше новое ФИ.\n\n"
-            "Пожалуйста, используйте реальные данные.\n"
-            "Они будут отображаться врачу во время записи на приём.",
-            reply_markup=_BACK_TO_PROFILE_KB,
+            _ENTER_NEW_NAME_PROMPT.get(lang, _ENTER_NEW_NAME_PROMPT["ru"]),
+            reply_markup=_back_to_profile_kb(lang),
         )
 
     @router.message(NameChangeStates.entering_name, F.text)
-    async def process_name_change(message: Message, state: FSMContext, current_user: User | None = None):
+    async def process_name_change(message: Message, state: FSMContext, current_user: User):
+        lang = current_user.language
         if not await full_name_processing(
                 message, state, next_state=NameChangeStates.entering_name, re_pattern=FULL_NAME_PATTERN):
             return
@@ -56,7 +85,7 @@ def create_name_change_request_router(
             user, new_full_name, reply_markup=name_change_approval_kb(user.ID),
         )
 
-        await message.answer("✅ Запрос на смену ФИ отправлен администратору клиники. Ожидайте решения.")
+        await message.answer(_REQUEST_SENT.get(lang, _REQUEST_SENT["ru"]))
         await state.clear()
 
     return router

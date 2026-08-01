@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
 from bot.keyboards.admin.client_management_kb.client_main_menu_kb import client_keyboard
+from bot.models.user import User
+from bot.utils.role import Role
 
 
 def _find_message_handler_object(router, name):
@@ -19,6 +21,10 @@ def _find_message_handler_object(router, name):
         if handler.callback.__name__ == name:
             return handler
     raise AssertionError(f"message handler {name} not found")
+
+
+def _current_user():
+    return User(full_name="Админ Админов", phone="+998900000000", role=Role.ADMIN, telegram_user_id=999, ID=1)
 
 
 # --- client_managing (text-triggered entrypoint: buttons + slash commands) ---
@@ -59,7 +65,7 @@ async def test_client_managing_new_slash_commands_trigger_same_response_as_butto
     message.text = trigger_text
     message.answer = AsyncMock()
 
-    await client_managing(message)
+    await client_managing(message, _current_user())
 
     message.answer.assert_awaited_once_with(
         text="Выберите действие над клиентом:", reply_markup=client_keyboard()

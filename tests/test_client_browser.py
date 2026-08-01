@@ -333,6 +333,13 @@ def _callback_query():
     return callback_query
 
 
+def _admin_current_user():
+    return User(
+        ID=99, full_name="Админ Админов", phone="+998900000000", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1,
+    )
+
+
 async def _run_start_delete(appointments_count, client_clinic_repo_factory):
     client = User(ID=1, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
     user_repo = FakeUserRepoForDelete(client)
@@ -349,7 +356,7 @@ async def _run_start_delete(appointments_count, client_clinic_repo_factory):
 
     callback_data = ClientActionCB(action="delete", client_id=1, mode="list", page=1)
     callback_query = _callback_query()
-    await start_delete(callback_query, callback_data, AsyncMock())
+    await start_delete(callback_query, callback_data, AsyncMock(), _admin_current_user())
 
     return callback_query.message.edit_text.call_args.args[0]
 
@@ -465,7 +472,7 @@ async def test_new_appointment_own_scope_admin_goes_straight_to_calendar_with_pr
     state = _new_appointment_fsm_context()
 
     with patch(NEW_APPOINTMENT_NOW_PATCH_TARGET, return_value=NEW_APPOINTMENT_FIXED_NOW):
-        await new_appointment(callback_query, callback_data, state)
+        await new_appointment(callback_query, callback_data, state, _admin_current_user())
 
     assert await state.get_state() == AppointmentCreationStates.choose_day
     data = await state.get_data()
@@ -511,7 +518,7 @@ async def test_new_appointment_clinic_wide_admin_shows_doctor_picker_with_presel
     callback_query = _callback_query()
     state = _new_appointment_fsm_context()
 
-    await new_appointment(callback_query, callback_data, state)
+    await new_appointment(callback_query, callback_data, state, _admin_current_user())
 
     assert await state.get_state() == AppointmentCreationStates.choose_doctor
     data = await state.get_data()
@@ -547,7 +554,7 @@ async def test_new_appointment_from_search_result_threads_search_data_into_origi
     await state.update_data(search_data={"full_name": "Иванов"})
 
     with patch(NEW_APPOINTMENT_NOW_PATCH_TARGET, return_value=NEW_APPOINTMENT_FIXED_NOW):
-        await new_appointment(callback_query, callback_data, state)
+        await new_appointment(callback_query, callback_data, state, _admin_current_user())
 
     data = await state.get_data()
     assert data["origin_search_data"] == {"full_name": "Иванов"}
@@ -567,7 +574,7 @@ async def test_new_appointment_client_not_found_shows_alert_and_does_not_touch_f
     callback_query = _callback_query()
     state = _new_appointment_fsm_context()
 
-    await new_appointment(callback_query, callback_data, state)
+    await new_appointment(callback_query, callback_data, state, _admin_current_user())
 
     callback_query.answer.assert_awaited_once_with("Клиент не найден.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -602,7 +609,7 @@ async def test_new_appointment_with_mm_instance_enters_calendar_with_admin_fallb
     state = _new_appointment_fsm_context()
 
     with patch(NEW_APPOINTMENT_NOW_PATCH_TARGET, return_value=NEW_APPOINTMENT_FIXED_NOW):
-        await new_appointment(callback_query, callback_data, state)
+        await new_appointment(callback_query, callback_data, state, _admin_current_user())
 
     assert await state.get_state() == AppointmentCreationStates.choose_day
     data = await state.get_data()
