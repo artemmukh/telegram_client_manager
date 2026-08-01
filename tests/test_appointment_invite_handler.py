@@ -97,7 +97,7 @@ async def test_confirm_invite_confirms_appointment_resyncs_jobs_and_notifies_adm
     confirm_invite = _get_handler_by_name(router, "confirm_invite")
 
     callback_query = _make_callback_query()
-    await confirm_invite(callback_query, AppointmentInviteActionCB(action="confirm", appointment_id=1))
+    await confirm_invite(callback_query, AppointmentInviteActionCB(action="confirm", appointment_id=1), _client_user())
 
     appointment_management_service.confirm_appointment_by_client.assert_awaited_once_with(1, 555)
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(confirmed_appointment)
@@ -125,7 +125,7 @@ async def test_cancel_invite_ask_shows_confirmation_dialog_and_sets_state():
     state = _make_state()
 
     await cancel_invite_ask(
-        callback_query, AppointmentInviteActionCB(action="cancel", appointment_id=1), state,
+        callback_query, AppointmentInviteActionCB(action="cancel", appointment_id=1), state, _client_user(),
     )
 
     state.set_state.assert_awaited_once_with(AppointmentResponseStates.confirm_cancel)
@@ -163,7 +163,7 @@ async def test_cancel_invite_yes_cancels_without_enforcing_cutoff_and_resyncs_jo
     callback_query = _make_callback_query()
     state = _make_state(appointment_id=1)
 
-    await cancel_invite_yes(callback_query, state)
+    await cancel_invite_yes(callback_query, state, _client_user())
 
     appointment_management_service.cancel_appointment_by_client.assert_awaited_once_with(
         1, 555, enforce_cutoff=False,
@@ -193,7 +193,7 @@ async def test_cancel_invite_no_reverts_to_invite_keyboard_without_cancelling():
     callback_query = _make_callback_query()
     state = _make_state(appointment_id=1)
 
-    await cancel_invite_no(callback_query, state)
+    await cancel_invite_no(callback_query, state, _client_user())
 
     appointment_management_service.cancel_appointment_by_client.assert_not_called()
     appointment_scheduler.resync_appointment_jobs.assert_not_called()

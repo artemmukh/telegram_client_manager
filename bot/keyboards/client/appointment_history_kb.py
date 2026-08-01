@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+import bot.messages.booking as msg
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_button_text
 from bot.keyboards.client.appointment_history_cb import (
     ClientHistoryActionCB,
@@ -16,12 +17,33 @@ from bot.utils.pagination import get_circular_page
 _TAB_LABELS = {status.value: label for status, label in APPOINTMENT_TAB_LABELS.items()}
 _TAB_ORDER = [status.value for status in APPOINTMENT_TAB_ORDER]
 
+_PAGE_LABEL = {
+    "ru": "{page} из {total}",
+    "uz": "{page} / {total}",
+}
+
+_GET_MEDICAL_RECORD_LABEL = {
+    "ru": "📄 Получить историю болезни",
+    "uz": "📄 Kasallik tarixini olish",
+}
+
+_ADD_DOCUMENT_LABEL = {
+    "ru": "➕ Добавить документ",
+    "uz": "➕ Hujjat qo'shish",
+}
+
+_BACK_TO_LIST_LABEL = {
+    "ru": "⬅️ Назад к списку",
+    "uz": "⬅️ Ro'yxatga qaytish",
+}
+
 
 def appointment_history_list_kb(
     items: list[Appointment],
     tab: str,
     current_page: int,
     total_pages: int,
+    lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
@@ -39,19 +61,21 @@ def appointment_history_list_kb(
         builder.button(text=text, callback_data=ClientHistoryPageCB(tab=tab_value, page=1).pack())
     rows += [3, 3]
 
+    page_label = _PAGE_LABEL.get(lang, _PAGE_LABEL["ru"])
+
     if total_pages > 1:
         prev_page = get_circular_page(current_page, total_pages, "prev")
         next_page = get_circular_page(current_page, total_pages, "next")
 
-        builder.button(text=f"{current_page} из {total_pages}", callback_data="noop")
+        builder.button(text=page_label.format(page=current_page, total=total_pages), callback_data="noop")
         builder.button(text="⬅️", callback_data=ClientHistoryPageCB(tab=tab, page=prev_page).pack())
         builder.button(text="➡️", callback_data=ClientHistoryPageCB(tab=tab, page=next_page).pack())
         rows += [1, 2]
     else:
-        builder.button(text="Страница 1 из 1", callback_data="noop")
+        builder.button(text=page_label.format(page=1, total=1), callback_data="noop")
         rows += [1]
 
-    builder.button(text="⬅️ К меню записей", callback_data="client_appointment_menu")
+    builder.button(text=msg.back_to_appointments_menu(lang), callback_data="client_appointment_menu")
     rows += [1]
 
     builder.adjust(*rows)
@@ -64,6 +88,7 @@ def appointment_history_card_kb(
     page: int,
     can_cancel: bool,
     can_reschedule: bool,
+    lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
@@ -75,11 +100,12 @@ def appointment_history_card_kb(
             action="cancel_ask", appointment_id=appointment.id, tab=tab, page=page,
         ),
         reschedule_cb=ClientRescheduleStartCB(appointment_id=appointment.id),
+        lang=lang,
     )
 
     if appointment.status == AppointmentStatus.COMPLETED:
         builder.button(
-            text="📄 Получить историю болезни",
+            text=_GET_MEDICAL_RECORD_LABEL.get(lang, _GET_MEDICAL_RECORD_LABEL["ru"]),
             callback_data=ClientHistoryActionCB(
                 action="get_medical_record", appointment_id=appointment.id, tab=tab, page=page,
             ).pack(),
@@ -87,7 +113,7 @@ def appointment_history_card_kb(
         button_rows += 1
 
         builder.button(
-            text="➕ Добавить документ",
+            text=_ADD_DOCUMENT_LABEL.get(lang, _ADD_DOCUMENT_LABEL["ru"]),
             callback_data=ClientHistoryActionCB(
                 action="add_medical_record", appointment_id=appointment.id, tab=tab, page=page,
             ).pack(),
@@ -95,7 +121,7 @@ def appointment_history_card_kb(
         button_rows += 1
 
     builder.button(
-        text="⬅️ Назад к списку",
+        text=_BACK_TO_LIST_LABEL.get(lang, _BACK_TO_LIST_LABEL["ru"]),
         callback_data=ClientHistoryPageCB(tab=tab, page=page).pack(),
     )
     button_rows += 1

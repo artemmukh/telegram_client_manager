@@ -314,7 +314,7 @@ async def test_client_get_medical_record_ready_sends_document(tmp_path):
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     callback_query.message.answer_document.assert_awaited_once()
     sent_document = callback_query.message.answer_document.call_args.args[0]
@@ -329,7 +329,7 @@ async def test_client_get_medical_record_pending_shows_alert_without_document():
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     callback_query.message.answer_document.assert_not_awaited()
     callback_query.message.answer.assert_awaited_once_with(
@@ -345,7 +345,7 @@ async def test_client_get_medical_record_no_prior_record_triggers_fallback_gener
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     service.generate.assert_awaited_once_with(1)
     callback_query.message.answer_document.assert_not_awaited()
@@ -365,7 +365,7 @@ async def test_client_get_medical_record_denies_access_to_other_clients_appointm
     callback_query = _callback_query(OTHER_CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()
@@ -385,7 +385,7 @@ async def test_client_get_medical_record_answers_unavailable_when_service_not_co
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="get_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     callback_query.answer.assert_awaited_once_with("Функция недоступна.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()
@@ -405,7 +405,7 @@ async def test_client_add_medical_record_generates_for_the_appointments_current_
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     service.generate.assert_awaited_once_with(1, "Консультация")
     callback_query.message.answer_document.assert_awaited_once()
@@ -424,7 +424,7 @@ async def test_client_add_medical_record_denies_access_to_other_clients_appointm
     callback_query = _callback_query(OTHER_CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()
@@ -441,7 +441,7 @@ async def test_client_add_medical_record_answers_unavailable_when_service_not_co
     callback_query = _callback_query(CLIENT_TELEGRAM_ID)
     callback_data = ClientHistoryActionCB(action="add_medical_record", appointment_id=1, tab="completed", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _client_user())
 
     callback_query.answer.assert_awaited_once_with("Функция недоступна.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()

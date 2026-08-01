@@ -173,6 +173,7 @@ async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_st
         callback_query,
         ClientRescheduleDayCB(appointment_id=1, week_offset=0, day_iso="not-a-date"),
         state,
+        _client_user(),
     )
 
     callback_query.answer.assert_called_once_with("Некорректная дата, попробуйте ещё раз.", show_alert=True)
@@ -203,6 +204,7 @@ async def test_pick_slot_with_malformed_slot_shows_alert_and_does_not_touch_stat
         callback_query,
         ClientRescheduleSlotCB(appointment_id=1, slot="xx:yy"),
         state,
+        _client_user(),
     )
 
     callback_query.answer.assert_called_once_with("Некорректное время, попробуйте ещё раз.", show_alert=True)
@@ -234,6 +236,7 @@ async def test_pick_slot_with_valid_slot_updates_state_and_renders_confirm_scree
         callback_query,
         ClientRescheduleSlotCB(appointment_id=1, slot="10:00"),
         state,
+        _client_user(),
     )
 
     state.update_data.assert_awaited_once_with(slot="10:00", new_datetime="2026-08-01 10:00")

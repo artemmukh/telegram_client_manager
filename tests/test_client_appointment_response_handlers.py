@@ -163,7 +163,7 @@ async def test_show_appointment_management_new_slash_commands_trigger_same_respo
     message.text = trigger_text
     message.answer = AsyncMock()
 
-    await show_appointment_management(message)
+    await show_appointment_management(message, _client())
 
     message.answer.assert_awaited_once_with(
         "Выберите действие:", reply_markup=client_appointment_management_kb()
@@ -219,7 +219,7 @@ async def test_handle_appointment_confirm_handler_resyncs_jobs_and_edits_without
     handle_appointment_confirm = _get_handler_by_name(router, "handle_appointment_confirm")
 
     callback_query = _make_callback_query("appt_confirm:1")
-    await handle_appointment_confirm(callback_query)
+    await handle_appointment_confirm(callback_query, _client())
 
     appointment_management_service.confirm_appointment_by_client.assert_awaited_once_with(1, 12345)
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(confirmed_appointment)
@@ -250,7 +250,7 @@ async def test_handle_appointment_confirm_with_malformed_id_shows_alert_and_does
     handle_appointment_confirm = _get_handler_by_name(router, "handle_appointment_confirm")
 
     callback_query = _make_callback_query("appt_confirm:not-an-id")
-    await handle_appointment_confirm(callback_query)
+    await handle_appointment_confirm(callback_query, _client())
 
     callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
     callback_query.message.edit_text.assert_not_awaited()
@@ -274,7 +274,7 @@ async def test_handle_appointment_details_with_malformed_id_shows_alert_and_does
     handle_appointment_details = _get_handler_by_name(router, "handle_appointment_details")
 
     callback_query = _make_callback_query("appt_details:not-an-id")
-    await handle_appointment_details(callback_query)
+    await handle_appointment_details(callback_query, _client())
 
     callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
     appointment_management_service.get_appointment_for_client.assert_not_awaited()
@@ -296,7 +296,7 @@ async def test_handle_appointment_cancel_with_malformed_id_shows_alert_and_does_
     state.set_state = AsyncMock()
     state.update_data = AsyncMock()
 
-    await handle_appointment_cancel(callback_query, state)
+    await handle_appointment_cancel(callback_query, state, _client())
 
     callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
     callback_query.message.edit_text.assert_not_awaited()
@@ -373,7 +373,7 @@ async def test_handle_appointment_confirm_handler_does_not_notify_admin():
     )
     handle_appointment_confirm = _get_handler_by_name(router, "handle_appointment_confirm")
 
-    await handle_appointment_confirm(_make_callback_query("appt_confirm:1"))
+    await handle_appointment_confirm(_make_callback_query("appt_confirm:1"), _client())
 
     notification_service.notify_admin_confirmation.assert_not_awaited()
 
@@ -416,7 +416,7 @@ async def test_handle_cancel_confirmation_yes_notifies_sole_doctor_recipient():
     callback_query = _make_callback_query("appt_cancel_confirm_yes")
     state = _make_state_with_appointment_id(1)
 
-    await handle_cancel_confirmation_yes(callback_query, state)
+    await handle_cancel_confirmation_yes(callback_query, state, _client())
 
     notification_service.notify_admin_cancellation.assert_awaited_once_with(
         doctor.telegram_user_id, cancelled_appointment, client.full_name,
@@ -462,7 +462,7 @@ async def test_handle_cancel_confirmation_yes_notifies_remaining_recipients_afte
     state = _make_state_with_appointment_id(1)
 
     # Should not raise, despite the first recipient's send failing.
-    await handle_cancel_confirmation_yes(callback_query, state)
+    await handle_cancel_confirmation_yes(callback_query, state, _client())
 
     assert notification_service.notify_admin_cancellation.await_count == 2
     notification_service.notify_admin_cancellation.assert_any_await(
