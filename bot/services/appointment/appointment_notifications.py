@@ -47,7 +47,7 @@ class AppointmentNotificationService:
         self.appointment_repo = appointment_repo
 
     async def notify_client_appointment_with_buttons(
-        self, appointment: Appointment, use_invite_kb: bool = True
+        self, appointment: Appointment, use_invite_kb: bool = True, rescheduled: bool = False
     ) -> int | None:
         """Send full appointment notification to client WITH confirmation buttons (on creation).
 
@@ -58,6 +58,10 @@ class AppointmentNotificationService:
           client's own self-booking request) — no decision is pending, so no
           negotiation buttons are shown.
 
+        rescheduled=True adjusts the status line for a PENDING appointment to make
+        clear the clinic just changed the time of an existing appointment, rather
+        than reading like a brand-new invite.
+
         Returns the sent message's message_id (to be persisted so later reminders can reply
         to it), or None if the client was not found or has no telegram_id.
         """
@@ -67,7 +71,7 @@ class AppointmentNotificationService:
             return None
 
         admin = await self.user_repo.get_user_by_id(appointment.doctor_id) if appointment.doctor_id else None
-        message_text = self._build_appointment_message(appointment, admin)
+        message_text = self._build_appointment_message(appointment, admin, rescheduled=rescheduled)
 
         reply_markup = (
             appointment_invite_kb(appointment.id) if use_invite_kb
@@ -678,6 +682,7 @@ class AppointmentNotificationService:
         self,
         appointment: Appointment,
         admin: User | None = None,
+        rescheduled: bool = False,
     ) -> str:
         """Build appointment notification message for client."""
         admin_info = ""
@@ -685,7 +690,11 @@ class AppointmentNotificationService:
             admin_info = f"👨‍⚕️ Администратор: {admin.full_name}\n📱 Номер: {admin.phone or '—'}\n\n"
 
         if appointment.status == AppointmentStatus.PENDING:
-            last_line = "Пожалуйста, подтвердите вашу готовность посетить запись"
+            last_line = (
+                "Клиника изменила время вашей записи. Пожалуйста, подтвердите новое время."
+                if rescheduled
+                else "Пожалуйста, подтвердите вашу готовность посетить запись"
+            )
         else:
             last_line = f"Статус: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}"
 

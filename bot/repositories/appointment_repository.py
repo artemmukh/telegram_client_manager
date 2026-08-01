@@ -527,27 +527,37 @@ class AppointmentRepository:
     async def try_propose_new_datetime(
         self,
         appointment_id: int,
-        proposed_datetime: str,
-        proposed_by: str,
-        decided_by_user_id: int | None,
+        new_datetime: str,
+        decided_by_user_id: int,
+        status_updated_at: str,
         expected_status: str,
     ) -> bool:
-        # Covers both a fresh admin proposal on a still-pending booking request and an
-        # admin counter-proposing on an already-confirmed reschedule negotiation, so a
-        # static status blacklist can't tell a legitimate confirmed-appointment
-        # reschedule apart from a stale pending-broadcast race; expected_status pins
-        # the update to the exact prior status the caller observed (true CAS), and the
-        # proposed_datetime/proposed_by check still blocks two admins racing to propose.
+        # No longer stages a proposal awaiting a client callback -- the admin's new
+        # datetime is committed immediately and the appointment is demoted to PENDING
+        # (from either PENDING or CONFIRMED) so it awaits an ordinary reconfirmation,
+        # expiring via the generic pending-expiry job like any other PENDING
+        # appointment. Covers both a fresh admin proposal on a still-pending booking
+        # request and an admin reschedule on an already-confirmed appointment, so the
+        # target status is always 'pending' regardless of which one expected_status
+        # was. expected_status pins the update to the exact prior status the caller
+        # observed (true CAS) against a stale confirm/reject race; two admins racing
+        # to propose on the same still-pending request now both succeed
+        # (last-writer-wins on datetime), which is intended.
         sql = """
             UPDATE appointments
-            SET proposed_datetime = ?, proposed_by = ?, decided_by_user_id = ?
+            SET datetime = ?, status = 'pending', decided_by_user_id = ?, status_updated_at = ?,
+                proposed_datetime = NULL, proposed_by = NULL
             WHERE id = ?
                 AND status = ?
-                AND NOT (proposed_datetime IS NOT NULL AND proposed_by = 'admin')
         """
-        params = (proposed_datetime, proposed_by, decided_by_user_id, appointment_id, expected_status)
-        cursor = await self.connection.execute(sql, params)
-        await self.connection.commit()
+        params = (new_datetime, decided_by_user_id, status_updated_at, appointment_id, expected_status)
+        try:
+            cursor = await self.connection.execute(sql, params)
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
 
         return cursor.rowcount > 0
 

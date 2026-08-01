@@ -132,18 +132,20 @@ class FakeAppointmentRepository:
         return True
 
     async def try_propose_new_datetime(
-        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+        self, appointment_id, new_datetime, decided_by_user_id, status_updated_at, expected_status
     ):
+        # Mirrors the real repository: commits the new datetime immediately and
+        # demotes the appointment to PENDING, clearing any stale proposal fields --
+        # no longer stages a proposal awaiting a client callback.
         appointment = self._find(appointment_id)
         if appointment is None:
             return False
         if appointment.status.value != expected_status:
             return False
-        if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
-            return False
 
-        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
-        self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        self.status_updates.append((appointment_id, AppointmentStatus.PENDING))
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
         return True
 
     async def try_apply_new_datetime_immediately(
@@ -2055,7 +2057,7 @@ async def test_reject_pending_request_blocked_when_proposal_pending():
 
 
 @pytest.mark.asyncio
-async def test_propose_new_datetime_sets_proposed_without_touching_status_or_datetime():
+async def test_propose_new_datetime_commits_datetime_and_stays_pending_when_client_has_telegram():
     appt_repo = FakeAppointmentRepository([_pending_client_request()])
     admin, staff = _admin_with_scope("clinic")
     service = AppointmentManagement(
@@ -2067,13 +2069,14 @@ async def test_propose_new_datetime_sets_proposed_without_touching_status_or_dat
         1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="booking"
     )
 
-    assert appointment.proposed_datetime == proposed_datetime
-    assert appointment.proposed_by is CreatedBy.ADMIN
+    assert appointment.proposed_datetime is None
+    assert appointment.proposed_by is None
     assert appointment.status is AppointmentStatus.PENDING
-    assert appointment.datetime == "2026-07-10 14:30"
-    assert appt_repo.proposed_datetime_updates == [(1, proposed_datetime)]
-    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
-    assert appt_repo.status_updates == []
+    assert appointment.datetime == proposed_datetime
+    assert appointment.decided_by_user_id == admin.ID
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
+    assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
 
 
 @pytest.mark.asyncio
@@ -2096,10 +2099,11 @@ async def test_propose_new_datetime_raises_when_own_proposal_already_outstanding
 
 
 @pytest.mark.asyncio
-async def test_propose_new_datetime_overwrites_when_proposed_by_client():
+async def test_propose_new_datetime_overwrites_and_demotes_when_proposed_by_client():
     """New allowed behavior: an admin counter-proposing over a CLIENT proposal
     (client asked for a reschedule, admin now offers a different time) is not
-    blocked by the guard -- it overwrites proposed_datetime/proposed_by."""
+    blocked by the guard -- it commits the admin's new datetime directly and
+    demotes the appointment to PENDING, clearing the client's proposal fields."""
     now = get_current_tashkent_datetime()
     new_proposed_datetime = _future_datetime(days=4, time_str="10:00")
     appt_repo = FakeAppointmentRepository(
@@ -2117,18 +2121,21 @@ async def test_propose_new_datetime_overwrites_when_proposed_by_client():
         1, staff_telegram_id=999, proposed_datetime=new_proposed_datetime, kind="reschedule"
     )
 
-    assert appointment.proposed_datetime == new_proposed_datetime
-    assert appointment.proposed_by is CreatedBy.ADMIN
-    assert appointment.status is AppointmentStatus.CONFIRMED
-    assert appt_repo.proposed_datetime_updates == [(1, new_proposed_datetime)]
-    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
+    assert appointment.datetime == new_proposed_datetime
+    assert appointment.proposed_datetime is None
+    assert appointment.proposed_by is None
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
+    assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
 
 
 @pytest.mark.asyncio
-async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_outstanding_proposal():
+async def test_propose_new_datetime_demotes_confirmed_appointment_with_no_outstanding_proposal():
     """propose_new_datetime is no longer restricted to PENDING self-booking
-    requests -- it now also works on a CONFIRMED appointment with a clean
-    negotiation state (this is the admin-initiated reschedule proposal flow)."""
+    requests -- it also works on a CONFIRMED appointment with a clean
+    negotiation state (this is the admin-initiated reschedule flow), committing
+    the new datetime directly and demoting the appointment to PENDING."""
     now = get_current_tashkent_datetime()
     proposed_datetime = _future_datetime(days=3, time_str="10:00")
     appt_repo = FakeAppointmentRepository(
@@ -2143,11 +2150,13 @@ async def test_propose_new_datetime_succeeds_on_confirmed_appointment_with_no_ou
         1, staff_telegram_id=999, proposed_datetime=proposed_datetime, kind="reschedule"
     )
 
-    assert appointment.proposed_datetime == proposed_datetime
-    assert appointment.proposed_by is CreatedBy.ADMIN
-    assert appointment.status is AppointmentStatus.CONFIRMED
-    assert appt_repo.proposed_datetime_updates == [(1, proposed_datetime)]
-    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
+    assert appointment.datetime == proposed_datetime
+    assert appointment.proposed_datetime is None
+    assert appointment.proposed_by is None
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
+    assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
 
 
 @pytest.mark.asyncio

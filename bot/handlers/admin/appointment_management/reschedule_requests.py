@@ -25,6 +25,7 @@ from bot.keyboards.admin.record_management_kb.reschedule_request_kb import (
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.utils.date_parser import format_datetime_for_db
 from bot.states.admin.record_management.reschedule_request_states import RescheduleRequestStates
+from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,7 @@ def create_admin_reschedule_requests_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
-        if appointment.proposed_datetime is None:
+        if appointment.status == AppointmentStatus.CONFIRMED:
             await callback_query.answer("Время записи изменено")
             await callback_query.message.edit_text(
                 f"✅ Время записи изменено на: {data.get('appointment_datetime_display')}"
@@ -259,19 +260,21 @@ def create_admin_reschedule_requests_router(
 
         if notification_service:
             try:
-                message_id = await notification_service.notify_client_appointment_reschedule_proposed(appointment)
+                message_id = await notification_service.notify_client_appointment_with_buttons(
+                    appointment, rescheduled=True,
+                )
                 if message_id:
-                    await appt_mng.update_proposal_message_id(appointment.id, message_id)
+                    await appt_mng.update_notification_message_id(appointment.id, message_id)
             except Exception as e:
                 logger.warning(
-                    f"Failed to notify client about counter-proposed time for appointment "
+                    f"Failed to notify client about new pending time for appointment "
                     f"{callback_data.appointment_id}: {e}"
                 )
 
-        await callback_query.answer("Встречное предложение отправлено клиенту")
+        await callback_query.answer("Время записи изменено, клиенту отправлено уведомление")
         await callback_query.message.edit_text(
-            f"🔁 Клиенту отправлено встречное предложение времени: "
-            f"{data.get('appointment_datetime_display')}\nОжидаем ответа клиента."
+            f"🔁 Клиенту назначено новое время: "
+            f"{data.get('appointment_datetime_display')}\nОжидаем подтверждения клиента."
         )
         await invalidate_reschedule_siblings(callback_query, appointment)
         await state.clear()

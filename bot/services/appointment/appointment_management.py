@@ -338,11 +338,19 @@ class AppointmentManagement:
         return f"{role} {user.full_name}"
 
     def resolve_decision_outcome_text(self, appointment: Appointment, kind: str) -> str:
+        # The PENDING+no-proposal branches below only match a request that has just
+        # been decided by propose_new_datetime (confirm_pending_request/reject_pending_request
+        # and accept/reject_client_reschedule always land on CONFIRMED/CANCELLED, never
+        # PENDING) -- this function is only ever called after a decision has actually
+        # been committed (see _raise_already_decided and invalidate_sibling_notifications
+        # call sites), so it can't misfire on a plain, never-touched self-booking request.
         if kind == "booking":
             if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None:
                 return "подтверждена"
             if appointment.status == AppointmentStatus.CANCELLED:
                 return "отклонена"
+            if appointment.status == AppointmentStatus.PENDING and appointment.proposed_datetime is None:
+                return "назначено новое время, ожидает подтверждения клиента"
             if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
                 return "предложено другое время"
         elif kind == "reschedule":
@@ -350,6 +358,8 @@ class AppointmentManagement:
                 return "перенос принят"
             if appointment.status == AppointmentStatus.CANCELLED:
                 return "перенос отклонён"
+            if appointment.status == AppointmentStatus.PENDING and appointment.proposed_datetime is None:
+                return "время изменено, ожидает подтверждения клиента"
             if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
                 return "предложено другое время"
         elif kind == "completion":
@@ -490,15 +500,19 @@ class AppointmentManagement:
 
             return appointment
 
+        status_updated_at = get_current_tashkent_time()
         proposed = await self.appointment_repository.try_propose_new_datetime(
-            appointment_id, validated, CreatedBy.ADMIN.value, acting_user_id, appointment.status.value
+            appointment_id, validated, acting_user_id, status_updated_at, appointment.status.value
         )
         if not proposed:
             await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind=kind)
 
-        appointment.proposed_datetime = validated
-        appointment.proposed_by = CreatedBy.ADMIN
+        appointment.datetime = validated
+        appointment.status = AppointmentStatus.PENDING
+        appointment.proposed_datetime = None
+        appointment.proposed_by = None
         appointment.decided_by_user_id = acting_user_id
+        appointment.status_updated_at = status_updated_at
 
         return appointment
 

@@ -352,14 +352,18 @@ async def test_appointment_lifecycle_admin_created_confirm_reschedule_cancel(e2e
     )
     assert confirmed.status is AppointmentStatus.CONFIRMED
 
-    # Admin proposes a different time; client accepts it.
+    # Admin proposes a different time; the new datetime is committed immediately
+    # and the appointment is demoted to ordinary PENDING, awaiting the client's
+    # reconfirmation (no more staged proposed_datetime/proposed_by negotiation).
     proposed_time = _future_datetime(days=5)
     proposed = await e2e.appointment_management.propose_new_datetime(
         appointment.id, ADMIN_TELEGRAM_ID, proposed_time, kind="reschedule"
     )
-    assert proposed.proposed_datetime == proposed_time
+    assert proposed.status is AppointmentStatus.PENDING
+    assert proposed.datetime == proposed_time
+    assert proposed.proposed_datetime is None
 
-    accepted = await e2e.appointment_management.accept_proposed_datetime(appointment.id, client.telegram_user_id)
+    accepted = await e2e.appointment_management.confirm_appointment_by_client(appointment.id, client.telegram_user_id)
     assert accepted.datetime == proposed_time
     assert accepted.status is AppointmentStatus.CONFIRMED
     assert accepted.proposed_datetime is None

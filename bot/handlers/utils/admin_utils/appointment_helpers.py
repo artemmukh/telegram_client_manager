@@ -7,7 +7,12 @@ from aiogram.types import CallbackQuery, Message
 from bot.config.clinic_instances import DATEPARSER_BY_INSTANCE as DATA_PARSE_MODE
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    clamp_month_to_range,
+    format_month_label,
+)
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name
+from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_calendar_kb
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.keyboards.client.booking_kb import booking_day_kb, booking_doctor_kb
 from bot.models.appointment import Appointment
@@ -240,6 +245,44 @@ async def render_day_selection_start_from_message(appt_mng, message: Message, st
     await _send_day_selection(appt_mng, state, start_offset, send)
 
 
+async def _send_calendar_month(state: FSMContext, year: int, month: int, send) -> None:
+    await state.update_data(calendar_year=year, calendar_month=month)
+    await state.set_state(AppointmentCreationStates.choose_day)
+
+    await send(
+        f"📅 {format_month_label(year, month)}",
+        appointment_calendar_kb(
+            year, month, back_callback_data="back_to_main_records", back_label="⬅️ К записям",
+        ),
+    )
+
+
+async def render_calendar_month(callback_query: CallbackQuery, state: FSMContext, year: int, month: int) -> None:
+    async def send(text: str, reply_markup) -> None:
+        await callback_query.message.edit_text(text, reply_markup=reply_markup)
+
+    await _send_calendar_month(state, year, month, send)
+    await callback_query.answer()
+
+
+async def render_calendar_start(appt_mng, callback_query: CallbackQuery, state: FSMContext) -> None:
+    await _ensure_staff_user_id(appt_mng, state, callback_query.from_user.id)
+    today = get_current_tashkent_datetime().date()
+    year, month = clamp_month_to_range(today.year, today.month)
+    await render_calendar_month(callback_query, state, year, month)
+
+
+async def render_calendar_start_from_message(appt_mng, message: Message, state: FSMContext) -> None:
+    await _ensure_staff_user_id(appt_mng, state, message.from_user.id)
+    today = get_current_tashkent_datetime().date()
+    year, month = clamp_month_to_range(today.year, today.month)
+
+    async def send(text: str, reply_markup) -> None:
+        await message.answer(text, reply_markup=reply_markup)
+
+    await _send_calendar_month(state, year, month, send)
+
+
 async def begin_appointment_creation(
     appt_mng, callback_query: CallbackQuery, state: FSMContext, *,
     instance: str,
@@ -287,7 +330,7 @@ async def begin_appointment_creation(
     if full_name is not None and phone is not None:
         if DATA_PARSE_MODE.get(instance) == "slots":
             await callback_query.answer('')
-            await render_day_selection_start(appt_mng, callback_query, state)
+            await render_calendar_start(appt_mng, callback_query, state)
             return
 
         await state.set_state(AppointmentCreationStates.appointment_datetime)

@@ -74,7 +74,7 @@ PRICE_LIST_STUB_MESSAGE = "Прайс-лист скоро появится зд�
 LOCATION_STUB_MESSAGE = "Адрес клиники скоро появится здесь. Уточняйте у администратора клиники."
 
 DATEPARSER_BY_INSTANCE: dict[str, str] = {
-    "zb": "parser",
+    "zb": "slots",
     "mm": "slots",
 }
 

@@ -14,14 +14,19 @@ test_appointment_browser_propose_handler.py): build the router with fake
 repositories, pull the decorated callback out of router.callback_query
 handlers, and invoke it directly with mock aiogram objects.
 """
+from datetime import datetime
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import Chat, User as TelegramUser
 
 from bot.handlers.admin.appointment_management.appointment_creation import (
     create_admin_appointment_creation_router,
 )
-from bot.handlers.utils.admin_utils.appointment_helpers import DATETIME_INPUT_PROMPT
-from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import format_month_label
 from bot.keyboards.client.booking_cb import ClientBookDoctorCB
 from bot.keyboards.client.booking_kb import booking_doctor_kb
 from bot.models.clinic import Clinic
@@ -32,6 +37,7 @@ from bot.utils.role import Role
 
 
 ADMIN_TELEGRAM_ID = 999
+FIXED_NOW = datetime(2026, 7, 6, 9, 0)
 
 
 class FakeAppointmentRepository:
@@ -247,7 +253,12 @@ async def test_pick_doctor_falls_back_to_generic_label_when_id_not_in_options():
 # --- pick_doctor: client_preselected (booking from a client's card) skips FIO entry ---
 
 @pytest.mark.asyncio
-async def test_pick_doctor_with_client_preselected_skips_full_name_goes_straight_to_datetime():
+async def test_pick_doctor_with_client_preselected_skips_full_name_goes_straight_to_calendar():
+    """zb and mm both run "slots" mode now, so a preselected client goes
+    straight to the calendar month view instead of the retired free-text
+    datetime prompt. Uses a real FSMContext (not the static _state() mock)
+    because render_calendar_start's _ensure_staff_user_id fallback needs
+    get_data() to reflect the staff_user_id pick_doctor just stored."""
     admin = _admin()
     user_repo = FakeUserRepo(admin=admin)
     staff_repo = FakeStaffRepo({
@@ -257,7 +268,10 @@ async def test_pick_doctor_with_client_preselected_skips_full_name_goes_straight
     pick_doctor = _find_callback_handler(router, "pick_doctor")
 
     callback_query = _callback_query()
-    state = _state(
+    storage = MemoryStorage()
+    key = (Chat(id=100, type="private").id, TelegramUser(id=ADMIN_TELEGRAM_ID, is_bot=False, first_name="Admin").id)
+    state = FSMContext(storage=storage, key=key)
+    await state.update_data(
         staff_options={"99": "Petrov Petr"},
         client_preselected=True,
         full_name="Иванов Иван",
@@ -268,11 +282,18 @@ async def test_pick_doctor_with_client_preselected_skips_full_name_goes_straight
     )
     callback_data = ClientBookDoctorCB(staff_user_id=99)
 
-    await pick_doctor(callback_query, callback_data, state)
+    with patch(
+        "bot.handlers.utils.admin_utils.appointment_helpers.get_current_tashkent_datetime",
+        return_value=FIXED_NOW,
+    ):
+        await pick_doctor(callback_query, callback_data, state)
 
-    state.update_data.assert_awaited_once_with(staff_user_id=99, staff_name="Petrov Petr")
-    state.set_state.assert_awaited_once_with(AppointmentCreationStates.appointment_datetime)
+    data = await state.get_data()
+    assert data["staff_user_id"] == 99
+    assert data["staff_name"] == "Petrov Petr"
+    assert data["calendar_year"] == FIXED_NOW.year
+    assert data["calendar_month"] == FIXED_NOW.month
+    assert await state.get_state() == AppointmentCreationStates.choose_day
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
-    assert args[0] == DATETIME_INPUT_PROMPT
-    assert kwargs["reply_markup"] == back_to_records_kb()
+    assert args[0] == f"📅 {format_month_label(FIXED_NOW.year, FIXED_NOW.month)}"

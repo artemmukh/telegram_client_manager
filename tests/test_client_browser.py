@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
@@ -9,14 +10,13 @@ from aiogram.types import Chat, User as TelegramUser
 
 from bot.exceptions.user_exceptions import UserNotFoundError
 from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
-from bot.handlers.utils.admin_utils.appointment_helpers import DATETIME_INPUT_PROMPT
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import format_month_label
 from bot.keyboards.admin.client_management_kb.client_browser_cb import (
     ClientActionCB,
     ClientCardCB,
     ClientPageCB,
 )
 from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
-from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.keyboards.client.booking_kb import booking_doctor_kb
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
@@ -411,6 +411,12 @@ class FakeClinicRepoForNewAppointment:
         return self.clinic
 
 
+NEW_APPOINTMENT_FIXED_NOW = datetime(2026, 7, 6, 9, 0)
+NEW_APPOINTMENT_NOW_PATCH_TARGET = (
+    "bot.handlers.utils.admin_utils.appointment_helpers.get_current_tashkent_datetime"
+)
+
+
 def _new_appointment_client():
     return User(ID=5, full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, clinic_id=1)
 
@@ -440,9 +446,12 @@ def _build_new_appointment_router(
 
 
 @pytest.mark.asyncio
-async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_preselect_and_origin_data(
+async def test_new_appointment_own_scope_admin_goes_straight_to_calendar_with_preselect_and_origin_data(
     fake_client_clinic_repo_factory,
 ):
+    """zb now runs "slots" mode too (DATEPARSER_BY_INSTANCE["zb"] == "slots"):
+    a preselected client goes straight to the calendar month view instead of
+    the retired free-text datetime prompt."""
     client = _new_appointment_client()
     staff_by_telegram_id = {
         ADMIN_TELEGRAM_ID: Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
@@ -455,9 +464,10 @@ async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_pr
     callback_query = _callback_query()
     state = _new_appointment_fsm_context()
 
-    await new_appointment(callback_query, callback_data, state)
+    with patch(NEW_APPOINTMENT_NOW_PATCH_TARGET, return_value=NEW_APPOINTMENT_FIXED_NOW):
+        await new_appointment(callback_query, callback_data, state)
 
-    assert await state.get_state() == AppointmentCreationStates.appointment_datetime
+    assert await state.get_state() == AppointmentCreationStates.choose_day
     data = await state.get_data()
     assert data["client_preselected"] is True
     assert data["full_name"] == client.full_name
@@ -466,11 +476,12 @@ async def test_new_appointment_own_scope_admin_goes_straight_to_datetime_with_pr
     assert data["origin_mode"] == "list"
     assert data["origin_page"] == 2
     assert "origin_search_data" not in data
+    assert data["calendar_year"] == NEW_APPOINTMENT_FIXED_NOW.year
+    assert data["calendar_month"] == NEW_APPOINTMENT_FIXED_NOW.month
 
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
-    assert args[0] == DATETIME_INPUT_PROMPT
-    assert kwargs["reply_markup"] == back_to_records_kb()
+    assert args[0] == f"📅 {format_month_label(NEW_APPOINTMENT_FIXED_NOW.year, NEW_APPOINTMENT_FIXED_NOW.month)}"
 
 
 @pytest.mark.asyncio
@@ -535,12 +546,13 @@ async def test_new_appointment_from_search_result_threads_search_data_into_origi
     state = _new_appointment_fsm_context()
     await state.update_data(search_data={"full_name": "Иванов"})
 
-    await new_appointment(callback_query, callback_data, state)
+    with patch(NEW_APPOINTMENT_NOW_PATCH_TARGET, return_value=NEW_APPOINTMENT_FIXED_NOW):
+        await new_appointment(callback_query, callback_data, state)
 
     data = await state.get_data()
     assert data["origin_search_data"] == {"full_name": "Иванов"}
     assert data["client_preselected"] is True
-    assert await state.get_state() == AppointmentCreationStates.appointment_datetime
+    assert await state.get_state() == AppointmentCreationStates.choose_day
 
 
 @pytest.mark.asyncio
@@ -564,14 +576,13 @@ async def test_new_appointment_client_not_found_shows_alert_and_does_not_touch_f
 
 
 @pytest.mark.asyncio
-async def test_new_appointment_with_mm_instance_enters_day_picker_with_admin_fallback_staff_id(
+async def test_new_appointment_with_mm_instance_enters_calendar_with_admin_fallback_staff_id(
     fake_client_clinic_repo_factory,
 ):
     """new_appointment threads its (optional, default "zb") instance kwarg
-    into begin_appointment_creation -- instance="mm" must enter the day
-    picker instead of the zb free-text prompt, and _ensure_staff_user_id
-    must fall back to the acting admin's own User.ID since no doctor was
-    pre-selected."""
+    into begin_appointment_creation -- instance="mm" must enter the calendar
+    month view, and _ensure_staff_user_id must fall back to the acting
+    admin's own User.ID since no doctor was pre-selected."""
     client = _new_appointment_client()
     admin = User(
         ID=42, full_name="Управляющий", phone="+998900000000", role=Role.ADMIN,
@@ -590,7 +601,8 @@ async def test_new_appointment_with_mm_instance_enters_day_picker_with_admin_fal
     callback_query = _callback_query()
     state = _new_appointment_fsm_context()
 
-    await new_appointment(callback_query, callback_data, state)
+    with patch(NEW_APPOINTMENT_NOW_PATCH_TARGET, return_value=NEW_APPOINTMENT_FIXED_NOW):
+        await new_appointment(callback_query, callback_data, state)
 
     assert await state.get_state() == AppointmentCreationStates.choose_day
     data = await state.get_data()
@@ -599,4 +611,4 @@ async def test_new_appointment_with_mm_instance_enters_day_picker_with_admin_fal
 
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
-    assert args[0] == "Выберите день записи:"
+    assert args[0] == f"📅 {format_month_label(NEW_APPOINTMENT_FIXED_NOW.year, NEW_APPOINTMENT_FIXED_NOW.month)}"

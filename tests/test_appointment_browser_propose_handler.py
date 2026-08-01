@@ -39,6 +39,7 @@ class FakeAppointmentRepository:
         self.proposed_datetime_updates = []
         self.proposed_by_updates = []
         self.proposal_message_id_updates = []
+        self.notification_message_id_updates = []
 
     async def get_appointment_by_id(self, appointment_id):
         # copy_on_read=True mirrors the real repository, which maps a fresh
@@ -64,8 +65,11 @@ class FakeAppointmentRepository:
     async def update_proposal_message_id(self, appointment_id, message_id):
         self.proposal_message_id_updates.append((appointment_id, message_id))
 
+    async def update_notification_message_id(self, appointment_id, message_id):
+        self.notification_message_id_updates.append((appointment_id, message_id))
+
     async def try_propose_new_datetime(
-        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+        self, appointment_id, new_datetime, decided_by_user_id, status_updated_at, expected_status
     ):
         # Deliberately does not mutate self.appointment -- AppointmentManagement.
         # propose_new_datetime() applies the equivalent field updates itself
@@ -73,11 +77,9 @@ class FakeAppointmentRepository:
         # row, never the caller's Python object.
         if self.appointment.status.value != expected_status:
             return False
-        if self.appointment.proposed_datetime is not None and self.appointment.proposed_by == CreatedBy.ADMIN:
-            return False
 
-        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
-        self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
         return True
 
     async def try_apply_new_datetime_immediately(
@@ -160,9 +162,9 @@ def _make_state():
 
 
 @pytest.mark.asyncio
-async def test_approve_new_datetime_proposes_instead_of_forcing_and_resyncs_jobs():
+async def test_approve_new_datetime_commits_and_demotes_to_pending_then_resyncs_jobs():
     appointment = _confirmed_appointment()
-    appt_repo = FakeAppointmentRepository(appointment)
+    appt_repo = FakeAppointmentRepository(appointment, copy_on_read=True)
 
     appointment_scheduler = MagicMock()
     appointment_scheduler.resync_appointment_jobs = AsyncMock()
@@ -171,7 +173,7 @@ async def test_approve_new_datetime_proposes_instead_of_forcing_and_resyncs_jobs
     appointment_scheduler.schedule_auto_confirm = AsyncMock()
 
     notification_service = MagicMock()
-    notification_service.notify_client_appointment_reschedule_proposed = AsyncMock(return_value=321)
+    notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=321)
 
     router = create_admin_appointment_browser_router(
         appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
@@ -185,25 +187,31 @@ async def test_approve_new_datetime_proposes_instead_of_forcing_and_resyncs_jobs
         _make_state(),
     )
 
-    # propose_new_datetime was used, not a forced update_datetime: the appointment
-    # stays CONFIRMED with the new time recorded only as a proposal.
-    assert appointment.status is AppointmentStatus.CONFIRMED
-    assert appointment.datetime == "2026-08-01 10:00"
-    assert appt_repo.proposed_datetime_updates == [(1, "2026-08-05 12:00")]
-    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
+    # propose_new_datetime commits the new datetime directly and demotes the
+    # appointment to PENDING (no more staged proposal awaiting a client callback).
+    # copy_on_read=True means the handler's owned_appointment (pre-mutation) and
+    # the appointment returned by propose_new_datetime (post-mutation) are distinct
+    # objects, so assertions target the resynced object actually passed downstream,
+    # matching the sibling "no telegram account" test below.
+    resynced = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
+    assert resynced.status is AppointmentStatus.PENDING
+    assert resynced.datetime == "2026-08-05 12:00"
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
 
     # Full job set is recomputed via resync_appointment_jobs, not the old manual
     # cancel/schedule reminder+completion+auto_confirm sequence.
-    appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(appointment)
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     appointment_scheduler.schedule_appointment_reminders.assert_not_awaited()
     appointment_scheduler.schedule_appointment_completion.assert_not_awaited()
     appointment_scheduler.schedule_auto_confirm.assert_not_awaited()
 
-    notification_service.notify_client_appointment_reschedule_proposed.assert_awaited_once_with(appointment)
-    assert appt_repo.proposal_message_id_updates == [(1, 321)]
+    notification_service.notify_client_appointment_with_buttons.assert_awaited_once_with(
+        resynced, rescheduled=True,
+    )
+    assert appt_repo.notification_message_id_updates == [(1, 321)]
 
-    # Toast shows both the pre-proposal (original confirmed) time and the newly
-    # proposed time, not just the new time.
+    # Toast shows both the pre-change (original confirmed) time and the new time.
     toast_text = callback_query.message.edit_text.call_args.args[0]
     assert "1 августа 2026, 10:00" in toast_text
     assert "05.08.2026 12:00" in toast_text
@@ -214,7 +222,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
     """A client with no linked Telegram account can never confirm a proposal,
     so the service applies the new time immediately (status stays CONFIRMED,
     datetime updated in place). The handler must then skip the
-    notify_client_appointment_reschedule_proposed call and the "waiting on
+    notify_client_appointment_with_buttons call and the "waiting on
     client" message, and the "old time" shown must be the true pre-call
     appointment.datetime, not the (now-mutated) post-call value."""
     appointment = _confirmed_appointment()
@@ -231,7 +239,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
     appointment_scheduler.resync_appointment_jobs = AsyncMock()
 
     notification_service = MagicMock()
-    notification_service.notify_client_appointment_reschedule_proposed = AsyncMock(return_value=321)
+    notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=321)
 
     router = create_admin_appointment_browser_router(
         appt_repo, FakeUserRepo(client), FakeStaffRepo(), FakeClinicRepo(),
@@ -255,7 +263,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
     assert appt_repo.proposed_by_updates == [(1, None)]
 
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
-    notification_service.notify_client_appointment_reschedule_proposed.assert_not_awaited()
+    notification_service.notify_client_appointment_with_buttons.assert_not_awaited()
     assert appt_repo.proposal_message_id_updates == []
 
     toast_text = callback_query.message.edit_text.call_args.args[0]

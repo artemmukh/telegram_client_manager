@@ -22,8 +22,10 @@ and asserts only fresh keys survive.
 Follows the direct-handler-call/fake-repository convention established in
 test_appointment_creation_doctor_picker.py.
 """
+from datetime import datetime
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -32,7 +34,7 @@ from aiogram.types import Chat, User as TelegramUser
 from bot.handlers.admin.appointment_management.appointment_creation import (
     create_admin_appointment_creation_router,
 )
-from bot.handlers.utils.admin_utils.appointment_helpers import DATETIME_INPUT_PROMPT
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import format_month_label
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -41,6 +43,7 @@ from bot.utils.role import Role
 
 
 ADMIN_TELEGRAM_ID = 999
+FIXED_NOW = datetime(2026, 7, 6, 9, 0)
 
 
 class FakeAppointmentRepository:
@@ -263,6 +266,9 @@ def _stale_preselected_own_scope_data():
 
 @pytest.mark.asyncio
 async def test_restart_with_client_preselected_and_own_scope_restores_preselect_data_and_skips_full_name():
+    """Own scope + client_preselected now (zb and mm both run "slots" mode)
+    re-enters the calendar month view directly, instead of the retired
+    free-text datetime prompt."""
     router = _own_scope_router()
     restart_create = _find_callback_handler(router, "restart_create")
 
@@ -273,7 +279,11 @@ async def test_restart_with_client_preselected_and_own_scope_restores_preselect_
     await state.update_data(**_stale_preselected_own_scope_data())
 
     callback_query = _callback_query()
-    await restart_create(callback_query, state)
+    with patch(
+        "bot.handlers.utils.admin_utils.appointment_helpers.get_current_tashkent_datetime",
+        return_value=FIXED_NOW,
+    ):
+        await restart_create(callback_query, state)
 
     data = await state.get_data()
     assert data == {
@@ -284,11 +294,14 @@ async def test_restart_with_client_preselected_and_own_scope_restores_preselect_
         "origin_client_id": 5,
         "origin_mode": "list",
         "origin_page": 2,
+        "staff_user_id": 42,
+        "calendar_year": FIXED_NOW.year,
+        "calendar_month": FIXED_NOW.month,
     }
-    assert await state.get_state() == AppointmentCreationStates.appointment_datetime
+    assert await state.get_state() == AppointmentCreationStates.choose_day
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
-    assert args[0] == DATETIME_INPUT_PROMPT
+    assert args[0] == f"📅 {format_month_label(FIXED_NOW.year, FIXED_NOW.month)}"
 
 
 @pytest.mark.asyncio

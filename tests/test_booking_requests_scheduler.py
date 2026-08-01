@@ -83,15 +83,13 @@ class FakeAppointmentRepository:
         return True
 
     async def try_propose_new_datetime(
-        self, appointment_id, proposed_datetime, proposed_by, decided_by_user_id, expected_status
+        self, appointment_id, new_datetime, decided_by_user_id, status_updated_at, expected_status
     ):
         if self.appointment.status.value != expected_status:
             return False
-        if self.appointment.proposed_datetime is not None and self.appointment.proposed_by == CreatedBy.ADMIN:
-            return False
 
-        self.proposed_datetime_updates.append((appointment_id, proposed_datetime))
-        self.proposed_by_updates.append((appointment_id, CreatedBy(proposed_by)))
+        self.proposed_datetime_updates.append((appointment_id, None))
+        self.proposed_by_updates.append((appointment_id, None))
         return True
 
     async def try_apply_new_datetime_immediately(
@@ -250,8 +248,9 @@ async def test_approve_propose_datetime_resyncs_jobs_once_and_skips_legacy_metho
     )
 
     assert appointment.status is AppointmentStatus.PENDING
-    assert appt_repo.proposed_datetime_updates == [(1, "2026-08-05 12:00")]
-    assert appt_repo.proposed_by_updates == [(1, CreatedBy.ADMIN)]
+    assert appointment.datetime == "2026-08-05 12:00"
+    assert appt_repo.proposed_datetime_updates == [(1, None)]
+    assert appt_repo.proposed_by_updates == [(1, None)]
     _assert_only_resync_called(appointment_scheduler, appointment)
 
 

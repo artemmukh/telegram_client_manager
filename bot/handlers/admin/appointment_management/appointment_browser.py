@@ -565,7 +565,7 @@ def create_admin_appointment_browser_router(
 
         old_display = format_datetime_for_confirmation(datetime.fromisoformat(owned_appointment.datetime))
 
-        if appointment.proposed_datetime is None:
+        if appointment.status == AppointmentStatus.CONFIRMED:
             await callback_query.answer("Время записи изменено")
             await callback_query.message.edit_text(
                 f"✅ Время записи изменено: {old_display} → {data.get('appointment_datetime_display')}"
@@ -575,18 +575,20 @@ def create_admin_appointment_browser_router(
 
         if notification_service:
             try:
-                message_id = await notification_service.notify_client_appointment_reschedule_proposed(appointment)
+                message_id = await notification_service.notify_client_appointment_with_buttons(
+                    appointment, rescheduled=True,
+                )
                 if message_id:
-                    await appt_mng.update_proposal_message_id(appointment.id, message_id)
+                    await appt_mng.update_notification_message_id(appointment.id, message_id)
             except Exception as e:
                 logger.warning(
-                    f"Failed to notify client about proposed time for appointment {callback_data.appointment_id}: {e}"
+                    f"Failed to notify client about new pending time for appointment {callback_data.appointment_id}: {e}"
                 )
 
-        await callback_query.answer("Предложение отправлено клиенту")
+        await callback_query.answer("Время записи изменено, клиенту отправлено уведомление")
         await callback_query.message.edit_text(
-            f"🔁 Текущее время: {old_display} → Предложено: {data.get('appointment_datetime_display')}\n"
-            "Ожидаем ответа клиента."
+            f"🔁 Время записи изменено: {old_display} → {data.get('appointment_datetime_display')}\n"
+            "Ожидаем подтверждения клиента."
         )
         await state.clear()
 

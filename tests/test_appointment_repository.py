@@ -1419,23 +1419,54 @@ async def test_try_confirm_or_reject_pending_second_call_fails_after_first_succe
 
 
 @pytest.mark.asyncio
-async def test_try_propose_new_datetime_second_admin_proposal_fails_after_first_succeeds(appointment_setup):
+async def test_try_propose_new_datetime_commits_new_datetime_and_demotes_confirmed_to_pending(appointment_setup):
+    """try_propose_new_datetime no longer stages a proposal -- it commits the new
+    datetime immediately and demotes the appointment to PENDING so it awaits an
+    ordinary reconfirmation, clearing any stale proposed_datetime/proposed_by."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-01 09:00:00"
+    )
+
+    result = await appointment_repo.try_propose_new_datetime(
+        appointment_id, "2026-07-05 10:00", user.ID, "2026-07-02 10:00:00", AppointmentStatus.CONFIRMED.value
+    )
+
+    assert result is True
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.PENDING
+    assert updated.datetime == "2026-07-05 10:00"
+    assert updated.status_updated_at == "2026-07-02 10:00:00"
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
+    assert updated.decided_by_user_id == user.ID
+
+
+@pytest.mark.asyncio
+async def test_try_propose_new_datetime_second_admin_proposal_also_succeeds_last_writer_wins(appointment_setup):
+    """Two admins racing to propose a new time on the same still-PENDING request
+    now both succeed (pending -> pending is a no-op status transition for the
+    CAS guard), with the second call's datetime winning -- real double-decision
+    protection for a PENDING request comes from try_confirm_or_reject_pending's
+    own guard, not from this method."""
     appointment_repo, user = appointment_setup
     await appointment_repo.create_appointment(_appointment(user.ID))
     appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
 
     first = await appointment_repo.try_propose_new_datetime(
-        appointment_id, "2026-07-05 10:00", CreatedBy.ADMIN.value, user.ID, AppointmentStatus.PENDING.value
+        appointment_id, "2026-07-05 10:00", user.ID, "2026-07-02 10:00:00", AppointmentStatus.PENDING.value
     )
     second = await appointment_repo.try_propose_new_datetime(
-        appointment_id, "2026-07-06 11:00", CreatedBy.ADMIN.value, user.ID, AppointmentStatus.PENDING.value
+        appointment_id, "2026-07-06 11:00", user.ID, "2026-07-02 10:05:00", AppointmentStatus.PENDING.value
     )
 
     assert first is True
-    assert second is False
+    assert second is True
     updated = await appointment_repo.get_appointment_by_id(appointment_id)
-    assert updated.proposed_datetime == "2026-07-05 10:00"
-    assert updated.proposed_by is CreatedBy.ADMIN
+    assert updated.status is AppointmentStatus.PENDING
+    assert updated.datetime == "2026-07-06 11:00"
 
 
 @pytest.mark.asyncio
@@ -1573,7 +1604,7 @@ async def test_try_propose_new_datetime_blocks_stale_pending_proposal_after_conf
         appointment_id, AppointmentStatus.CONFIRMED, admin_a, "2026-07-02 10:00:00"
     )
     stale_propose_by_admin_b = await appointment_repo.try_propose_new_datetime(
-        appointment_id, "2026-07-10 10:00", CreatedBy.ADMIN.value, admin_b, AppointmentStatus.PENDING.value
+        appointment_id, "2026-07-10 10:00", admin_b, "2026-07-02 10:05:00", AppointmentStatus.PENDING.value
     )
 
     assert confirmed_by_admin_a is True
@@ -1593,7 +1624,8 @@ async def test_try_propose_new_datetime_succeeds_with_expected_status_confirmed_
     """Companion to the race-blocking test above: proves the legitimate
     admin-initiated reschedule on an already-confirmed appointment (no
     outstanding proposal) still works when expected_status matches the
-    appointment's real current status."""
+    appointment's real current status, demoting it to PENDING with the new
+    datetime committed directly (no staged proposal)."""
     appointment_repo, user = appointment_setup
     await appointment_repo.create_appointment(_appointment(user.ID))
     appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
@@ -1602,14 +1634,15 @@ async def test_try_propose_new_datetime_succeeds_with_expected_status_confirmed_
     )
 
     result = await appointment_repo.try_propose_new_datetime(
-        appointment_id, "2026-07-10 10:00", CreatedBy.ADMIN.value, user.ID, AppointmentStatus.CONFIRMED.value
+        appointment_id, "2026-07-10 10:00", user.ID, "2026-07-02 10:05:00", AppointmentStatus.CONFIRMED.value
     )
 
     assert result is True
     updated = await appointment_repo.get_appointment_by_id(appointment_id)
-    assert updated.status is AppointmentStatus.CONFIRMED
-    assert updated.proposed_datetime == "2026-07-10 10:00"
-    assert updated.proposed_by is CreatedBy.ADMIN
+    assert updated.status is AppointmentStatus.PENDING
+    assert updated.datetime == "2026-07-10 10:00"
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
 
 
 # --- appointment_notifications (add_appointment_notification / get_appointment_notifications) ---
