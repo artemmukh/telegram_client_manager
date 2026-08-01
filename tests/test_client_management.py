@@ -151,6 +151,30 @@ async def test_update_reminder_preferences_raises_if_client_not_found(fake_user_
     assert str(exc_info.value) == "Пользователь не найден."
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["ru", "uz"])
+async def test_update_language_persists_via_settings_repo(
+    fake_user_repo_factory, fake_user_settings_repo_factory, language
+):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    settings_repo = fake_user_settings_repo_factory()
+    service = _service(repo, user_settings_repo=settings_repo)
+
+    user = await service.update_language(1, language)
+
+    assert user.language == language
+    assert settings_repo.language_updates == [(1, language)]
+
+
+@pytest.mark.asyncio
+async def test_update_language_rejects_unknown_language(fake_user_repo_factory):
+    repo = fake_user_repo_factory(clients_by_id={1: _existing_client()})
+    service = _service(repo)
+
+    with pytest.raises(ValidationError):
+        await service.update_language(1, "en")
+
+
 def _existing_admin(user_id=2):
     return User(
         ID=user_id,

@@ -2,6 +2,7 @@
 from aiogram.fsm.state import StatesGroup, State
 
 class RegisterStates(StatesGroup):
+    language = State()
     phone = State()
     name_conflict = State()
     full_name = State()

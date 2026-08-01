@@ -124,7 +124,7 @@ async def main():
 
     #registration
     dp.include_router(create_reg_router(
-        user_repo, clinic_repo, staff_repo, client_notification_service, client_clinic_repo,
+        user_repo, clinic_repo, staff_repo, client_notification_service, user_settings_repo, client_clinic_repo,
     ))
 
     #common handlers

@@ -24,7 +24,8 @@ SELECT
     COALESCE(us.reminder_24h, 1),
     COALESCE(us.reminder_2h, 1),
     u.pending_full_name,
-    u.created_at
+    u.created_at,
+    COALESCE(us.language, 'ru')
 FROM users u
 LEFT JOIN clinics c
 ON u.clinic_id = c.id
@@ -434,6 +435,7 @@ class UserRepository:
             reminder_2h=bool(row[10]),
             pending_full_name=row[11],
             created_at=row[12],
+            language=row[13],
         )
 
     async def phone_exists(self, phone: str) -> bool:

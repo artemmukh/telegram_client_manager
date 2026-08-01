@@ -125,14 +125,17 @@ def fake_user_repo_factory():
 
 class FakeUserSettingsRepository:
     """Drop-in for UserSettingsRepository, matching its method names/signatures
-    (init, upsert, get_by_user_id). Tracks every upsert() call in `updates`
-    (mirroring the old FakeUserRepository.reminder_updates convention) so
-    tests can assert exactly which (user_id, reminder_24h, reminder_2h) calls
-    a service made, in addition to reading the resulting state back."""
+    (init, upsert, get_by_user_id, set_language). Tracks every upsert() call in
+    `updates` (mirroring the old FakeUserRepository.reminder_updates convention)
+    and every set_language() call in `language_updates`, so tests can assert
+    exactly which calls a service made, in addition to reading the resulting
+    state back."""
 
-    def __init__(self, settings_by_user_id=None):
+    def __init__(self, settings_by_user_id=None, languages_by_user_id=None):
         self.settings_by_user_id = dict(settings_by_user_id or {})
+        self.languages_by_user_id = dict(languages_by_user_id or {})
         self.updates: list[tuple[int, bool, bool]] = []
+        self.language_updates: list[tuple[int, str]] = []
 
     async def init(self) -> None:
         pass
@@ -141,12 +144,19 @@ class FakeUserSettingsRepository:
         self.updates.append((user_id, reminder_24h, reminder_2h))
         self.settings_by_user_id[user_id] = (reminder_24h, reminder_2h)
 
+    async def set_language(self, user_id, language) -> None:
+        self.language_updates.append((user_id, language))
+        self.languages_by_user_id[user_id] = language
+
     async def get_by_user_id(self, user_id):
         settings = self.settings_by_user_id.get(user_id)
+        language = self.languages_by_user_id.get(user_id, "ru")
         if settings is None:
-            return None
+            if user_id not in self.languages_by_user_id:
+                return None
+            return UserSettings(user_id=user_id, language=language)
         reminder_24h, reminder_2h = settings
-        return UserSettings(user_id=user_id, reminder_24h=reminder_24h, reminder_2h=reminder_2h)
+        return UserSettings(user_id=user_id, reminder_24h=reminder_24h, reminder_2h=reminder_2h, language=language)
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ class UserSettingsRepository:
                 user_id INTEGER PRIMARY KEY,
                 reminder_24h INTEGER NOT NULL DEFAULT 1,
                 reminder_2h  INTEGER NOT NULL DEFAULT 1,
+                language TEXT NOT NULL DEFAULT 'ru',
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         """)
@@ -27,6 +28,14 @@ class UserSettingsRepository:
             """)
             await self.connection.execute("ALTER TABLE users DROP COLUMN reminder_24h")
             await self.connection.execute("ALTER TABLE users DROP COLUMN reminder_2h")
+
+        cursor = await self.connection.execute("PRAGMA table_info(user_settings)")
+        settings_columns = {row[1] for row in await cursor.fetchall()}
+
+        if "language" not in settings_columns:
+            await self.connection.execute(
+                "ALTER TABLE user_settings ADD COLUMN language TEXT NOT NULL DEFAULT 'ru'"
+            )
 
         await self.connection.commit()
 
@@ -45,7 +54,7 @@ class UserSettingsRepository:
 
     async def get_by_user_id(self, user_id: int) -> UserSettings | None:
         cursor = await self.connection.execute(
-            "SELECT user_id, reminder_24h, reminder_2h FROM user_settings WHERE user_id = ?",
+            "SELECT user_id, reminder_24h, reminder_2h, language FROM user_settings WHERE user_id = ?",
             (user_id,),
         )
         row = await cursor.fetchone()
@@ -56,4 +65,17 @@ class UserSettingsRepository:
             user_id=row[0],
             reminder_24h=bool(row[1]),
             reminder_2h=bool(row[2]),
+            language=row[3],
         )
+
+    async def set_language(self, user_id: int, language: str) -> None:
+        await self.connection.execute(
+            """
+            INSERT INTO user_settings(user_id, language)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                language = excluded.language
+            """,
+            (user_id, language),
+        )
+        await self.connection.commit()

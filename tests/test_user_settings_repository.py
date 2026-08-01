@@ -233,3 +233,115 @@ async def test_init_on_users_table_without_legacy_reminder_columns_does_not_back
         assert await user_settings_repo.get_by_user_id(1) is None
     finally:
         await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_init_adds_language_column_with_default_ru_on_pre_existing_table():
+    """A user_settings table that predates the language column (created by an
+    older init() run, before this migration was added) must gain the column
+    via ALTER TABLE, defaulting existing rows to 'ru'."""
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await _create_users_table(connection)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone) VALUES (1001, 'Иванов Иван', '+998901234567')"
+        )
+        await connection.execute("""
+            CREATE TABLE user_settings(
+                user_id INTEGER PRIMARY KEY,
+                reminder_24h INTEGER NOT NULL DEFAULT 1,
+                reminder_2h  INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        await connection.execute(
+            "INSERT INTO user_settings(user_id, reminder_24h, reminder_2h) VALUES (1, 1, 0)"
+        )
+        await connection.commit()
+
+        user_settings_repo = UserSettingsRepository(connection)
+        await user_settings_repo.init()
+
+        columns = {row[1] for row in await (await connection.execute("PRAGMA table_info(user_settings)")).fetchall()}
+        assert "language" in columns
+
+        settings = await user_settings_repo.get_by_user_id(1)
+        assert settings.language == "ru"
+        assert settings.reminder_24h is True
+        assert settings.reminder_2h is False
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_set_language_then_upsert_reminders_leaves_language_untouched():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await _create_users_table(connection)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone) VALUES (1001, 'Иванов Иван', '+998901234567')"
+        )
+        await connection.commit()
+
+        user_settings_repo = UserSettingsRepository(connection)
+        await user_settings_repo.init()
+
+        await user_settings_repo.set_language(1, "uz")
+        await user_settings_repo.upsert(1, False, True)
+
+        settings = await user_settings_repo.get_by_user_id(1)
+        assert settings.language == "uz"
+        assert settings.reminder_24h is False
+        assert settings.reminder_2h is True
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_upsert_reminders_then_set_language_leaves_reminders_untouched():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await _create_users_table(connection)
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone) VALUES (1001, 'Иванов Иван', '+998901234567')"
+        )
+        await connection.commit()
+
+        user_settings_repo = UserSettingsRepository(connection)
+        await user_settings_repo.init()
+
+        await user_settings_repo.upsert(1, False, True)
+        await user_settings_repo.set_language(1, "uz")
+
+        settings = await user_settings_repo.get_by_user_id(1)
+        assert settings.language == "uz"
+        assert settings.reminder_24h is False
+        assert settings.reminder_2h is True
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_user_without_settings_row_defaults_to_ru_via_get_user_by_id():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        user_settings_repo = UserSettingsRepository(connection)
+        await user_settings_repo.init()
+
+        await connection.execute(
+            "INSERT INTO users(telegram_user_id, full_name, phone, role) VALUES (?, ?, ?, ?)",
+            (9002, "Новый Клиент", "+998901234514", Role.CLIENT.value),
+        )
+        await connection.commit()
+
+        user = await user_repo.get_user_by_telegram_id(9002)
+
+        assert await user_settings_repo.get_by_user_id(user.ID) is None
+        assert user.language == "ru"
+    finally:
+        await connection.close()

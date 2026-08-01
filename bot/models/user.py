@@ -17,5 +17,6 @@ class User:
     created_at: str | None = None
     gender: str | None = None
     birth_date: str | None = None
+    language: str = "ru"
 
 

@@ -17,8 +17,8 @@ from bot.utils.role import Role
 
 
 @pytest.mark.asyncio
-async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -34,8 +34,8 @@ async def test_registration_creates_new_user_when_phone_not_found(fake_user_repo
 
 
 @pytest.mark.asyncio
-async def test_registration_creates_new_user_with_birth_date_and_gender(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_registration_creates_new_user_with_birth_date_and_gender(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -56,11 +56,11 @@ async def test_registration_creates_new_user_with_birth_date_and_gender(fake_use
 
 @pytest.mark.asyncio
 async def test_registration_creates_new_user_without_birth_date_and_gender_defaults_to_none(
-        fake_user_repo, fake_clinic_repo):
+        fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
     # Existing (pre-birth_date/gender feature) call sites keep working exactly
     # as before: both fields default to None and are persisted as None, not
     # silently coerced into anything else.
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -77,8 +77,8 @@ async def test_registration_creates_new_user_without_birth_date_and_gender_defau
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_invalid_gender_value(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_register_rejects_invalid_gender_value(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(ValidationError) as exc_info:
         await service.register(
@@ -96,7 +96,7 @@ async def test_register_rejects_invalid_gender_value(fake_user_repo, fake_clinic
 
 @pytest.mark.asyncio
 async def test_registration_never_rebinds_via_phone_lookup_when_no_existing_user_id(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     # A brand-new registration (existing_user_id=None) must never silently bind
     # an unrelated, unclaimed record by phone. That rebinding is only ever
     # allowed through the verified existing_user_id path, which requires
@@ -113,7 +113,7 @@ async def test_registration_never_rebinds_via_phone_lookup_when_no_existing_user
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -130,14 +130,14 @@ async def test_registration_never_rebinds_via_phone_lookup_when_no_existing_user
 
 
 @pytest.mark.asyncio
-async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_factory, fake_clinic_repo):
+async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     # The phone is already taken by a real row in the users table (mirrored
     # here by existing_phones, the fake's analog of the UNIQUE constraint on
     # users.phone). A brand-new registration attempt must surface this as
     # PhoneAlreadyExistsError from create_user, not from any lookup inside
     # register() itself.
     repo = fake_user_repo_factory(existing_phones={"+998901234567"})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(PhoneAlreadyExistsError):
         await service.register(
@@ -152,9 +152,9 @@ async def test_registration_rejects_existing_user_with_telegram(fake_user_repo_f
 
 
 @pytest.mark.asyncio
-async def test_registration_rejects_when_telegram_already_registered(fake_user_repo_factory, fake_clinic_repo):
+async def test_registration_rejects_when_telegram_already_registered(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     repo = fake_user_repo_factory(existing_telegram_ids={1001})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(UserAlreadyExistsError):
         await service.register(
@@ -167,7 +167,7 @@ async def test_registration_rejects_when_telegram_already_registered(fake_user_r
 
 
 @pytest.mark.asyncio
-async def test_register_with_existing_user_id_links_without_relookup(fake_user_repo_factory, fake_clinic_repo):
+async def test_register_with_existing_user_id_links_without_relookup(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -176,7 +176,7 @@ async def test_register_with_existing_user_id_links_without_relookup(fake_user_r
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -193,7 +193,7 @@ async def test_register_with_existing_user_id_links_without_relookup(fake_user_r
 
 
 @pytest.mark.asyncio
-async def test_register_with_existing_user_id_syncs_edited_full_name(fake_user_repo_factory, fake_clinic_repo):
+async def test_register_with_existing_user_id_syncs_edited_full_name(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -202,7 +202,7 @@ async def test_register_with_existing_user_id_syncs_edited_full_name(fake_user_r
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -221,7 +221,7 @@ async def test_register_with_existing_user_id_syncs_edited_full_name(fake_user_r
 
 @pytest.mark.asyncio
 async def test_register_with_existing_user_id_skips_write_when_name_unchanged(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -230,7 +230,7 @@ async def test_register_with_existing_user_id_skips_write_when_name_unchanged(
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -248,7 +248,7 @@ async def test_register_with_existing_user_id_skips_write_when_name_unchanged(
 
 @pytest.mark.asyncio
 async def test_register_with_existing_user_id_persists_birth_date_and_gender(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -257,7 +257,7 @@ async def test_register_with_existing_user_id_persists_birth_date_and_gender(
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -281,7 +281,7 @@ async def test_register_with_existing_user_id_persists_birth_date_and_gender(
 
 @pytest.mark.asyncio
 async def test_register_with_existing_user_id_without_birth_date_and_gender_persists_none(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -290,7 +290,7 @@ async def test_register_with_existing_user_id_without_birth_date_and_gender_pers
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.register(
         telegram_user_id=1001,
@@ -309,7 +309,7 @@ async def test_register_with_existing_user_id_without_birth_date_and_gender_pers
 
 @pytest.mark.asyncio
 async def test_register_with_existing_user_id_rejects_invalid_birth_date_without_claiming_telegram_id(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     # birth_date/gender validation runs before either branch of register()
     # touches the repository, so an invalid birth_date must keep a reclaimed
     # registration atomic: no telegram_user_id claim happens at all.
@@ -321,7 +321,7 @@ async def test_register_with_existing_user_id_rejects_invalid_birth_date_without
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(InvalidBirthDateError):
         await service.register(
@@ -340,7 +340,7 @@ async def test_register_with_existing_user_id_rejects_invalid_birth_date_without
 
 @pytest.mark.asyncio
 async def test_register_with_existing_user_id_rejects_future_birth_date_without_claiming_telegram_id(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -349,7 +349,7 @@ async def test_register_with_existing_user_id_rejects_future_birth_date_without_
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
     future_date = (now + timedelta(days=1)).strftime("%d.%m.%Y")
@@ -371,7 +371,7 @@ async def test_register_with_existing_user_id_rejects_future_birth_date_without_
 
 @pytest.mark.asyncio
 async def test_register_with_existing_user_id_rejects_age_over_120_years_without_claiming_telegram_id(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -380,7 +380,7 @@ async def test_register_with_existing_user_id_rejects_age_over_120_years_without
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
     too_old_date = now.replace(year=now.year - 121).strftime("%d.%m.%Y")
@@ -401,8 +401,8 @@ async def test_register_with_existing_user_id_rejects_age_over_120_years_without
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_future_birth_date_for_new_user(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_register_rejects_future_birth_date_for_new_user(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
     future_date = (now + timedelta(days=1)).strftime("%d.%m.%Y")
@@ -421,8 +421,8 @@ async def test_register_rejects_future_birth_date_for_new_user(fake_user_repo, f
 
 
 @pytest.mark.asyncio
-async def test_register_rejects_age_over_120_years_for_new_user(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_register_rejects_age_over_120_years_for_new_user(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     now = datetime.strptime(get_current_tashkent_time(), "%Y-%m-%d %H:%M:%S")
     too_old_date = now.replace(year=now.year - 121).strftime("%d.%m.%Y")
@@ -441,8 +441,8 @@ async def test_register_rejects_age_over_120_years_for_new_user(fake_user_repo, 
 
 
 @pytest.mark.asyncio
-async def test_check_phone_returns_not_found(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_check_phone_returns_not_found(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     result = await service.check_phone("90 123-45-67", telegram_user_id=1001)
 
@@ -450,7 +450,7 @@ async def test_check_phone_returns_not_found(fake_user_repo, fake_clinic_repo):
 
 
 @pytest.mark.asyncio
-async def test_check_phone_returns_found_unclaimed(fake_user_repo_factory, fake_clinic_repo):
+async def test_check_phone_returns_found_unclaimed(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -459,7 +459,7 @@ async def test_check_phone_returns_found_unclaimed(fake_user_repo_factory, fake_
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     result = await service.check_phone("+998901234567", telegram_user_id=1001, contact_user_id=1001)
 
@@ -469,7 +469,7 @@ async def test_check_phone_returns_found_unclaimed(fake_user_repo_factory, fake_
 
 @pytest.mark.asyncio
 async def test_check_phone_rejects_mismatched_contact_owner_for_found_unclaimed(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -478,7 +478,7 @@ async def test_check_phone_rejects_mismatched_contact_owner_for_found_unclaimed(
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(ContactOwnershipMismatchError):
         await service.check_phone(
@@ -488,7 +488,7 @@ async def test_check_phone_rejects_mismatched_contact_owner_for_found_unclaimed(
 
 @pytest.mark.asyncio
 async def test_check_phone_allows_matching_contact_owner_for_found_unclaimed(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -497,7 +497,7 @@ async def test_check_phone_allows_matching_contact_owner_for_found_unclaimed(
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     result = await service.check_phone(
         "+998901234567", telegram_user_id=1001, contact_user_id=1001,
@@ -509,7 +509,7 @@ async def test_check_phone_allows_matching_contact_owner_for_found_unclaimed(
 
 @pytest.mark.asyncio
 async def test_check_phone_rejects_found_unclaimed_when_contact_owner_unknown(
-        fake_user_repo_factory, fake_clinic_repo):
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -518,7 +518,7 @@ async def test_check_phone_rejects_found_unclaimed_when_contact_owner_unknown(
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(ContactOwnershipMismatchError):
         await service.check_phone("+998901234567", telegram_user_id=1001)
@@ -526,8 +526,8 @@ async def test_check_phone_rejects_found_unclaimed_when_contact_owner_unknown(
 
 @pytest.mark.asyncio
 async def test_check_phone_not_found_ignores_mismatched_contact_owner(
-        fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+        fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     result = await service.check_phone(
         "90 123-45-67", telegram_user_id=1001, contact_user_id=2002,
@@ -537,7 +537,7 @@ async def test_check_phone_not_found_ignores_mismatched_contact_owner(
 
 
 @pytest.mark.asyncio
-async def test_check_phone_rejects_already_claimed_phone(fake_user_repo_factory, fake_clinic_repo):
+async def test_check_phone_rejects_already_claimed_phone(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -546,23 +546,23 @@ async def test_check_phone_rejects_already_claimed_phone(fake_user_repo_factory,
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_phone={"+998901234567": existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(PhoneAlreadyExistsError):
         await service.check_phone("+998901234567", telegram_user_id=1001)
 
 
 @pytest.mark.asyncio
-async def test_check_phone_rejects_when_telegram_already_registered(fake_user_repo_factory, fake_clinic_repo):
+async def test_check_phone_rejects_when_telegram_already_registered(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     repo = fake_user_repo_factory(existing_telegram_ids={1001})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(UserAlreadyExistsError):
         await service.check_phone("+998901234567", telegram_user_id=1001)
 
 
 @pytest.mark.asyncio
-async def test_apply_name_conflict_resolution_updates_full_name(fake_user_repo_factory, fake_clinic_repo):
+async def test_apply_name_conflict_resolution_updates_full_name(fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
     existing = User(
         full_name="Иванов Иван",
         phone="+998901234567",
@@ -571,7 +571,7 @@ async def test_apply_name_conflict_resolution_updates_full_name(fake_user_repo_f
         ID=7,
     )
     repo = fake_user_repo_factory(clients_by_id={7: existing})
-    service = RegistrationService(repo, fake_clinic_repo)
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
 
     user = await service.apply_name_conflict_resolution(7, "Петров Петр")
 
@@ -580,8 +580,68 @@ async def test_apply_name_conflict_resolution_updates_full_name(fake_user_repo_f
 
 
 @pytest.mark.asyncio
-async def test_apply_name_conflict_resolution_raises_if_user_not_found(fake_user_repo, fake_clinic_repo):
-    service = RegistrationService(fake_user_repo, fake_clinic_repo)
+async def test_apply_name_conflict_resolution_raises_if_user_not_found(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
 
     with pytest.raises(UserNotFoundError):
         await service.apply_name_conflict_resolution(999, "Петров Петр")
+
+
+# --- language persistence ---
+
+@pytest.mark.asyncio
+async def test_register_new_user_persists_chosen_language(fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
+
+    user = await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="90 123-45-67",
+        role=Role.CLIENT,
+        clinic_id=1,
+        language="uz",
+    )
+
+    assert fake_user_settings_repo.language_updates == [(user.ID, "uz")]
+
+
+@pytest.mark.asyncio
+async def test_register_new_user_defaults_language_to_ru_when_omitted(
+        fake_user_repo, fake_clinic_repo, fake_user_settings_repo):
+    service = RegistrationService(fake_user_repo, fake_clinic_repo, fake_user_settings_repo)
+
+    user = await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="90 123-45-67",
+        role=Role.CLIENT,
+        clinic_id=1,
+    )
+
+    assert fake_user_settings_repo.language_updates == [(user.ID, "ru")]
+
+
+@pytest.mark.asyncio
+async def test_register_with_existing_user_id_persists_chosen_language(
+        fake_user_repo_factory, fake_clinic_repo, fake_user_settings_repo):
+    existing = User(
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=None,
+        ID=7,
+    )
+    repo = fake_user_repo_factory(clients_by_id={7: existing})
+    service = RegistrationService(repo, fake_clinic_repo, fake_user_settings_repo)
+
+    await service.register(
+        telegram_user_id=1001,
+        full_name="Иванов Иван",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        clinic_id=1,
+        existing_user_id=7,
+        language="uz",
+    )
+
+    assert fake_user_settings_repo.language_updates == [(7, "uz")]

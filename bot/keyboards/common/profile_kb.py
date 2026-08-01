@@ -4,6 +4,7 @@
 def profile_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔔 Настройки уведомлений", callback_data="profile_reminder_settings")],
+        [InlineKeyboardButton(text="🌐 Язык / Til", callback_data="profile_language_settings")],
         [InlineKeyboardButton(text="✏️ Изменить личные данные", callback_data="profile_personal_data")],
     ])
 

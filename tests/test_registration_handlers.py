@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import bot.handlers.registration as registration_module
 from bot.handlers.registration import create_reg_router
 from bot.keyboards.utils.gender_cb import GenderCB
+from bot.keyboards.utils.language_cb import LanguageCB
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.states.register_states import RegisterStates
@@ -50,6 +51,14 @@ class FakeUserRepository:
         user.ID = self.next_id
         self.users_by_id[self.next_id] = user
         self.next_id += 1
+
+
+class FakeUserSettingsRepository:
+    def __init__(self):
+        self.language_updates = []
+
+    async def set_language(self, user_id, language):
+        self.language_updates.append((user_id, language))
 
 
 class FakeStaffRepository:
@@ -140,10 +149,13 @@ def _patch_get_bot(monkeypatch):
 
 def _build_router(existing_clients, notification_service, clinic_repo=None, client_clinic_repo=None):
     user_repo = FakeUserRepository(existing_clients=existing_clients)
+    user_settings_repo = FakeUserSettingsRepository()
     router = create_reg_router(
         user_repo, clinic_repo=clinic_repo, staff_repo=FakeStaffRepository(),
-        client_notification_service=notification_service, client_clinic_repo=client_clinic_repo,
+        client_notification_service=notification_service, user_settings_repo=user_settings_repo,
+        client_clinic_repo=client_clinic_repo,
     )
+    router.user_settings_repo = user_settings_repo
     return router, user_repo
 
 
@@ -522,7 +534,7 @@ async def test_final_reg_existing_user_no_conflict_then_edit_saves_edited_name_w
 
 
 @pytest.mark.asyncio
-async def test_start_guest_with_valid_token_sends_guide_prompt_with_reg_guide_button(
+async def test_start_guest_with_valid_token_sends_language_prompt(
         fsm_context, notification_service):
     clinic = Clinic(name="Клиника Тест", token="abc123", clinic_id=1)
     clinic_repo = FakeClinicRepository(clinics=[clinic])
@@ -535,12 +547,14 @@ async def test_start_guest_with_valid_token_sends_guide_prompt_with_reg_guide_bu
 
     await start_guest(message, fsm_context, _command(args="abc123"))
 
-    guide_call = next(
+    assert await fsm_context.get_state() == RegisterStates.language
+    lang_call = next(
         call for call in message.answer.call_args_list
-        if call.args and "Пройдите регистрацию" in call.args[0]
+        if call.args and "Tilni tanlang" in call.args[0]
     )
-    reply_markup = guide_call.kwargs["reply_markup"]
-    assert reply_markup.inline_keyboard[0][0].callback_data == "reg_guide"
+    reply_markup = lang_call.kwargs["reply_markup"]
+    assert reply_markup.inline_keyboard[0][0].callback_data == LanguageCB(value="ru").pack()
+    assert reply_markup.inline_keyboard[0][1].callback_data == LanguageCB(value="uz").pack()
 
 
 @pytest.mark.asyncio
@@ -563,12 +577,7 @@ async def test_start_guest_without_token_resolves_the_only_clinic(
     data = await fsm_context.get_data()
     assert data["clinic_id"] == 1
     assert data["clinic_name"] == "Клиника Тест"
-    guide_call = next(
-        call for call in message.answer.call_args_list
-        if call.args and "Пройдите регистрацию" in call.args[0]
-    )
-    reply_markup = guide_call.kwargs["reply_markup"]
-    assert reply_markup.inline_keyboard[0][0].callback_data == "reg_guide"
+    assert await fsm_context.get_state() == RegisterStates.language
 
 
 @pytest.mark.asyncio
@@ -614,13 +623,13 @@ async def test_start_guest_without_token_and_no_clinic_seeded_rejects(
 
 
 @pytest.mark.asyncio
-async def test_show_registration_guide_sends_contact_button_instructions(notification_service):
+async def test_show_registration_guide_sends_contact_button_instructions(fsm_context, notification_service):
     router, _ = _build_router(existing_clients=[], notification_service=notification_service)
     show_registration_guide = _get_handler(router.callback_query, "show_registration_guide")
 
     callback = _callback(data="reg_guide")
 
-    await show_registration_guide(callback)
+    await show_registration_guide(callback, fsm_context)
 
     callback.message.edit_text.assert_awaited_once()
     sent_text = callback.message.edit_text.call_args.args[0]
@@ -641,11 +650,13 @@ async def test_rescanning_qr_clears_stale_fsm_data_before_new_registration(
         clinic_repo=clinic_repo,
     )
     start_guest = _get_handler(router.message, "start_guest")
+    choose_language = _get_handler(router.callback_query, "choose_language")
     get_phone = _get_handler(router.message, "get_phone")
 
-    # First attempt: guest scans QR, sends contact A -> resolves to an
-    # existing unclaimed user, moving into the name_conflict state.
+    # First attempt: guest scans QR, picks a language, sends contact A ->
+    # resolves to an existing unclaimed user, moving into the name_conflict state.
     await start_guest(_message(), fsm_context, _command(args="abc123"))
+    await choose_language(_callback(data="reg_lang:ru"), LanguageCB(value="ru"), fsm_context)
 
     contact_a = MagicMock()
     contact_a.phone_number = existing_client.phone
@@ -658,6 +669,7 @@ async def test_rescanning_qr_clears_stale_fsm_data_before_new_registration(
 
     # Guest abandons the Да/Нет prompt and re-scans the SAME QR link instead.
     await start_guest(_message(), fsm_context, _command(args="abc123"))
+    await choose_language(_callback(data="reg_lang:ru"), LanguageCB(value="ru"), fsm_context)
 
     # Second attempt: a genuinely new contact B, unrelated to user X.
     contact_b = MagicMock()
@@ -747,4 +759,88 @@ async def test_reclaimed_user_conflict_no_full_flow_persists_birth_date_and_gend
     assert stored.telegram_user_id == 999
     assert stored.birth_date == "1985-11-12"
     assert stored.gender == "female"
+
+
+# --- language selection ---
+
+@pytest.mark.asyncio
+async def test_choose_language_uz_moves_to_phone_and_sends_uz_prompts(fsm_context, notification_service):
+    router, _ = _build_router(existing_clients=[], notification_service=notification_service)
+    choose_language = _get_handler(router.callback_query, "choose_language")
+
+    await fsm_context.set_state(RegisterStates.language)
+    await fsm_context.update_data(clinic_id=1, clinic_name="Клиника Тест")
+
+    callback = _callback(data="reg_lang:uz")
+
+    await choose_language(callback, LanguageCB(value="uz"), fsm_context)
+
+    assert await fsm_context.get_state() == RegisterStates.phone
+    data = await fsm_context.get_data()
+    assert data["language"] == "uz"
+
+    sent_texts = [call.args[0] for call in callback.message.answer.call_args_list if call.args]
+    assert any("ro'yxatdan o'ting" in text for text in sent_texts)
+    assert any("Kontaktingizni yuboring" in text for text in sent_texts)
+
+
+@pytest.mark.asyncio
+async def test_choose_language_ru_sends_ru_prompts(fsm_context, notification_service):
+    router, _ = _build_router(existing_clients=[], notification_service=notification_service)
+    choose_language = _get_handler(router.callback_query, "choose_language")
+
+    await fsm_context.set_state(RegisterStates.language)
+    await fsm_context.update_data(clinic_id=1, clinic_name="Клиника Тест")
+
+    callback = _callback(data="reg_lang:ru")
+
+    await choose_language(callback, LanguageCB(value="ru"), fsm_context)
+
+    data = await fsm_context.get_data()
+    assert data["language"] == "ru"
+
+    sent_texts = [call.args[0] for call in callback.message.answer.call_args_list if call.args]
+    assert any("Пройдите регистрацию" in text for text in sent_texts)
+    assert any("Отправьте ваш контакт" in text for text in sent_texts)
+
+
+@pytest.mark.asyncio
+async def test_full_flow_uz_language_choice_reaches_register(fsm_context, notification_service):
+    clinic = Clinic(name="Клиника Тест", token="abc123", clinic_id=1)
+    clinic_repo = FakeClinicRepository(clinics=[clinic])
+    router, user_repo = _build_router(
+        existing_clients=[], notification_service=notification_service, clinic_repo=clinic_repo,
+    )
+    start_guest = _get_handler(router.message, "start_guest")
+    choose_language = _get_handler(router.callback_query, "choose_language")
+    get_phone = _get_handler(router.message, "get_phone")
+    get_full_name = _get_handler(router.message, "get_full_name")
+    get_birth_date = _get_handler(router.message, "get_birth_date")
+    choose_gender = _get_handler(router.callback_query, "choose_gender")
+    final_reg = _get_handler(router.callback_query, "final_reg")
+
+    await start_guest(_message(), fsm_context, _command(args="abc123"))
+    assert await fsm_context.get_state() == RegisterStates.language
+
+    await choose_language(_callback(data="reg_lang:uz"), LanguageCB(value="uz"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.phone
+
+    contact = MagicMock()
+    contact.phone_number = "901234567"
+    await get_phone(_message(contact=contact), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.full_name
+
+    await get_full_name(_message(text="Иван Иванов"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.birth_date
+
+    await get_birth_date(_message(text="05.03.1990"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.gender
+
+    await choose_gender(_callback(data="reg_gender:male"), GenderCB(value="male"), fsm_context)
+    assert await fsm_context.get_state() == RegisterStates.confirm_register
+
+    await final_reg(_callback(data="reg_confirm"), fsm_context)
+
+    created = next(u for u in user_repo.users_by_id.values() if u.full_name == "Иван Иванов")
+    assert router.user_settings_repo.language_updates == [(created.ID, "uz")]
 

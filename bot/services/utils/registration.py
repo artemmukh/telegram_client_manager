@@ -9,6 +9,7 @@ from bot.utils.tools import normalize_phone
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.user_repository import UserRepository
+from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.services.utils.personal_data import validate_and_normalize_personal_data
 from bot.validators.validators import validate_full_name, validate_phone, SEARCH_NAME_PATTERN
@@ -25,10 +26,12 @@ class RegistrationService:
             self,
             user_repository: UserRepository,
             clinic_repository: ClinicRepository,
+            user_settings_repository: UserSettingsRepository,
             client_clinic_repository: ClientClinicRepository | None = None,
     ):
         self.user_repository = user_repository
         self.clinic_repository = clinic_repository
+        self.user_settings_repository = user_settings_repository
         self.client_clinic_repository = client_clinic_repository
 
     async def get_clinic_by_token(self, token: str) -> Clinic | None:
@@ -92,6 +95,7 @@ class RegistrationService:
             existing_user_id: int | None = None,
             birth_date: str | None = None,
             gender: str | None = None,
+            language: str = "ru",
     ) -> User:
 
         full_name = full_name.strip()
@@ -113,9 +117,11 @@ class RegistrationService:
             await self.user_repository.update_user_telegram_id(
                 existing_user_id, telegram_user_id, gender=gender, birth_date=birth_date,
             )
+            await self.user_settings_repository.set_language(existing_user_id, language)
             user.telegram_user_id = telegram_user_id
             user.gender = gender
             user.birth_date = birth_date
+            user.language = language
             return user
 
         if await self.user_repository.user_exists(telegram_user_id):
@@ -130,9 +136,11 @@ class RegistrationService:
             created_at=get_current_tashkent_time(),
             gender=gender,
             birth_date=birth_date,
+            language=language,
         )
 
         await self.user_repository.create_user(user)
+        await self.user_settings_repository.set_language(user.ID, language)
 
         if self.client_clinic_repository is not None:
             await self.client_clinic_repository.link_client_to_clinic(user.ID, clinic_id)

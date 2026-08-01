@@ -13,6 +13,8 @@ from bot.handlers.utils.admin_utils.input_helpers import (
 )
 from bot.keyboards.utils.gender_cb import GenderCB
 from bot.keyboards.utils.gender_kb import gender_kb
+from bot.keyboards.utils.language_cb import LanguageCB
+from bot.keyboards.utils.language_kb import language_kb
 from bot.keyboards.utils.utils_kb import (
     contact_keyboard,
     reg_confirm_kb,
@@ -34,15 +36,20 @@ from bot.utils.role import RoleFilter, Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import FULL_NAME_PATTERN
 
-BIRTH_DATE_PROMPT = "Введите дату рождения в формате ДД.ММ.ГГГГ, например 05.03.1990:"
-
 
 def create_reg_router(
         user_repo, clinic_repo, staff_repo, client_notification_service: ClientNotificationService,
+        user_settings_repo,
         client_clinic_repo=None,
 ) -> Router:
+    # Language lookup is two-regime: registered users read current_user.language
+    # (populated by UserContextMiddleware on every message/callback, see
+    # bot/middlewares/user.py and its wiring in bot/run.py). Users still inside
+    # RegisterStates (language not persisted yet) read (await state.get_data())["language"].
     router = Router()
-    reg = RegistrationService(user_repo, clinic_repo, client_clinic_repository=client_clinic_repo)
+    reg = RegistrationService(
+        user_repo, clinic_repo, user_settings_repo, client_clinic_repository=client_clinic_repo,
+    )
 
     auth = AuthService(staff_repo)
 
@@ -61,7 +68,7 @@ def create_reg_router(
         clinic = await reg.resolve_start_clinic(command.args)
 
         if clinic is None:
-            await message.answer("QR-код или пригласительная ссылка недействительна. Обратитесь в клинику.")
+            await message.answer(msg.INVALID_CLINIC_TOKEN)
             return
 
         await state.clear()
@@ -71,13 +78,23 @@ def create_reg_router(
             clinic_name=clinic.name,
         )
 
-        await message.answer("Пройдите регистрацию для дальнейшего взаимодействия.", reply_markup=reg_guide_kb())
+        await state.set_state(RegisterStates.language)
+        await message.answer(msg.CHOOSE_LANGUAGE_PROMPT, reply_markup=language_kb())
+
+    @router.callback_query(RegisterStates.language, LanguageCB.filter())
+    async def choose_language(callback: CallbackQuery, callback_data: LanguageCB, state: FSMContext):
+        lang = callback_data.value
+        await state.update_data(language=lang)
         await state.set_state(RegisterStates.phone)
-        await message.answer("Отправьте ваш контакт: ", reply_markup=contact_keyboard())
+        await callback.answer('')
+        await callback.message.answer(msg.registration_intro(lang), reply_markup=reg_guide_kb())
+        await callback.message.answer(msg.send_contact_prompt(lang), reply_markup=contact_keyboard())
 
     @router.callback_query(F.data == "reg_guide")
-    async def show_registration_guide(callback: CallbackQuery) -> None:
-        await callback.message.edit_text(msg.REGISTRATION_GUIDE, reply_markup=None)
+    async def show_registration_guide(callback: CallbackQuery, state: FSMContext) -> None:
+        data = await state.get_data()
+        lang = data.get("language", "ru")
+        await callback.message.edit_text(msg.registration_guide(lang), reply_markup=None)
         await callback.answer()
 
     # ---------- registration ----------
@@ -85,6 +102,8 @@ def create_reg_router(
     @router.message(RegisterStates.phone, F.contact)
     async def get_phone(message: Message, state: FSMContext):
 
+        data = await state.get_data()
+        lang = data.get("language", "ru")
         phone = normalize_phone(phone=message.contact.phone_number)
 
         try:
@@ -92,19 +111,13 @@ def create_reg_router(
                 phone, message.from_user.id, contact_user_id=message.contact.user_id,
             )
         except UserAlreadyExistsError:
-            await message.answer("Вы уже зарегистрированы.")
+            await message.answer(msg.already_registered(lang))
             return
         except PhoneAlreadyExistsError:
-            await message.answer(
-                "Этот номер телефона уже привязан к другому аккаунту Telegram.\n"
-                "Обратитесь в клинику."
-            )
+            await message.answer(msg.phone_already_linked(lang))
             return
         except ContactOwnershipMismatchError:
-            await message.answer(
-                "Похоже, вы отправили чужой контакт.\n"
-                "Пожалуйста, отправьте свой собственный контакт кнопкой ниже."
-            )
+            await message.answer(msg.contact_ownership_mismatch(lang))
             return
 
         await state.update_data(phone=phone)
@@ -116,18 +129,13 @@ def create_reg_router(
             )
             await state.set_state(RegisterStates.name_conflict)
             await message.answer(
-                f"Вы были занесены как: {result.existing_user.full_name}\n\n"
-                "Хотели бы вы изменить это?",
+                msg.existing_user_found_prompt(result.existing_user.full_name, lang),
                 reply_markup=reg_name_conflict_kb(),
             )
             return
 
         await state.set_state(RegisterStates.full_name)
-        await message.answer(
-            "👤 Введите ваше настоящее ФИ.\n\n"
-            "Пожалуйста, используйте реальные данные.\n"
-            "Они будут отображаться врачу во время записи на приём."
-        )
+        await message.answer(msg.full_name_prompt(lang))
 
     @router.message(RegisterStates.full_name, F.text)
     async def get_full_name(message: Message, state: FSMContext):
@@ -137,6 +145,7 @@ def create_reg_router(
             return
 
         data = await state.get_data()
+        lang = data.get("language", "ru")
         existing_user_id = data.get("existing_user_id")
 
         if existing_user_id is not None:
@@ -146,46 +155,51 @@ def create_reg_router(
                 data["clinic_id"], data["existing_full_name"], data["full_name"], data["phone"],
             )
 
-        await message.answer(BIRTH_DATE_PROMPT)
+        await message.answer(msg.birth_date_prompt(lang))
 
     @router.callback_query(RegisterStates.name_conflict, F.data == "reg_name_conflict_yes")
     async def confirm_name_conflict_yes(callback: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        lang = data.get("language", "ru")
         await state.set_state(RegisterStates.full_name)
         await callback.answer('')
-        await callback.message.answer(
-            "👤 Введите ваше настоящее ФИ.\n\n"
-            "Пожалуйста, используйте реальные данные.\n"
-            "Они будут отображаться врачу во время записи на приём."
-        )
+        await callback.message.answer(msg.full_name_prompt(lang))
 
     @router.callback_query(RegisterStates.name_conflict, F.data == "reg_name_conflict_no")
     async def confirm_name_conflict_no(callback: CallbackQuery, state: FSMContext):
         data = await state.get_data()
+        lang = data.get("language", "ru")
 
         await state.update_data(full_name=data["existing_full_name"])
         await state.set_state(RegisterStates.birth_date)
         await callback.answer('')
-        await callback.message.answer(BIRTH_DATE_PROMPT)
+        await callback.message.answer(msg.birth_date_prompt(lang))
 
     @router.message(RegisterStates.birth_date, F.text)
     async def get_birth_date(message: Message, state: FSMContext):
         if not await birth_date_processing(message, state, next_state=RegisterStates.gender):
             return
-        await message.answer("Укажите пол:", reply_markup=gender_kb())
+        data = await state.get_data()
+        lang = data.get("language", "ru")
+        await message.answer(msg.gender_prompt(lang), reply_markup=gender_kb())
 
     @router.callback_query(RegisterStates.gender, GenderCB.filter())
     async def choose_gender(callback: CallbackQuery, callback_data: GenderCB, state: FSMContext):
         await state.update_data(gender=callback_data.value)
         await state.set_state(RegisterStates.confirm_register)
         await callback.answer('')
-        await show_confirmation(callback.message, state, reg_confirm_kb())
+        lang = (await state.get_data()).get("language", "ru")
+        await show_confirmation(callback.message, state, reg_confirm_kb(), lang=lang)
 
     @router.callback_query(
         RegisterStates.confirm_register,
         F.data == "reg_edit"
     )
     async def edit_name(callback: CallbackQuery, state: FSMContext):
-        await edit_full_name(callback, state, RegisterStates.edit_full_name, reply_markup=reg_edit_name_back_kb())
+        lang = (await state.get_data()).get("language", "ru")
+        await edit_full_name(
+            callback, state, RegisterStates.edit_full_name, reply_markup=reg_edit_name_back_kb(), lang=lang,
+        )
 
     @router.message(
         RegisterStates.edit_full_name, F.text)
@@ -194,18 +208,23 @@ def create_reg_router(
 
                 message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
             return
-        await show_confirmation(message, state, reg_confirm_kb())
+        data = await state.get_data()
+        lang = data.get("language", "ru")
+        await show_confirmation(message, state, reg_confirm_kb(), lang=lang)
 
     @router.callback_query(RegisterStates.edit_full_name, F.data == "reg_edit_name_back")
     async def back_from_full_name_edition(callback: CallbackQuery, state: FSMContext):
         await state.set_state(RegisterStates.confirm_register)
         await callback.answer('')
-        await show_confirmation(callback.message, state, reg_confirm_kb())
+        data = await state.get_data()
+        lang = data.get("language", "ru")
+        await show_confirmation(callback.message, state, reg_confirm_kb(), lang=lang)
 
     @router.callback_query(RegisterStates.confirm_register, F.data == "reg_confirm")
     async def final_reg(callback: CallbackQuery, state: FSMContext):
 
         data = await state.get_data()
+        lang = data.get("language", "ru")
 
         role = await auth.detect_role(
             telegram_user_id=callback.from_user.id,
@@ -222,29 +241,27 @@ def create_reg_router(
                 existing_user_id=data.get("existing_user_id"),
                 birth_date=data.get("birth_date"),
                 gender=data.get("gender"),
+                language=lang,
             )
         except UserAlreadyExistsError:
-            await callback.message.answer("Вы уже зарегистрированы.")
+            await callback.message.answer(msg.already_registered(lang))
             await callback.answer()
             return
         except PhoneAlreadyExistsError:
-            await callback.message.answer(
-                "Этот номер телефона уже привязан к другому аккаунту Telegram.\n"
-                "Обратитесь в клинику."
-            )
+            await callback.message.answer(msg.phone_already_linked(lang))
             await callback.answer()
             return
 
-        await callback.message.answer("Регистрация прошла успешно!")
+        await callback.message.answer(msg.registration_success(lang))
 
         bot = get_bot()
 
         if role == Role.ADMIN:
-            await show_main_admin_menu(callback.message, full_name=data["full_name"])
+            await show_main_admin_menu(callback.message, full_name=data["full_name"], lang=lang)
             await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
         else:
             await show_main_client_menu(
-                callback.message, full_name=data["full_name"], clinic_name=data["clinic_name"],
+                callback.message, full_name=data["full_name"], clinic_name=data["clinic_name"], lang=lang,
             )
             await bot.set_my_commands(CLIENT_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
 

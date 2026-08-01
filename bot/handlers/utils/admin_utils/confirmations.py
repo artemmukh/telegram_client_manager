@@ -3,26 +3,46 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.admin.client_management_kb.client_main_menu_kb import back_to_menu_kb
 
-GENDER_LABELS = {"male": "Мужской", "female": "Женский"}
+GENDER_LABELS = {
+    "ru": {"male": "Мужской", "female": "Женский"},
+    "uz": {"male": "Erkak", "female": "Ayol"},
+}
 
 FIELDS = {
-    "user_id": "ID клиента",
-    "full_name": "ФИ",
-    "birth_date": "Дата рождения",
-    "gender": "Пол",
-    "phone": "Телефон",
-    "clinic_name": "Клиника"
+    "ru": {
+        "user_id": "ID клиента",
+        "full_name": "ФИ",
+        "birth_date": "Дата рождения",
+        "gender": "Пол",
+        "phone": "Телефон",
+        "clinic_name": "Клиника"
+    },
+    "uz": {
+        "user_id": "Mijoz ID",
+        "full_name": "F.I.Sh.",
+        "birth_date": "Tug'ilgan sana",
+        "gender": "Jinsi",
+        "phone": "Telefon",
+        "clinic_name": "Klinika"
+    },
+}
+
+CONFIRM_TITLE = {
+    "ru": "Проверьте введенные данные:",
+    "uz": "Kiritilgan ma'lumotlarni tekshiring:",
 }
 
 
-def build_client_text(title: str, data: dict) -> str:
+def build_client_text(title: str, data: dict, lang: str = "ru") -> str:
+    fields = FIELDS.get(lang, FIELDS["ru"])
+    gender_labels = GENDER_LABELS.get(lang, GENDER_LABELS["ru"])
     lines = [title, ""]
 
-    for key, caption in FIELDS.items():
+    for key, caption in fields.items():
         if key not in data:
             continue
 
-        value = GENDER_LABELS.get(data[key], data[key]) if key == "gender" else data[key]
+        value = gender_labels.get(data[key], data[key]) if key == "gender" else data[key]
         lines.append(f"{caption}: {value}")
 
     return "\n".join(lines)
@@ -32,13 +52,15 @@ async def show_confirmation(
     message: Message,
     state: FSMContext,
     reply_markup=None,
+    lang: str = "ru",
 ) -> None:
     data = await state.get_data()
 
     await message.answer(
         text=build_client_text(
-            "Проверьте введенные данные:",
+            CONFIRM_TITLE.get(lang, CONFIRM_TITLE["ru"]),
             data,
+            lang,
         ),
         reply_markup=reply_markup,
     )

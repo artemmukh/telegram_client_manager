@@ -1,7 +1,7 @@
 """Tests for the new profile/registration/name-change keyboards.
 
-Covers profile_menu_kb's two buttons (reminder settings + personal-data
-submenu entry), profile_personal_data_kb's three buttons, reg_name_conflict_kb's
+Covers profile_menu_kb's three buttons (reminder settings, language settings +
+personal-data submenu entry), profile_personal_data_kb's three buttons, reg_name_conflict_kb's
 Да/Нет buttons, and name_change_approval_kb's approve/reject buttons
 (callback data round-trip).
 """
@@ -22,8 +22,9 @@ def test_profile_menu_kb_has_reminder_settings_and_personal_data_buttons():
     texts_by_callback = {button.callback_data: button.text for button in _all_buttons(markup)}
 
     assert texts_by_callback["profile_reminder_settings"] == "🔔 Настройки уведомлений"
+    assert texts_by_callback["profile_language_settings"] == "🌐 Язык / Til"
     assert texts_by_callback["profile_personal_data"] == "✏️ Изменить личные данные"
-    assert len(texts_by_callback) == 2
+    assert len(texts_by_callback) == 3
 
 
 def test_profile_personal_data_kb_has_change_name_birth_date_and_back_buttons():

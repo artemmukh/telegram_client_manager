@@ -227,6 +227,18 @@ class ClientManagement:
         user.reminder_2h = reminder_2h
         return user
 
+    async def update_language(self, user_id: int, language: str) -> User:
+        if language not in ("ru", "uz"):
+            raise ValidationError(f"Неизвестный язык: {language}")
+
+        user = await self.user_repository.get_user_by_id(user_id)
+        if user is None:
+            raise UserNotFoundError("Пользователь не найден.")
+
+        await self.user_settings_repository.set_language(user_id, language)
+        user.language = language
+        return user
+
     async def update_personal_data(self, user_id: int, *, birth_date: str | None, gender: str | None) -> User:
         birth_date, gender = validate_and_normalize_personal_data(birth_date, gender)
 

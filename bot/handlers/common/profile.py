@@ -12,6 +12,8 @@ from bot.keyboards.admin.admin_reminder_kb import admin_reminder_settings_kb
 from bot.keyboards.client.reminder_cb import ClientReminderPresetCB
 from bot.keyboards.client.reminder_kb import reminder_settings_kb
 from bot.keyboards.common.profile_kb import profile_menu_kb
+from bot.keyboards.utils.language_cb import LanguageCB
+from bot.keyboards.utils.language_kb import language_settings_kb
 from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.utils.role import Role, RoleFilter
@@ -68,6 +70,39 @@ def create_profile_router(client_management_service: ClientManagement = None):
                 build_profile_text(current_user), reply_markup=_with_back_button(reply_markup)
             )
             await callback_query.answer()
+
+        @router.callback_query(F.data == "profile_language_settings", RoleFilter("*"))
+        async def open_language_settings(callback_query: CallbackQuery, current_user: User | None = None):
+            await callback_query.message.edit_text(
+                build_profile_text(current_user),
+                reply_markup=_with_back_button(language_settings_kb(current_user.language)),
+            )
+            await callback_query.answer()
+
+        @router.callback_query(LanguageCB.filter(), RoleFilter("*"))
+        async def update_language_preset(
+            callback_query: CallbackQuery,
+            callback_data: LanguageCB,
+            current_user: User | None = None,
+        ):
+            try:
+                updated_user = await client_management_service.update_language(
+                    current_user.ID, callback_data.value
+                )
+            except BotException as e:
+                await callback_query.answer(str(e), show_alert=True)
+                return
+
+            try:
+                await callback_query.message.edit_text(
+                    build_profile_text(updated_user),
+                    reply_markup=_with_back_button(language_settings_kb(updated_user.language)),
+                )
+            except TelegramBadRequest as e:
+                if "message is not modified" not in str(e):
+                    raise
+
+            await callback_query.answer("Настройки обновлены")
 
         @router.callback_query(F.data == "profile_back", RoleFilter("*"))
         async def back_to_profile(callback_query: CallbackQuery, state: FSMContext, current_user: User | None = None):

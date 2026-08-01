@@ -132,7 +132,7 @@ async def e2e(tmp_path):
         admin=admin,
         fake_notifier=fake_notifier,
         scheduler=scheduler,
-        registration_service=RegistrationService(user_repo, clinic_repo),
+        registration_service=RegistrationService(user_repo, clinic_repo, user_settings_repo),
         client_management=client_management,
         client_pagination=ClientPaginationService(user_repo),
         appointment_management=appointment_management,
@@ -244,7 +244,7 @@ async def test_self_registered_client_appears_in_clinic_scoped_search(e2e):
     client_clinic_repo = ClientClinicRepository(e2e.connection)
     await client_clinic_repo.init()
     registration_service = RegistrationService(
-        e2e.user_repo, e2e.clinic_repo, client_clinic_repository=client_clinic_repo,
+        e2e.user_repo, e2e.clinic_repo, e2e.user_settings_repo, client_clinic_repository=client_clinic_repo,
     )
 
     telegram_id = 555000333

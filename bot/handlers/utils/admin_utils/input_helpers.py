@@ -76,11 +76,19 @@ async def phone_processing(message: Message,
     return True
 
 
-async def edit_full_name(callback: CallbackQuery, state: FSMContext, edit_state: State, reply_markup):
+EDIT_FULL_NAME_PROMPT = {
+    "ru": "Введите новое ФИ:",
+    "uz": "Yangi F.I.Sh.ni kiriting:",
+}
+
+
+async def edit_full_name(
+    callback: CallbackQuery, state: FSMContext, edit_state: State, reply_markup, lang: str = "ru",
+):
     await state.set_state(edit_state)
     await callback.answer('')
     await callback.message.edit_text(
-        "Введите новое ФИ:",
+        EDIT_FULL_NAME_PROMPT.get(lang, EDIT_FULL_NAME_PROMPT["ru"]),
         reply_markup=reply_markup
     )
 
