@@ -5,8 +5,14 @@ from aiogram.types import Message, CallbackQuery
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.admin_utils.client_browser_helpers import render_client_card
 from bot.keyboards.admin.record_management_kb.record_main_menu_kb import record_keyboard
+from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.utils.role import RoleFilter
+
+_CHOOSE_RECORD_ACTION = {
+    "ru": "Выберите действие над записью:",
+    "uz": "Yozuv uchun amalni tanlang:",
+}
 
 
 def create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic_repo=None):
@@ -27,11 +33,15 @@ def create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic
         "/record_managing", "/appointments", "/create_appointment", "📒 Управление записями", "📅 Календарь",
         "📒 Yozuvlarni boshqarish", "📅 Kalendar",
     }))
-    async def record_managing(message: Message):
-        await message.answer(text="Выберите действие над записью:", reply_markup=record_keyboard())
+    async def record_managing(message: Message, current_user: User):
+        lang = current_user.language
+        await message.answer(
+            text=_CHOOSE_RECORD_ACTION.get(lang, _CHOOSE_RECORD_ACTION["ru"]), reply_markup=record_keyboard(lang=lang),
+        )
 
     @router.callback_query(F.data == "back_to_main_records")
-    async def back_to_main(callback_query: CallbackQuery, state: FSMContext):
+    async def back_to_main(callback_query: CallbackQuery, state: FSMContext, current_user: User):
+        lang = current_user.language
         data = await state.get_data()
         if data.get("client_preselected"):
             origin_client_id = data.get("origin_client_id")
@@ -47,20 +57,20 @@ def create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic
                 await callback_query.answer(str(e), show_alert=True)
                 return
             found = await render_client_card(
-                cl_mng, callback_query, state, origin_client_id, origin_mode, origin_page, clinic.clinic_id,
+                cl_mng, callback_query, state, origin_client_id, origin_mode, origin_page, clinic.clinic_id, lang,
             )
             if not found:
                 await callback_query.message.edit_text(
-                    "Выберите действие над записью:",
-                    reply_markup=record_keyboard()
+                    _CHOOSE_RECORD_ACTION.get(lang, _CHOOSE_RECORD_ACTION["ru"]),
+                    reply_markup=record_keyboard(lang=lang)
                 )
             return
 
         await state.clear()
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            "Выберите действие над записью:",
-            reply_markup=record_keyboard()
+            _CHOOSE_RECORD_ACTION.get(lang, _CHOOSE_RECORD_ACTION["ru"]),
+            reply_markup=record_keyboard(lang=lang)
         )
 
     return router

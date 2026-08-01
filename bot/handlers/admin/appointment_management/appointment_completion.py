@@ -14,10 +14,26 @@ from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_card_kb
 from bot.keyboards.admin.record_management_kb.completion_followup_cb import CompletionFollowupCB
+from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
+
+_APPOINTMENT_NOT_FOUND = {
+    "ru": "Запись не найдена.",
+    "uz": "Yozuv topilmadi.",
+}
+
+_ALREADY_AUTO_COMPLETED = {
+    "ru": "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»",
+    "uz": "Yozuv allaqachon avtoyakunlangan, uni «Yakunlangan»da tuzatishingiz mumkin",
+}
+
+_APPOINTMENT_COMPLETED = {
+    "ru": "Приём завершён.",
+    "uz": "Qabul yakunlandi.",
+}
 
 
 def create_admin_completion_router(
@@ -29,25 +45,28 @@ def create_admin_completion_router(
     appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
     @router.callback_query(CompletionFollowupCB.filter(F.action == "edit"))
-    async def open_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB, state: FSMContext):
+    async def open_edit(
+        callback_query: CallbackQuery, callback_data: CompletionFollowupCB, state: FSMContext, current_user: User,
+    ):
+        lang = current_user.language
         owned_appointment = await appt_mng.get_appointment_for_admin(
             callback_data.appointment_id, callback_query.from_user.id
         )
         if owned_appointment is None:
-            await callback_query.answer("Запись не найдена.", show_alert=True)
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
             return
 
         try:
             appointment = await appt_mng.complete_appointment_by_admin(owned_appointment, callback_query.from_user.id)
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(
-                "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»", show_alert=True,
+                _ALREADY_AUTO_COMPLETED.get(lang, _ALREADY_AUTO_COMPLETED["ru"]), show_alert=True,
             )
             if notification_service:
                 try:
                     await invalidate_actor_stale_message(
                         notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id,
+                        callback_query.message.chat.id, callback_query.message.message_id, lang=lang,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -64,9 +83,10 @@ def create_admin_completion_router(
 
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            build_appointment_card(appointment),
+            build_appointment_card(appointment, lang),
             reply_markup=appointment_card_kb(
                 appointment.id, mode="list", page=1, status=appointment.status, tab="completed", post_appt=True,
+                lang=lang,
             ),
         )
         await remember_tracked_message(state, callback_query.message)
@@ -86,25 +106,26 @@ def create_admin_completion_router(
                 )
 
     @router.callback_query(CompletionFollowupCB.filter(F.action == "skip"))
-    async def skip_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB):
+    async def skip_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB, current_user: User):
+        lang = current_user.language
         owned_appointment = await appt_mng.get_appointment_for_admin(
             callback_data.appointment_id, callback_query.from_user.id
         )
         if owned_appointment is None:
-            await callback_query.answer("Запись не найдена.", show_alert=True)
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
             return
 
         try:
             appointment = await appt_mng.complete_appointment_by_admin(owned_appointment, callback_query.from_user.id)
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(
-                "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»", show_alert=True,
+                _ALREADY_AUTO_COMPLETED.get(lang, _ALREADY_AUTO_COMPLETED["ru"]), show_alert=True,
             )
             if notification_service:
                 try:
                     await invalidate_actor_stale_message(
                         notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id,
+                        callback_query.message.chat.id, callback_query.message.message_id, lang=lang,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -120,7 +141,9 @@ def create_admin_completion_router(
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
         await callback_query.answer('')
-        await callback_query.message.edit_text("Приём завершён.", reply_markup=None)
+        await callback_query.message.edit_text(
+            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]), reply_markup=None,
+        )
 
         if notification_service:
             try:

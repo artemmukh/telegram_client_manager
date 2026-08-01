@@ -184,7 +184,7 @@ async def test_confirm_request_denies_own_scope_admin_for_other_doctor_appointme
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     callback_data = BookingRequestActionCB(action="confirm", appointment_id=FOREIGN_APPOINTMENT_ID)
 
-    await confirm_request(callback_query, callback_data)
+    await confirm_request(callback_query, callback_data, _own_admin())
 
     callback_query.answer.assert_called_once_with("Заявка не найдена", show_alert=True)
     assert appt_repo.status_updates == []
@@ -199,7 +199,7 @@ async def test_confirm_request_denies_clinic_scope_admin_for_other_clinic_appoin
     callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
     callback_data = BookingRequestActionCB(action="confirm", appointment_id=OTHER_CLINIC_APPOINTMENT_ID)
 
-    await confirm_request(callback_query, callback_data)
+    await confirm_request(callback_query, callback_data, _own_admin())
 
     callback_query.answer.assert_called_once_with("Заявка не найдена", show_alert=True)
     assert appt_repo.status_updates == []
@@ -213,12 +213,12 @@ async def test_confirm_request_foreign_and_nonexistent_ids_give_identical_respon
 
     foreign_cb = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     await confirm_request(
-        foreign_cb, BookingRequestActionCB(action="confirm", appointment_id=FOREIGN_APPOINTMENT_ID),
+        foreign_cb, BookingRequestActionCB(action="confirm", appointment_id=FOREIGN_APPOINTMENT_ID), _own_admin(),
     )
 
     missing_cb = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     await confirm_request(
-        missing_cb, BookingRequestActionCB(action="confirm", appointment_id=NONEXISTENT_APPOINTMENT_ID),
+        missing_cb, BookingRequestActionCB(action="confirm", appointment_id=NONEXISTENT_APPOINTMENT_ID), _own_admin(),
     )
 
     assert foreign_cb.answer.call_args == missing_cb.answer.call_args
@@ -233,7 +233,7 @@ async def test_confirm_request_denies_when_admin_user_missing():
     callback_query = _callback_query(MISSING_ADMIN_TELEGRAM_ID)
     callback_data = BookingRequestActionCB(action="confirm", appointment_id=FOREIGN_APPOINTMENT_ID)
 
-    await confirm_request(callback_query, callback_data)
+    await confirm_request(callback_query, callback_data, _own_admin())
 
     callback_query.answer.assert_called_once_with("Заявка не найдена", show_alert=True)
     assert appt_repo.status_updates == []
@@ -250,7 +250,7 @@ async def test_reject_request_denies_own_scope_admin_for_other_doctor_appointmen
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     callback_data = BookingRequestActionCB(action="reject", appointment_id=FOREIGN_APPOINTMENT_ID)
 
-    await reject_request(callback_query, callback_data)
+    await reject_request(callback_query, callback_data, _own_admin())
 
     callback_query.answer.assert_called_once_with("Заявка не найдена", show_alert=True)
     assert appt_repo.status_updates == []
@@ -267,7 +267,7 @@ async def test_cancel_propose_denies_own_scope_admin_for_other_doctor_appointmen
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     callback_data = BookingRequestActionCB(action="cancel_propose", appointment_id=FOREIGN_APPOINTMENT_ID)
 
-    await cancel_propose(callback_query, callback_data, _state())
+    await cancel_propose(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Заявка не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -290,7 +290,7 @@ async def test_approve_propose_datetime_denies_own_scope_admin_for_other_doctor_
         appointment_datetime_display="05.08.2026 12:00",
     )
 
-    await approve_propose_datetime(callback_query, callback_data, state)
+    await approve_propose_datetime(callback_query, callback_data, state, _own_admin())
 
     callback_query.answer.assert_called_once_with("Заявка не найдена", show_alert=True)
     assert appt_repo.proposed_datetime_updates == []

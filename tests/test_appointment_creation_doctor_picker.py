@@ -150,7 +150,7 @@ async def test_start_create_with_clinic_scope_shows_doctor_picker_and_sets_state
     callback_query = _callback_query()
     state = _state()
 
-    await start_create(callback_query, state)
+    await start_create(callback_query, state, admin)
 
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.choose_doctor)
 
@@ -178,7 +178,7 @@ async def test_start_create_with_own_scope_skips_picker_goes_straight_to_full_na
     callback_query = _callback_query()
     state = _state()
 
-    await start_create(callback_query, state)
+    await start_create(callback_query, state, admin)
 
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.client_full_name)
 
@@ -201,7 +201,7 @@ async def test_start_create_with_none_scope_skips_picker_goes_straight_to_full_n
     callback_query = _callback_query()
     state = _state()
 
-    await start_create(callback_query, state)
+    await start_create(callback_query, state, admin)
 
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.client_full_name)
     callback_query.message.edit_text.assert_awaited_once()
@@ -223,7 +223,7 @@ async def test_pick_doctor_stores_staff_user_id_and_name_transitions_to_full_nam
     state = _state(staff_options={"99": "Petrov Petr"})
     callback_data = ClientBookDoctorCB(staff_user_id=99)
 
-    await pick_doctor(callback_query, callback_data, state)
+    await pick_doctor(callback_query, callback_data, state, admin)
 
     state.update_data.assert_awaited_once_with(staff_user_id=99, staff_name="Petrov Petr")
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.client_full_name)
@@ -244,7 +244,7 @@ async def test_pick_doctor_falls_back_to_generic_label_when_id_not_in_options():
     state = _state(staff_options={"99": "Petrov Petr"})
     callback_data = ClientBookDoctorCB(staff_user_id=404)
 
-    await pick_doctor(callback_query, callback_data, state)
+    await pick_doctor(callback_query, callback_data, state, admin)
 
     state.update_data.assert_awaited_once_with(staff_user_id=404, staff_name="Врач")
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.client_full_name)
@@ -286,7 +286,7 @@ async def test_pick_doctor_with_client_preselected_skips_full_name_goes_straight
         "bot.handlers.utils.admin_utils.appointment_helpers.get_current_tashkent_datetime",
         return_value=FIXED_NOW,
     ):
-        await pick_doctor(callback_query, callback_data, state)
+        await pick_doctor(callback_query, callback_data, state, admin)
 
     data = await state.get_data()
     assert data["staff_user_id"] == 99

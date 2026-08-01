@@ -97,6 +97,13 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
+def _admin_user():
+    return User(
+        full_name="Petrov Petr", phone="+998907654321", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, ID=ADMIN_ID, clinic_id=1, clinic_name="Zub Mudrosti",
+    )
+
+
 def _notification_service():
     service = MagicMock()
     service.invalidate_stale_decision_message = AsyncMock()
@@ -130,7 +137,7 @@ async def test_confirm_request_shows_alert_and_invalidates_own_message_on_lost_r
     confirm_request = _find_handler(router, "confirm_request")
     callback_query = _callback_query()
 
-    await confirm_request(callback_query, BookingRequestActionCB(action="confirm", appointment_id=1))
+    await confirm_request(callback_query, BookingRequestActionCB(action="confirm", appointment_id=1), _admin_user())
 
     callback_query.answer.assert_called_once()
     args, kwargs = callback_query.answer.call_args
@@ -187,7 +194,7 @@ async def test_accept_reschedule_shows_alert_and_invalidates_own_message_on_lost
     accept_reschedule = _find_handler(router, "accept_reschedule")
     callback_query = _callback_query()
 
-    await accept_reschedule(callback_query, RescheduleRequestActionCB(action="accept", appointment_id=1))
+    await accept_reschedule(callback_query, RescheduleRequestActionCB(action="accept", appointment_id=1), _admin_user())
 
     callback_query.answer.assert_called_once()
     args, kwargs = callback_query.answer.call_args
@@ -226,7 +233,7 @@ async def test_skip_edit_shows_alert_and_invalidates_own_message_on_lost_race():
     skip_edit = _find_handler(router, "skip_edit")
     callback_query = _callback_query()
 
-    await skip_edit(callback_query, CompletionFollowupCB(action="skip", appointment_id=1))
+    await skip_edit(callback_query, CompletionFollowupCB(action="skip", appointment_id=1), _admin_user())
 
     callback_query.answer.assert_called_once_with(
         "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»", show_alert=True,
@@ -289,6 +296,7 @@ async def test_approve_propose_datetime_shows_alert_and_invalidates_own_message_
 
     await approve_propose_datetime(
         callback_query, BookingRequestActionCB(action="approve_propose_datetime", appointment_id=1), state,
+        _admin_user(),
     )
 
     callback_query.answer.assert_called_once()

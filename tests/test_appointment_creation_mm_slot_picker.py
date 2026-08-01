@@ -167,7 +167,7 @@ async def test_change_calendar_month_moves_to_requested_month_and_stays_in_choos
     callback_query = _callback_query()
     state = _state()
 
-    await change_calendar_month(callback_query, ApptCalendarMonthCB(year=2026, month=8), state)
+    await change_calendar_month(callback_query, ApptCalendarMonthCB(year=2026, month=8), state, admin)
 
     state.update_data.assert_awaited_once_with(calendar_year=2026, calendar_month=8)
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.choose_day)
@@ -189,7 +189,7 @@ async def test_pick_calendar_day_with_valid_day_and_no_conflicts_shows_full_slot
     state = _state(staff_user_id=admin.ID)
 
     with patch(CREATION_NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await pick_calendar_day(callback_query, ApptCalendarDayCB(year=2026, month=7, day=8), state)
+        await pick_calendar_day(callback_query, ApptCalendarDayCB(year=2026, month=7, day=8), state, admin)
 
     state.update_data.assert_awaited_once_with(day_iso="2026-07-08")
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.choose_slot)
@@ -227,7 +227,7 @@ async def test_pick_calendar_day_with_fully_booked_day_still_renders_grid_with_o
     state = _state(staff_user_id=admin.ID)
 
     with patch(CREATION_NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await pick_calendar_day(callback_query, ApptCalendarDayCB(year=2026, month=7, day=8), state)
+        await pick_calendar_day(callback_query, ApptCalendarDayCB(year=2026, month=7, day=8), state, admin)
 
     state.update_data.assert_awaited_once_with(day_iso=day_iso)
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.choose_slot)
@@ -253,7 +253,7 @@ async def test_pick_calendar_day_with_no_remaining_slots_today_shows_alert_and_l
     now_after_hours = datetime(2026, 7, 6, 18, 0)  # mm's WORKING_HOURS_END is 17:00
 
     with patch(CREATION_NOW_PATCH_TARGET, return_value=now_after_hours):
-        await pick_calendar_day(callback_query, ApptCalendarDayCB(year=2026, month=7, day=6), state)
+        await pick_calendar_day(callback_query, ApptCalendarDayCB(year=2026, month=7, day=6), state, admin)
 
     callback_query.answer.assert_awaited_once_with("На этот день нет доступных слотов.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -273,7 +273,7 @@ async def test_back_to_day_selection_returns_to_stored_calendar_month():
     state = _state(calendar_year=2026, calendar_month=8, staff_user_id=admin.ID)
 
     with patch(CREATION_NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await back_to_day_selection(callback_query, state)
+        await back_to_day_selection(callback_query, state, admin)
 
     state.update_data.assert_awaited_once_with(calendar_year=2026, calendar_month=8)
     state.set_state.assert_awaited_once_with(AppointmentCreationStates.choose_day)
@@ -291,7 +291,7 @@ async def test_back_to_day_selection_defaults_to_current_month_when_not_stored()
     state = _state(staff_user_id=admin.ID)
 
     with patch(CREATION_NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await back_to_day_selection(callback_query, state)
+        await back_to_day_selection(callback_query, state, admin)
 
     state.update_data.assert_awaited_once_with(calendar_year=FIXED_NOW.year, calendar_month=FIXED_NOW.month)
 
@@ -313,7 +313,7 @@ async def test_view_occupied_slot_shows_read_only_card():
     callback_query = _callback_query()
     state = _state()
 
-    await view_occupied_slot(callback_query, AdminOccupiedSlotCB(appointment_id=7), state)
+    await view_occupied_slot(callback_query, AdminOccupiedSlotCB(appointment_id=7), state, admin)
 
     callback_query.answer.assert_awaited_once_with('')
     callback_query.message.edit_text.assert_awaited_once_with(
@@ -331,7 +331,7 @@ async def test_view_occupied_slot_with_missing_appointment_shows_alert():
     callback_query = _callback_query()
     state = _state()
 
-    await view_occupied_slot(callback_query, AdminOccupiedSlotCB(appointment_id=404), state)
+    await view_occupied_slot(callback_query, AdminOccupiedSlotCB(appointment_id=404), state, admin)
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -349,7 +349,7 @@ async def test_back_to_slot_grid_rerenders_the_stored_days_slot_grid():
     state = _state(staff_user_id=admin.ID, day_iso="2026-07-08")
 
     with patch(CREATION_NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await back_to_slot_grid(callback_query, state)
+        await back_to_slot_grid(callback_query, state, admin)
 
     args, kwargs = callback_query.message.edit_text.await_args
     assert args[0] == "Выберите время на 08.07.2026:"
@@ -371,7 +371,7 @@ async def test_pick_slot_with_valid_slot_updates_state_with_datetime_and_display
     callback_query = _callback_query()
     state = _state(day_iso="2026-07-08")
 
-    await pick_slot(callback_query, ClientBookSlotCB(slot="09:00"), state)
+    await pick_slot(callback_query, ClientBookSlotCB(slot="09:00"), state, admin)
 
     expected_display = format_datetime_for_display(datetime(2026, 7, 8, 9, 0))
     state.update_data.assert_awaited_once_with(
@@ -398,7 +398,7 @@ async def test_pick_slot_with_malformed_slot_shows_alert_and_does_not_touch_stat
     callback_query = _callback_query()
     state = _state(day_iso="2026-07-08")
 
-    await pick_slot(callback_query, ClientBookSlotCB(slot="xx:yy"), state)
+    await pick_slot(callback_query, ClientBookSlotCB(slot="xx:yy"), state, admin)
 
     callback_query.answer.assert_awaited_once_with("Некорректное время, попробуйте ещё раз.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()

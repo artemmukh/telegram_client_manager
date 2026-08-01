@@ -189,6 +189,13 @@ def _make_callback_query():
     return callback_query
 
 
+def _admin_user():
+    return User(
+        full_name="Petrov Petr", phone="+998907654321", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, ID=ADMIN_ID, clinic_id=1, clinic_name="Zub Mudrosti",
+    )
+
+
 def _make_state():
     state = MagicMock()
     state.get_data = AsyncMock(return_value={
@@ -210,6 +217,7 @@ async def test_confirm_request_resyncs_jobs_once_and_skips_legacy_methods():
     await confirm_request(
         _make_callback_query(),
         BookingRequestActionCB(action="confirm", appointment_id=1),
+        _admin_user(),
     )
 
     assert appointment.status is AppointmentStatus.CONFIRMED
@@ -227,6 +235,7 @@ async def test_reject_request_resyncs_jobs_once_and_skips_legacy_methods():
     await reject_request(
         _make_callback_query(),
         BookingRequestActionCB(action="reject", appointment_id=1),
+        _admin_user(),
     )
 
     assert appointment.status is AppointmentStatus.CANCELLED
@@ -245,6 +254,7 @@ async def test_approve_propose_datetime_resyncs_jobs_once_and_skips_legacy_metho
         _make_callback_query(),
         BookingRequestActionCB(action="approve_propose_datetime", appointment_id=1),
         _make_state(),
+        _admin_user(),
     )
 
     assert appointment.status is AppointmentStatus.PENDING
@@ -280,6 +290,7 @@ async def test_approve_propose_datetime_immediately_applies_when_client_has_no_t
         callback_query,
         BookingRequestActionCB(action="approve_propose_datetime", appointment_id=1),
         state,
+        _admin_user(),
     )
 
     assert appointment.status is AppointmentStatus.CONFIRMED

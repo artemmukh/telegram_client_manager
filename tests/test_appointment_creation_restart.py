@@ -219,7 +219,7 @@ async def test_restart_clears_stale_data_and_shows_doctor_picker_when_doctors_ex
     await state.update_data(**_stale_confirm_state_data())
 
     callback_query = _callback_query()
-    await restart_create(callback_query, state)
+    await restart_create(callback_query, state, _admin())
 
     data = await state.get_data()
     assert data == {
@@ -241,7 +241,7 @@ async def test_restart_clears_stale_data_and_goes_to_full_name_when_no_doctors()
     await state.update_data(**_stale_confirm_state_data())
 
     callback_query = _callback_query()
-    await restart_create(callback_query, state)
+    await restart_create(callback_query, state, _admin())
 
     data = await state.get_data()
     assert data == {"clinic_name": "Zub Mudrosti"}
@@ -283,7 +283,7 @@ async def test_restart_with_client_preselected_and_own_scope_restores_preselect_
         "bot.handlers.utils.admin_utils.appointment_helpers.get_current_tashkent_datetime",
         return_value=FIXED_NOW,
     ):
-        await restart_create(callback_query, state)
+        await restart_create(callback_query, state, _admin())
 
     data = await state.get_data()
     assert data == {
@@ -327,7 +327,7 @@ async def test_restart_with_client_preselected_and_clinic_scope_shows_doctor_pic
     )
 
     callback_query = _callback_query()
-    await restart_create(callback_query, state)
+    await restart_create(callback_query, state, _admin())
 
     data = await state.get_data()
     assert data == {

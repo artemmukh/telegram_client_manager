@@ -51,6 +51,7 @@ from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarMonthCB
+from bot.middlewares.user import UserContextMiddleware
 from bot.models.user import User
 from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
 from bot.states.admin.record_management.booking_negotiation_states import BookingNegotiationStates
@@ -154,6 +155,7 @@ def _build_dispatcher(storage: MemoryStorage):
 
     dp = Dispatcher(storage=storage)
     dp["user_repo"] = user_repo
+    dp.callback_query.middleware(UserContextMiddleware(user_repo))
 
     # Mirrors bot/run.py's registration order exactly: appointment_creation
     # first, then booking_requests/reschedule_requests (whose choose_day/

@@ -33,6 +33,10 @@ ADMIN_TELEGRAM_ID = 999
 CLINIC_ID = 1
 
 
+def _admin_user():
+    return User(full_name="Админ", phone="+998900000000", role=Role.ADMIN, telegram_user_id=ADMIN_TELEGRAM_ID, ID=1)
+
+
 class FakeUserRepoForRecordMenu:
     def __init__(self, clients_by_id=None):
         self.clients_by_id = dict(clients_by_id or {})
@@ -136,7 +140,7 @@ async def test_record_managing_new_slash_commands_trigger_same_response_as_butto
     message.text = trigger_text
     message.answer = AsyncMock()
 
-    await record_managing(message)
+    await record_managing(message, _admin_user())
 
     message.answer.assert_awaited_once_with(
         text="Выберите действие над записью:", reply_markup=record_keyboard()
@@ -167,7 +171,7 @@ async def test_back_to_main_with_client_preselected_renders_origin_card_and_rest
     )
 
     callback_query = _callback_query()
-    await back_to_main(callback_query, state)
+    await back_to_main(callback_query, state, _admin_user())
 
     data = await state.get_data()
     assert data.get("search_data") == {"full_name": "Иванов"}
@@ -202,7 +206,7 @@ async def test_back_to_main_with_client_preselected_and_no_origin_search_data_do
     )
 
     callback_query = _callback_query()
-    await back_to_main(callback_query, state)
+    await back_to_main(callback_query, state, _admin_user())
 
     data = await state.get_data()
     assert "search_data" not in data
@@ -227,7 +231,7 @@ async def test_back_to_main_falls_back_to_generic_menu_when_origin_client_delete
     )
 
     callback_query = _callback_query()
-    await back_to_main(callback_query, state)
+    await back_to_main(callback_query, state, _admin_user())
 
     callback_query.answer.assert_awaited_once_with("Клиент не найден.", show_alert=True)
     callback_query.message.edit_text.assert_awaited_once_with(
@@ -247,7 +251,7 @@ async def test_back_to_main_without_client_preselected_shows_generic_menu_unchan
     await state.update_data(some_unrelated_key="value")
 
     callback_query = _callback_query()
-    await back_to_main(callback_query, state)
+    await back_to_main(callback_query, state, _admin_user())
 
     data = await state.get_data()
     assert data == {}

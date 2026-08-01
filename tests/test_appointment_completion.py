@@ -116,6 +116,10 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
+def _admin_user():
+    return User(full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN, telegram_user_id=ADMIN_TELEGRAM_ID, ID=1)
+
+
 def _appointment(doctor_id=1):
     return Appointment(
         clinic_id=1,
@@ -153,7 +157,7 @@ async def test_open_edit_completes_appointment_and_renders_post_appt_card():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
 
-    await open_edit(callback_query, callback_data, AsyncMock())
+    await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.appointment.status is AppointmentStatus.COMPLETED
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
@@ -174,7 +178,7 @@ async def test_open_edit_resyncs_jobs_when_scheduler_provided():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
 
-    await open_edit(callback_query, callback_data, AsyncMock())
+    await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
@@ -197,7 +201,7 @@ async def test_open_edit_invalidates_sibling_notifications_on_success():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
 
-    await open_edit(callback_query, callback_data, AsyncMock())
+    await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
         555, 777, "Доктор Петров Петр", "приём завершён",
@@ -219,7 +223,7 @@ async def test_open_edit_shows_alert_and_does_not_render_card_when_already_decid
     callback_query.message.message_id = 222
     callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
 
-    await open_edit(callback_query, callback_data, AsyncMock())
+    await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -238,7 +242,7 @@ async def test_open_edit_denies_access_to_other_doctors_appointment():
     callback_query = _callback_query(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID)
     callback_data = CompletionFollowupCB(action="edit", appointment_id=1)
 
-    await open_edit(callback_query, callback_data, AsyncMock())
+    await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -254,7 +258,7 @@ async def test_skip_edit_finalizes_status_as_completed():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data)
+    await skip_edit(callback_query, callback_data, _admin_user())
 
     assert appointment_repo.appointment.status is AppointmentStatus.COMPLETED
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
@@ -272,7 +276,7 @@ async def test_skip_edit_resyncs_jobs_when_scheduler_provided():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data)
+    await skip_edit(callback_query, callback_data, _admin_user())
 
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
@@ -288,7 +292,7 @@ async def test_skip_edit_denies_access_to_other_doctors_appointment():
     callback_query = _callback_query(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID)
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data)
+    await skip_edit(callback_query, callback_data, _admin_user())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appointment_repo.appointment.status is AppointmentStatus.CONFIRMED
@@ -310,7 +314,7 @@ async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided(
     callback_query.message.message_id = 222
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data)
+    await skip_edit(callback_query, callback_data, _admin_user())
 
     callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
     callback_query.message.edit_text.assert_not_called()

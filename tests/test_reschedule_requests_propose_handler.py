@@ -181,6 +181,13 @@ def _make_callback_query():
     return callback_query
 
 
+def _admin_user():
+    return User(
+        full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, ID=1, clinic_id=1, clinic_name="Зуб Мудрости",
+    )
+
+
 def _make_state():
     state = MagicMock()
     state.get_data = AsyncMock(return_value={
@@ -219,6 +226,7 @@ async def test_approve_propose_datetime_commits_demotes_resyncs_and_notifies():
         _make_callback_query(),
         RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=1),
         _make_state(),
+        _admin_user(),
     )
 
     assert appointment.status is AppointmentStatus.PENDING
@@ -280,6 +288,7 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
         callback_query,
         RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=1),
         state,
+        _admin_user(),
     )
 
     callback_query.answer.assert_called_once()
@@ -326,6 +335,7 @@ async def test_approve_propose_datetime_immediately_applies_when_client_has_no_t
         callback_query,
         RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=1),
         state,
+        _admin_user(),
     )
 
     assert appointment.status is AppointmentStatus.CONFIRMED

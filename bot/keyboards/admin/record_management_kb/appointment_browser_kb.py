@@ -3,6 +3,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import build_appointment_button_text
 from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    WEEKDAY_LABELS,
     WEEKDAY_LABELS_RU,
     clamp_month_to_range,
     format_month_label,
@@ -25,29 +26,50 @@ from bot.utils.pagination import get_circular_page
 _TAB_LABELS = {status.value: label for status, label in APPOINTMENT_TAB_LABELS.items()}
 _TAB_ORDER = [status.value for status in APPOINTMENT_TAB_ORDER]
 
-_STATUS_ACTION_BUTTONS = [
-    (AppointmentStatus.CONFIRMED, "✅ Подтвердить"),
-    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
-    (AppointmentStatus.COMPLETED, "✔️ Завершена"),
-    (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
-]
+_STATUS_BUTTON_LABELS = {
+    AppointmentStatus.CONFIRMED: {"ru": "✅ Подтвердить", "uz": "✅ Tasdiqlash"},
+    AppointmentStatus.CANCELLED: {"ru": "🚫 Отменить запись", "uz": "🚫 Yozuvni bekor qilish"},
+    AppointmentStatus.COMPLETED: {"ru": "✔️ Завершена", "uz": "✔️ Tugallangan"},
+    AppointmentStatus.NO_SHOW: {"ru": "🙅 Неявка", "uz": "🙅 Kelmadi"},
+}
 
-_PENDING_ACTION_BUTTONS = [
-    (AppointmentStatus.CONFIRMED, "✅ Подтвердить"),
-    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
-]
 
-_POST_APPT_STATUS_BUTTONS = [
-    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
-    (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
-    (AppointmentStatus.COMPLETED, "✔️ Завершена"),
-]
+def _status_button_text(status: AppointmentStatus, lang: str) -> str:
+    labels = _STATUS_BUTTON_LABELS[status]
+    return labels.get(lang, labels["ru"])
 
-_STATUS_CHANGE_MENU_BUTTONS = [
-    (AppointmentStatus.CANCELLED, "🚫 Отменить запись"),
-    (AppointmentStatus.NO_SHOW, "🙅 Неявка"),
-    (AppointmentStatus.COMPLETED, "✔️ Завершена"),
-]
+
+def _status_action_buttons(lang: str) -> list[tuple[AppointmentStatus, str]]:
+    statuses = [
+        AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW,
+    ]
+    return [(status, _status_button_text(status, lang)) for status in statuses]
+
+
+def _pending_action_buttons(lang: str) -> list[tuple[AppointmentStatus, str]]:
+    statuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.CANCELLED]
+    return [(status, _status_button_text(status, lang)) for status in statuses]
+
+
+def _post_appt_status_buttons(lang: str) -> list[tuple[AppointmentStatus, str]]:
+    statuses = [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW, AppointmentStatus.COMPLETED]
+    return [(status, _status_button_text(status, lang)) for status in statuses]
+
+
+def _status_change_menu_buttons(lang: str) -> list[tuple[AppointmentStatus, str]]:
+    statuses = [AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW, AppointmentStatus.COMPLETED]
+    return [(status, _status_button_text(status, lang)) for status in statuses]
+
+
+_EDIT_PURPOSE_LABEL = {"ru": "📝 Изменить услугу", "uz": "📝 Xizmatni o'zgartirish"}
+_PRICE_LABEL = {"ru": "💰 Цена", "uz": "💰 Narx"}
+_FINISH_APPOINTMENT_LABEL = {"ru": "✅ Завершить приём", "uz": "✅ Qabulni yakunlash"}
+_EDIT_TIME_LABEL = {"ru": "🕐 Изменить время", "uz": "🕐 Vaqtni o'zgartirish"}
+_DELETE_LABEL = {"ru": "🗑 Удалить", "uz": "🗑 O'chirish"}
+_CHANGE_STATUS_LABEL = {"ru": "🔁 Изменить статус", "uz": "🔁 Holatni o'zgartirish"}
+_GET_MEDICAL_RECORD_LABEL = {"ru": "📄 Получить историю болезни", "uz": "📄 Kasallik tarixini olish"}
+_ADD_MEDICAL_RECORD_LABEL = {"ru": "➕ Добавить документ", "uz": "➕ Hujjat qo'shish"}
+_BACK_TO_LIST_LABEL = {"ru": "⬅️ Назад к списку", "uz": "⬅️ Ro'yxatga qaytish"}
 
 _STATUS_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}
 _SERVICE_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED}
@@ -180,11 +202,12 @@ def appointment_list_kb(
 
 def appointment_calendar_kb(
     year: int, month: int, *, back_callback_data: str = "browse_appointments", back_label: str = "⬅️ К меню поиска",
+    lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     rows = []
 
-    for label in WEEKDAY_LABELS_RU:
+    for label in WEEKDAY_LABELS.get(lang, WEEKDAY_LABELS_RU):
         builder.button(text=label, callback_data="noop")
     rows.append(7)
 
@@ -198,7 +221,7 @@ def appointment_calendar_kb(
         builder.button(text=text, callback_data=callback_data)
     rows += [7] * (len(grid) // 7)
 
-    builder.button(text=format_month_label(year, month), callback_data="noop")
+    builder.button(text=format_month_label(year, month, lang), callback_data="noop")
     rows.append(1)
 
     prev_year, prev_month = shift_month(year, month, "prev")
@@ -217,7 +240,7 @@ def appointment_calendar_kb(
 
 def appointment_card_kb(
     appointment_id: int, mode: str, page: int, status: AppointmentStatus, tab: str = "",
-    post_appt: bool = False, selected_status: AppointmentStatus | None = None,
+    post_appt: bool = False, selected_status: AppointmentStatus | None = None, lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     rows = []
@@ -225,7 +248,7 @@ def appointment_card_kb(
     if post_appt:
         effective_selected = selected_status or status
 
-        for button_status, text in _POST_APPT_STATUS_BUTTONS:
+        for button_status, text in _post_appt_status_buttons(lang):
             label = f"☑️ {text}" if button_status == effective_selected else text
             builder.button(
                 text=label,
@@ -237,13 +260,13 @@ def appointment_card_kb(
         rows.append(3)
 
         builder.button(
-            text="📝 Изменить услугу",
+            text=_EDIT_PURPOSE_LABEL.get(lang, _EDIT_PURPOSE_LABEL["ru"]),
             callback_data=ApptActionCB(
                 action="edit_purpose", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
             ).pack(),
         )
         builder.button(
-            text="💰 Цена",
+            text=_PRICE_LABEL.get(lang, _PRICE_LABEL["ru"]),
             callback_data=ApptActionCB(
                 action="edit_price", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
             ).pack(),
@@ -251,7 +274,7 @@ def appointment_card_kb(
         rows.append(2)
 
         builder.button(
-            text="✅ Завершить приём",
+            text=_FINISH_APPOINTMENT_LABEL.get(lang, _FINISH_APPOINTMENT_LABEL["ru"]),
             callback_data=ApptActionCB(
                 action="finish_appointment", appointment_id=appointment_id, mode=mode, page=page, post_appt=True,
                 value=effective_selected.value,
@@ -264,7 +287,9 @@ def appointment_card_kb(
 
     status_buttons_added = 0
     if status in _STATUS_EDITABLE_STATUSES:
-        action_buttons = _PENDING_ACTION_BUTTONS if status == AppointmentStatus.PENDING else _STATUS_ACTION_BUTTONS
+        action_buttons = (
+            _pending_action_buttons(lang) if status == AppointmentStatus.PENDING else _status_action_buttons(lang)
+        )
 
         for button_status, text in action_buttons:
             if button_status == status:
@@ -284,19 +309,19 @@ def appointment_card_kb(
     editing_buttons_added = 0
     if status in _TIME_EDITABLE_STATUSES:
         builder.button(
-            text="🕐 Изменить время",
+            text=_EDIT_TIME_LABEL.get(lang, _EDIT_TIME_LABEL["ru"]),
             callback_data=ApptActionCB(action="edit_datetime", appointment_id=appointment_id, mode=mode, page=page).pack(),
         )
         editing_buttons_added += 1
     if status in _SERVICE_EDITABLE_STATUSES:
         builder.button(
-            text="📝 Изменить услугу",
+            text=_EDIT_PURPOSE_LABEL.get(lang, _EDIT_PURPOSE_LABEL["ru"]),
             callback_data=ApptActionCB(action="edit_purpose", appointment_id=appointment_id, mode=mode, page=page).pack(),
         )
         editing_buttons_added += 1
     if status in _PRICE_EDITABLE_STATUSES:
         builder.button(
-            text="💰 Цена",
+            text=_PRICE_LABEL.get(lang, _PRICE_LABEL["ru"]),
             callback_data=ApptActionCB(action="edit_price", appointment_id=appointment_id, mode=mode, page=page).pack(),
         )
         editing_buttons_added += 1
@@ -306,21 +331,21 @@ def appointment_card_kb(
 
     if status in _STATUS_EDITABLE_STATUSES:
         builder.button(
-            text="🗑 Удалить",
+            text=_DELETE_LABEL.get(lang, _DELETE_LABEL["ru"]),
             callback_data=ApptActionCB(action="delete", appointment_id=appointment_id, mode=mode, page=page).pack(),
         )
         rows.append(1)
 
     if status in _STATUS_CHANGE_MENU_STATUSES:
         builder.button(
-            text="🔁 Изменить статус",
+            text=_CHANGE_STATUS_LABEL.get(lang, _CHANGE_STATUS_LABEL["ru"]),
             callback_data=ApptActionCB(action="status_menu", appointment_id=appointment_id, mode=mode, page=page).pack(),
         )
         rows.append(1)
 
     if status == AppointmentStatus.COMPLETED:
         builder.button(
-            text="📄 Получить историю болезни",
+            text=_GET_MEDICAL_RECORD_LABEL.get(lang, _GET_MEDICAL_RECORD_LABEL["ru"]),
             callback_data=ApptActionCB(
                 action="get_medical_record", appointment_id=appointment_id, mode=mode, page=page,
             ).pack(),
@@ -328,7 +353,7 @@ def appointment_card_kb(
         rows.append(1)
 
         builder.button(
-            text="➕ Добавить документ",
+            text=_ADD_MEDICAL_RECORD_LABEL.get(lang, _ADD_MEDICAL_RECORD_LABEL["ru"]),
             callback_data=ApptActionCB(
                 action="add_medical_record", appointment_id=appointment_id, mode=mode, page=page,
             ).pack(),
@@ -336,7 +361,7 @@ def appointment_card_kb(
         rows.append(1)
 
     builder.button(
-        text="⬅️ Назад к списку",
+        text=_BACK_TO_LIST_LABEL.get(lang, _BACK_TO_LIST_LABEL["ru"]),
         callback_data=ApptPageCB(mode=mode, page=page, tab=tab).pack(),
     )
     rows.append(1)
@@ -351,7 +376,7 @@ def appointment_status_menu_kb(
     builder = InlineKeyboardBuilder()
     rows = []
 
-    for button_status, text in _STATUS_CHANGE_MENU_BUTTONS:
+    for button_status, text in _status_change_menu_buttons("ru"):
         if button_status == status:
             continue
 
