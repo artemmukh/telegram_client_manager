@@ -990,7 +990,7 @@ async def test_update_proposed_by_round_trips_via_get_by_id_and_by_telegram_id()
 # --- Slot conflict detection: get_appointments_by_doctor_and_date ---
 
 @pytest.mark.asyncio
-async def test_get_appointments_by_doctor_and_date_returns_only_confirmed_for_that_day():
+async def test_get_appointments_by_doctor_and_date_default_statuses_match_slot_occupancy_rule():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:
         client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
@@ -1026,7 +1026,7 @@ async def test_get_appointments_by_doctor_and_date_returns_only_confirmed_for_th
 
         result = await appointment_repo.get_appointments_by_doctor_and_date(doctor_id, "2026-07-10")
 
-        assert [a.id for a in result] == [confirmed.id]
+        assert {a.id for a in result} == {confirmed.id, pending.id}
     finally:
         await connection.close()
 

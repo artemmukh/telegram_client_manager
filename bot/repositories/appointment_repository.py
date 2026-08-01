@@ -342,16 +342,13 @@ class AppointmentRepository:
         statuses: list[AppointmentStatus] | None = None,
     ) -> list[Appointment]:
         if statuses is None:
-            cursor = await self.connection.execute(
-                APPOINTMENT_SELECT + "\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status = ?",
-                (doctor_id, f"{date}%", AppointmentStatus.CONFIRMED.value),
-            )
-        else:
-            placeholders = ", ".join("?" for _ in statuses)
-            cursor = await self.connection.execute(
-                APPOINTMENT_SELECT + f"\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status IN ({placeholders})",
-                (doctor_id, f"{date}%", *[status.value for status in statuses]),
-            )
+            statuses = [AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
+
+        placeholders = ", ".join("?" for _ in statuses)
+        cursor = await self.connection.execute(
+            APPOINTMENT_SELECT + f"\nWHERE a.admin_id = ? AND a.datetime LIKE ? AND a.status IN ({placeholders})",
+            (doctor_id, f"{date}%", *[status.value for status in statuses]),
+        )
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
