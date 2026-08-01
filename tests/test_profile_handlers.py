@@ -96,4 +96,4 @@ async def test_update_language_preset_persists_and_rerenders():
 
     assert texts_by_value["uz"].startswith("✅")
     assert not texts_by_value["ru"].startswith("✅")
-    callback.answer.assert_awaited_once_with("Настройки обновлены")
+    callback.answer.assert_awaited_once_with("Sozlamalar yangilandi")

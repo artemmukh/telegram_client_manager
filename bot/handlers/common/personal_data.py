@@ -33,7 +33,7 @@ def create_personal_data_router(client_management_service: ClientManagement) -> 
         await callback_query.answer()
         try:
             await callback_query.message.edit_text(
-                build_profile_text(current_user), reply_markup=profile_personal_data_kb()
+                build_profile_text(current_user, current_user.language), reply_markup=profile_personal_data_kb()
             )
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e):
@@ -83,7 +83,9 @@ def create_personal_data_router(client_management_service: ClientManagement) -> 
         await state.clear()
         await callback_query.answer("Данные обновлены")
         try:
-            await callback_query.message.edit_text(build_profile_text(updated_user), reply_markup=profile_menu_kb())
+            await callback_query.message.edit_text(
+                build_profile_text(updated_user, updated_user.language), reply_markup=profile_menu_kb()
+            )
         except TelegramBadRequest as e:
             if "message is not modified" not in str(e):
                 raise
