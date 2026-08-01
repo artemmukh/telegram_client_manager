@@ -8,20 +8,31 @@ from bot.exceptions.user_exceptions import InvalidBirthDateError, InvalidFullNam
 from bot.validators.validators import validate_phone, validate_full_name, validate_birth_date
 
 
-async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup):
+ASK_FULL_NAME_PROMPT = {
+    "ru": "Введите ФИ:",
+    "uz": "F.I.Sh.ni kiriting:",
+}
+
+ASK_PHONE_PROMPT = {
+    "ru": "Введите номер телефона:",
+    "uz": "Telefon raqamini kiriting:",
+}
+
+
+async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup, lang: str = "ru"):
     await state.set_state(next_state)
     await callback.answer('')
     await callback.message.edit_text(
-        "Введите ФИ:",
+        ASK_FULL_NAME_PROMPT.get(lang, ASK_FULL_NAME_PROMPT["ru"]),
         reply_markup=reply_markup
     )
 
 
-async def ask_phone(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup):
+async def ask_phone(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup, lang: str = "ru"):
     await state.set_state(next_state)
     await callback.answer('')
     await callback.message.edit_text(
-        "Введите номер телефона:",
+        ASK_PHONE_PROMPT.get(lang, ASK_PHONE_PROMPT["ru"]),
         reply_markup=reply_markup
     )
 
@@ -93,10 +104,16 @@ async def edit_full_name(
     )
 
 
-async def edit_phone(callback: CallbackQuery, state: FSMContext, edit_state: State, reply_markup):
+EDIT_PHONE_PROMPT = {
+    "ru": "Введите новый номер телефона:",
+    "uz": "Yangi telefon raqamini kiriting:",
+}
+
+
+async def edit_phone(callback: CallbackQuery, state: FSMContext, edit_state: State, reply_markup, lang: str = "ru"):
     await state.set_state(edit_state)
     await callback.answer('')
     await callback.message.edit_text(
-        "Введите новый номер телефона:",
+        EDIT_PHONE_PROMPT.get(lang, EDIT_PHONE_PROMPT["ru"]),
         reply_markup=reply_markup
     )

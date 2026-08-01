@@ -10,7 +10,28 @@ _MONTH_NAMES_RU = {
     9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь",
 }
 
+_MONTH_NAMES_UZ = {
+    1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel",
+    5: "May", 6: "Iyun", 7: "Iyul", 8: "Avgust",
+    9: "Sentabr", 10: "Oktabr", 11: "Noyabr", 12: "Dekabr",
+}
+
+_MONTH_NAMES = {"ru": _MONTH_NAMES_RU, "uz": _MONTH_NAMES_UZ}
+
 WEEKDAY_LABELS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+WEEKDAY_LABELS_UZ = ["Du", "Se", "Cho", "Pa", "Ju", "Sha", "Ya"]
+
+WEEKDAY_LABELS = {"ru": WEEKDAY_LABELS_RU, "uz": WEEKDAY_LABELS_UZ}
+
+CALENDAR_BACK_TO_DOCTOR_LABEL = {
+    "ru": "⬅️ К выбору врача",
+    "uz": "⬅️ Shifokor tanlashga",
+}
+
+CALENDAR_BACK_TO_SEARCH_LABEL = {
+    "ru": "⬅️ К меню поиска",
+    "uz": "⬅️ Qidiruv menyusiga",
+}
 
 
 def clamp_month_to_range(year: int, month: int) -> tuple[int, int]:
@@ -94,9 +115,10 @@ def get_month_grid(year: int, month: int) -> list[tuple[int, int, int]]:
     return grid
 
 
-def format_month_label(year: int, month: int) -> str:
+def format_month_label(year: int, month: int, lang: str = "ru") -> str:
     """Format a non-interactive 'Месяц Год' label, e.g. 'Июль 2026'."""
-    return f"{_MONTH_NAMES_RU[month]} {year}"
+    month_names = _MONTH_NAMES.get(lang, _MONTH_NAMES["ru"])
+    return f"{month_names[month]} {year}"
 
 
 def format_calendar_date_display(date_str: str) -> str:
@@ -104,7 +126,7 @@ def format_calendar_date_display(date_str: str) -> str:
     return datetime.fromisoformat(date_str).strftime("%d.%m.%Y")
 
 
-def calendar_grid_back_target(state_data: dict) -> tuple[str, str]:
+def calendar_grid_back_target(state_data: dict, lang: str = "ru") -> tuple[str, str]:
     """Back button target for the month/day grid.
 
     A doctor filter is now picked before the grid is shown (see
@@ -113,5 +135,5 @@ def calendar_grid_back_target(state_data: dict) -> tuple[str, str]:
     doctor-selection screen instead of the search menu.
     """
     if "calendar_doctor_filter_id" in state_data:
-        return "appt_search_calendar", "⬅️ К выбору врача"
-    return "browse_appointments", "⬅️ К меню поиска"
+        return "appt_search_calendar", CALENDAR_BACK_TO_DOCTOR_LABEL.get(lang, CALENDAR_BACK_TO_DOCTOR_LABEL["ru"])
+    return "browse_appointments", CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"])

@@ -43,8 +43,9 @@ def create_client_booking_router(
     router.message.filter(RoleFilter("client"))
     router.callback_query.filter(RoleFilter("client"))
 
-    async def start_booking(callback_query: CallbackQuery, state: FSMContext) -> None:
+    async def start_booking(callback_query: CallbackQuery, state: FSMContext, lang: str = "ru") -> None:
         await state.clear()
+        await state.update_data(language=lang)
 
         try:
             await appointment_management_service.ensure_pending_limit_not_exceeded(callback_query.from_user.id)
@@ -55,8 +56,8 @@ def create_client_booking_router(
 
         if not staff_list:
             await callback_query.message.edit_text(
-                msg.NO_AVAILABLE_STAFF,
-                reply_markup=booking_cancel_kb(),
+                msg.no_available_staff(lang),
+                reply_markup=booking_cancel_kb(lang=lang),
             )
             await callback_query.answer()
             return
@@ -64,24 +65,26 @@ def create_client_booking_router(
         if len(staff_list) == 1:
             staff = staff_list[0]
             await state.update_data(staff_user_id=staff.ID, staff_name=staff.full_name)
-            await render_day_selection_start(callback_query, state)
+            await render_day_selection_start(callback_query, state, lang)
             return
 
         await state.update_data(staff_options={str(staff.ID): staff.full_name for staff in staff_list})
         await state.set_state(ClientBookingStates.choose_doctor)
         await callback_query.message.edit_text(
-            msg.CHOOSE_SPECIALIST,
-            reply_markup=booking_doctor_kb(staff_list),
+            msg.choose_specialist(lang),
+            reply_markup=booking_doctor_kb(staff_list, lang=lang),
         )
         await callback_query.answer()
 
-    async def render_day_selection_start(callback_query: CallbackQuery, state: FSMContext) -> None:
+    async def render_day_selection_start(callback_query: CallbackQuery, state: FSMContext, lang: str = "ru") -> None:
         reference = get_current_tashkent_datetime().date()
         start_offset = await appointment_management_service.find_first_available_week_offset(reference)
         await state.update_data(min_week_offset=start_offset)
-        await render_day_selection(callback_query, state, start_offset)
+        await render_day_selection(callback_query, state, start_offset, lang)
 
-    async def render_day_selection(callback_query: CallbackQuery, state: FSMContext, week_offset: int) -> None:
+    async def render_day_selection(
+        callback_query: CallbackQuery, state: FSMContext, week_offset: int, lang: str = "ru"
+    ) -> None:
         reference = get_current_tashkent_datetime().date()
         days = await appointment_management_service.get_working_days(reference, week_offset)
 
@@ -94,38 +97,47 @@ def create_client_booking_router(
         await state.set_state(ClientBookingStates.choose_day)
 
         await callback_query.message.edit_text(
-            msg.CHOOSE_DAY,
-            reply_markup=booking_day_kb(days, week_offset, can_go_back, can_go_forward),
+            msg.choose_day(lang),
+            reply_markup=booking_day_kb(days, week_offset, can_go_back, can_go_forward, lang=lang),
         )
         await callback_query.answer()
 
     @router.callback_query(F.data == "client_book_appointment")
-    async def book_appointment(callback_query: CallbackQuery, state: FSMContext) -> None:
-        await start_booking(callback_query, state)
+    async def book_appointment(callback_query: CallbackQuery, state: FSMContext, current_user: User) -> None:
+        await start_booking(callback_query, state, current_user.language)
 
     @router.callback_query(F.data == "client_book_restart")
-    async def restart_booking(callback_query: CallbackQuery, state: FSMContext) -> None:
-        await start_booking(callback_query, state)
+    async def restart_booking(callback_query: CallbackQuery, state: FSMContext, current_user: User) -> None:
+        await start_booking(callback_query, state, current_user.language)
 
     @router.callback_query(ClientBookDoctorCB.filter())
-    async def pick_doctor(callback_query: CallbackQuery, callback_data: ClientBookDoctorCB, state: FSMContext) -> None:
+    async def pick_doctor(
+        callback_query: CallbackQuery, callback_data: ClientBookDoctorCB, state: FSMContext, current_user: User,
+    ) -> None:
         data = await state.get_data()
         staff_options = data.get("staff_options", {})
-        staff_name = staff_options.get(str(callback_data.staff_user_id), msg.DEFAULT_STAFF_NAME_FALLBACK)
+        staff_name = staff_options.get(
+            str(callback_data.staff_user_id), msg.default_staff_name_fallback(current_user.language)
+        )
 
         await state.update_data(staff_user_id=callback_data.staff_user_id, staff_name=staff_name)
-        await render_day_selection_start(callback_query, state)
+        await render_day_selection_start(callback_query, state, current_user.language)
 
     @router.callback_query(ClientBookDayPageCB.filter())
-    async def paginate_days(callback_query: CallbackQuery, callback_data: ClientBookDayPageCB, state: FSMContext) -> None:
-        await render_day_selection(callback_query, state, callback_data.week_offset)
+    async def paginate_days(
+        callback_query: CallbackQuery, callback_data: ClientBookDayPageCB, state: FSMContext, current_user: User,
+    ) -> None:
+        await render_day_selection(callback_query, state, callback_data.week_offset, current_user.language)
 
     @router.callback_query(ClientBookDayCB.filter())
-    async def pick_day(callback_query: CallbackQuery, callback_data: ClientBookDayCB, state: FSMContext) -> None:
+    async def pick_day(
+        callback_query: CallbackQuery, callback_data: ClientBookDayCB, state: FSMContext, current_user: User,
+    ) -> None:
+        lang = current_user.language
         try:
             day = date.fromisoformat(callback_data.day_iso)
         except ValueError:
-            await callback_query.answer(msg.INVALID_DATE, show_alert=True)
+            await callback_query.answer(msg.invalid_date(lang), show_alert=True)
             return
 
         now = get_current_tashkent_datetime()
@@ -133,30 +145,33 @@ def create_client_booking_router(
         slots = await appointment_management_service.get_available_slots(data["staff_user_id"], day, now)
 
         if not slots:
-            await callback_query.answer(msg.NO_SLOTS_FOR_DAY, show_alert=True)
+            await callback_query.answer(msg.no_slots_for_day(lang), show_alert=True)
             return
 
         await state.update_data(day_iso=callback_data.day_iso)
         await state.set_state(ClientBookingStates.choose_slot)
 
         await callback_query.message.edit_text(
-            msg.choose_time_prompt(day),
-            reply_markup=booking_slot_kb(slots, cancel_callback_data="client_book_back_to_day"),
+            msg.choose_time_prompt(day, lang),
+            reply_markup=booking_slot_kb(slots, cancel_callback_data="client_book_back_to_day", lang=lang),
         )
         await callback_query.answer()
 
     @router.callback_query(F.data == "client_book_back_to_day")
-    async def back_to_day_selection(callback_query: CallbackQuery, state: FSMContext) -> None:
+    async def back_to_day_selection(callback_query: CallbackQuery, state: FSMContext, current_user: User) -> None:
         data = await state.get_data()
         week_offset = data.get("week_offset", 0)
-        await render_day_selection(callback_query, state, week_offset)
+        await render_day_selection(callback_query, state, week_offset, current_user.language)
 
     @router.callback_query(ClientBookSlotCB.filter())
-    async def pick_slot(callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext) -> None:
+    async def pick_slot(
+        callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext, current_user: User,
+    ) -> None:
+        lang = current_user.language
         try:
             datetime.strptime(callback_data.slot, "%H:%M")
         except ValueError:
-            await callback_query.answer(msg.INVALID_TIME, show_alert=True)
+            await callback_query.answer(msg.invalid_time(lang), show_alert=True)
             return
 
         data = await state.get_data()
@@ -166,8 +181,8 @@ def create_client_booking_router(
         await state.set_state(ClientBookingStates.complaint)
 
         await callback_query.message.edit_text(
-            msg.COMPLAINT_PROMPT,
-            reply_markup=booking_cancel_kb(cancel_callback_data="client_book_back_to_day"),
+            msg.complaint_prompt(lang),
+            reply_markup=booking_cancel_kb(cancel_callback_data="client_book_back_to_day", lang=lang),
         )
         await callback_query.answer()
 
@@ -191,9 +206,10 @@ def create_client_booking_router(
             slot=data["slot"],
             complaint=complaint,
             clinic_name=current_user.clinic_name,
+            lang=current_user.language,
         )
 
-        await message.answer(text, reply_markup=booking_confirm_kb())
+        await message.answer(text, reply_markup=booking_confirm_kb(lang=current_user.language))
 
     @router.callback_query(ClientBookingStates.confirm, F.data == "client_book_submit")
     async def submit_booking(callback_query: CallbackQuery, state: FSMContext, current_user: User) -> None:
@@ -215,8 +231,8 @@ def create_client_booking_router(
         await state.clear()
 
         await callback_query.message.edit_text(
-            msg.SUBMITTED,
-            reply_markup=appointment_manage_empty_kb(),
+            msg.submitted(current_user.language),
+            reply_markup=appointment_manage_empty_kb(current_user.language),
         )
         await callback_query.answer()
 

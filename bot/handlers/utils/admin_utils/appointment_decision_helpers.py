@@ -2,6 +2,16 @@ from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 
+DEFAULT_DECIDED_BY_LABEL = {
+    "ru": "Другой сотрудник",
+    "uz": "Boshqa xodim",
+}
+
+DEFAULT_OUTCOME_TEXT = {
+    "ru": "решение принято",
+    "uz": "qaror qabul qilindi",
+}
+
 
 async def invalidate_sibling_notifications(
     notification_service: AppointmentNotificationService,
@@ -33,6 +43,7 @@ async def invalidate_actor_stale_message(
     error: AppointmentAlreadyDecidedError,
     chat_id: int,
     message_id: int,
+    lang: str = "ru",
 ) -> None:
     """Стереть клавиатуру у собственного сообщения действующего сотрудника.
 
@@ -41,8 +52,8 @@ async def invalidate_actor_stale_message(
     берутся из самого исключения (уже вычислены сервисом при попытке действия),
     чтобы не повторять запрос к БД.
     """
-    decided_by_label = error.decided_by_label or "Другой сотрудник"
-    outcome_text = error.outcome_text or "решение принято"
+    decided_by_label = error.decided_by_label or DEFAULT_DECIDED_BY_LABEL.get(lang, DEFAULT_DECIDED_BY_LABEL["ru"])
+    outcome_text = error.outcome_text or DEFAULT_OUTCOME_TEXT.get(lang, DEFAULT_OUTCOME_TEXT["ru"])
 
     await notification_service.invalidate_stale_decision_message(
         chat_id, message_id, decided_by_label, outcome_text,

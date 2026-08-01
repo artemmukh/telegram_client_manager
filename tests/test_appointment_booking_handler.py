@@ -239,7 +239,7 @@ async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_st
     state = _make_state()
 
     await pick_day(
-        callback_query, ClientBookDayCB(week_offset=0, day_iso="not-a-date"), state,
+        callback_query, ClientBookDayCB(week_offset=0, day_iso="not-a-date"), state, _current_user(),
     )
 
     callback_query.answer.assert_called_once_with("Некорректная дата, попробуйте ещё раз.", show_alert=True)
@@ -264,7 +264,7 @@ async def test_pick_slot_with_malformed_slot_shows_alert_and_does_not_touch_stat
     callback_query = _make_callback_query()
     state = _make_state()
 
-    await pick_slot(callback_query, ClientBookSlotCB(slot="xx:yy"), state)
+    await pick_slot(callback_query, ClientBookSlotCB(slot="xx:yy"), state, _current_user())
 
     callback_query.answer.assert_called_once_with("Некорректное время, попробуйте ещё раз.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -291,7 +291,7 @@ async def test_pick_slot_with_valid_slot_updates_state_and_renders_complaint_pro
     state.update_data = AsyncMock()
     state.set_state = AsyncMock()
 
-    await pick_slot(callback_query, ClientBookSlotCB(slot="10:00"), state)
+    await pick_slot(callback_query, ClientBookSlotCB(slot="10:00"), state, _current_user())
 
     state.update_data.assert_awaited_once_with(
         slot="10:00", appointment_datetime="2026-08-01 10:00",
