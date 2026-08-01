@@ -175,7 +175,7 @@ def _build_router(appointment_repo, admins=None, appointment_scheduler=None, not
     })
     clinic_repo = FakeClinicRepo({1: Clinic(clinic_id=1, name="Zub Mudrosti", token="t")})
     return create_admin_appointment_browser_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo,
+        "zb", appointment_repo, user_repo, staff_repo, clinic_repo,
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
 

@@ -245,31 +245,46 @@ async def render_day_selection_start_from_message(appt_mng, message: Message, st
     await _send_day_selection(appt_mng, state, start_offset, send)
 
 
-async def _send_calendar_month(state: FSMContext, year: int, month: int, send) -> None:
+async def _send_calendar_month(
+    state: FSMContext, year: int, month: int, send,
+    choose_day_state: State = AppointmentCreationStates.choose_day,
+    back_callback_data: str = "back_to_main_records",
+    back_label: str = "⬅️ К записям",
+) -> None:
     await state.update_data(calendar_year=year, calendar_month=month)
-    await state.set_state(AppointmentCreationStates.choose_day)
+    await state.set_state(choose_day_state)
 
     await send(
         f"📅 {format_month_label(year, month)}",
         appointment_calendar_kb(
-            year, month, back_callback_data="back_to_main_records", back_label="⬅️ К записям",
+            year, month, back_callback_data=back_callback_data, back_label=back_label,
         ),
     )
 
 
-async def render_calendar_month(callback_query: CallbackQuery, state: FSMContext, year: int, month: int) -> None:
+async def render_calendar_month(
+    callback_query: CallbackQuery, state: FSMContext, year: int, month: int,
+    choose_day_state: State = AppointmentCreationStates.choose_day,
+    back_callback_data: str = "back_to_main_records",
+    back_label: str = "⬅️ К записям",
+) -> None:
     async def send(text: str, reply_markup) -> None:
         await callback_query.message.edit_text(text, reply_markup=reply_markup)
 
-    await _send_calendar_month(state, year, month, send)
+    await _send_calendar_month(state, year, month, send, choose_day_state, back_callback_data, back_label)
     await callback_query.answer()
 
 
-async def render_calendar_start(appt_mng, callback_query: CallbackQuery, state: FSMContext) -> None:
+async def render_calendar_start(
+    appt_mng, callback_query: CallbackQuery, state: FSMContext,
+    choose_day_state: State = AppointmentCreationStates.choose_day,
+    back_callback_data: str = "back_to_main_records",
+    back_label: str = "⬅️ К записям",
+) -> None:
     await _ensure_staff_user_id(appt_mng, state, callback_query.from_user.id)
     today = get_current_tashkent_datetime().date()
     year, month = clamp_month_to_range(today.year, today.month)
-    await render_calendar_month(callback_query, state, year, month)
+    await render_calendar_month(callback_query, state, year, month, choose_day_state, back_callback_data, back_label)
 
 
 async def render_calendar_start_from_message(appt_mng, message: Message, state: FSMContext) -> None:

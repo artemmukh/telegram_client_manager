@@ -157,7 +157,7 @@ def _build_router(appointment_repo, admins=None):
         CLINIC_ADMIN_TELEGRAM_ID: Staff(telegram_user_id=CLINIC_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
     })
     clinic_repo = FakeClinicRepo({1: Clinic(clinic_id=1, name="Zub Mudrosti", token="t")})
-    return create_admin_reschedule_requests_router(appointment_repo, user_repo, staff_repo, clinic_repo)
+    return create_admin_reschedule_requests_router("zb", appointment_repo, user_repo, staff_repo, clinic_repo)
 
 
 def _find_handler(router, name):

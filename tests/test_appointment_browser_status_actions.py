@@ -96,7 +96,7 @@ def _callback_query():
 
 def _router(appointment_repo, appointment_scheduler=None, notification_service=None):
     return create_admin_appointment_browser_router(
-        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
 

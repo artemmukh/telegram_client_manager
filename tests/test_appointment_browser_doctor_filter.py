@@ -228,7 +228,7 @@ def _build_router(appointment_repo, *, clinic_has_two_doctors=False):
     staff_repo = FakeStaffRepo(staff_records, staff_by_clinic={1: list(staff_records.values())})
     clinic_repo = FakeClinicRepo({1: Clinic(clinic_id=1, name="Zub Mudrosti", token="t")})
 
-    return create_admin_appointment_browser_router(appointment_repo, user_repo, staff_repo, clinic_repo)
+    return create_admin_appointment_browser_router("zb", appointment_repo, user_repo, staff_repo, clinic_repo)
 
 
 def _find_handler(router, name):

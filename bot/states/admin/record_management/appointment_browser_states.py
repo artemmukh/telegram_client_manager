@@ -13,6 +13,8 @@ class AppointmentBrowserStates(StatesGroup):
 
     new_datetime = State()
     confirm_new_datetime = State()
+    edit_choose_day = State()
+    edit_choose_slot = State()
 
     new_purpose = State()
     confirm_new_purpose = State()

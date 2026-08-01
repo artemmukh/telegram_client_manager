@@ -156,15 +156,22 @@ async def main():
         config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service,
         notification_service, appointment_scheduler, client_clinic_repo,
     ))
-    dp.include_router(create_admin_appointment_browser_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,
-        medical_record_service=medical_record_service,
-    ))
+    # booking_requests and reschedule_requests are registered before
+    # appointment_browser: their propose-datetime calendars (choose_day/
+    # choose_slot states) must take priority over appointment_browser's own
+    # unfiltered ApptCalendarMonthCB/ApptCalendarDayCB handlers while one of
+    # those negotiation flows' state is active. See the ordering comments in
+    # booking_requests.py/reschedule_requests.py for the matching state-filter
+    # half of this fix.
     dp.include_router(create_admin_booking_requests_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
     ))
     dp.include_router(create_admin_reschedule_requests_router(
-        appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+    ))
+    dp.include_router(create_admin_appointment_browser_router(
+        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,
+        medical_record_service=medical_record_service,
     ))
     dp.include_router(create_admin_completion_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,

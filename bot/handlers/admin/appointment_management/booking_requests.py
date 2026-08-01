@@ -1,17 +1,20 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from bot.config.clinic_instances import DATEPARSER_BY_INSTANCE as DATA_PARSE_MODE
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError, AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
+from bot.handlers.utils.admin_utils import appointment_helpers as ah
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     edit_tracked_message,
     remember_tracked_message,
 )
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import clamp_calendar_date, clamp_month_to_range
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     invalidate_actor_stale_message,
     invalidate_sibling_notifications,
@@ -20,14 +23,23 @@ from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
     datetime_processing,
 )
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarDayCB, ApptCalendarMonthCB
+from bot.keyboards.admin.record_management_kb.appointment_creation_cb import AdminOccupiedSlotCB
+from bot.keyboards.admin.record_management_kb.appointment_slot_kb import appointment_slot_grid_kb, occupied_slot_card_kb
 from bot.keyboards.admin.record_management_kb.booking_request_cb import BookingRequestActionCB
 from bot.keyboards.admin.record_management_kb.booking_request_kb import (
     booking_request_confirm_propose_kb,
     booking_request_kb,
     booking_request_propose_cancel_kb,
 )
+from bot.keyboards.client.booking_cb import ClientBookSlotCB
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.utils.date_parser import format_datetime_for_db, format_datetime_for_display
+from bot.services.utils.date_parser import (
+    format_datetime_for_confirmation,
+    format_datetime_for_db,
+    format_datetime_for_display,
+    get_current_tashkent_datetime,
+)
 from bot.states.admin.record_management.booking_negotiation_states import BookingNegotiationStates
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
@@ -43,6 +55,7 @@ def _format_datetime_value(value: str) -> str:
 
 
 def create_admin_booking_requests_router(
+    instance: str,
     appointment_repo, user_repo, staff_repo, clinic_repo, notification_service=None, appointment_scheduler=None,
 ) -> Router:
     router = Router()
@@ -155,9 +168,39 @@ def create_admin_booking_requests_router(
         await callback_query.message.edit_text(build_appointment_card(appointment))
         await invalidate_booking_siblings(callback_query, appointment)
 
+    def propose_calendar_back_target(appointment_id: int) -> tuple[str, str]:
+        return (
+            BookingRequestActionCB(action="cancel_propose", appointment_id=appointment_id).pack(),
+            "❌ Отменить",
+        )
+
+    async def enter_propose_calendar(callback_query: CallbackQuery, state: FSMContext, appointment_id: int) -> None:
+        await callback_query.answer('')
+        today = get_current_tashkent_datetime().date()
+        year, month = clamp_month_to_range(today.year, today.month)
+        back_callback_data, back_label = propose_calendar_back_target(appointment_id)
+        await ah.render_calendar_month(
+            callback_query, state, year, month,
+            choose_day_state=BookingNegotiationStates.choose_day,
+            back_callback_data=back_callback_data, back_label=back_label,
+        )
+
     @router.callback_query(BookingRequestActionCB.filter(F.action == "propose"))
     async def start_propose_datetime(callback_query: CallbackQuery, callback_data: BookingRequestActionCB, state: FSMContext):
         await state.update_data(appointment_id=callback_data.appointment_id)
+
+        if DATA_PARSE_MODE.get(instance) == "slots":
+            appointment = await appt_mng.get_appointment_for_admin(
+                callback_data.appointment_id, callback_query.from_user.id
+            )
+            if appointment is None:
+                await callback_query.answer("Заявка не найдена.", show_alert=True)
+                return
+
+            await state.update_data(staff_user_id=appointment.doctor_id, old_datetime=appointment.datetime)
+            await enter_propose_calendar(callback_query, state, callback_data.appointment_id)
+            return
+
         await state.set_state(BookingNegotiationStates.propose_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(
@@ -179,8 +222,121 @@ def create_admin_booking_requests_router(
             reply_markup=booking_request_confirm_propose_kb(data["appointment_id"]),
         )
 
+    # Router registration order matters here: this router is registered before
+    # appointment_browser's (see bot/run.py), and browser's
+    # ApptCalendarMonthCB/ApptCalendarDayCB handlers are NOT state-filtered.
+    # State-filtering these two handlers to choose_day lets a propose-datetime
+    # calendar session take priority while its own state is active, and falls
+    # through to the browser's calendar handlers otherwise -- keep both the
+    # state filter and the router registration order intact.
+    @router.callback_query(BookingNegotiationStates.choose_day, ApptCalendarMonthCB.filter())
+    async def change_propose_calendar_month(
+        callback_query: CallbackQuery, callback_data: ApptCalendarMonthCB, state: FSMContext,
+    ):
+        year, month = clamp_month_to_range(callback_data.year, callback_data.month)
+        data = await state.get_data()
+        back_callback_data, back_label = propose_calendar_back_target(data["appointment_id"])
+        await ah.render_calendar_month(
+            callback_query, state, year, month,
+            choose_day_state=BookingNegotiationStates.choose_day,
+            back_callback_data=back_callback_data, back_label=back_label,
+        )
+
+    async def render_propose_slot_grid(callback_query: CallbackQuery, state: FSMContext, day_iso: str) -> bool:
+        day = date.fromisoformat(day_iso)
+        now = get_current_tashkent_datetime()
+        data = await state.get_data()
+        occupancy = await appt_mng.get_day_slot_occupancy(
+            data["staff_user_id"], day, now, exclude_appointment_id=data["appointment_id"],
+        )
+
+        if not occupancy:
+            return False
+
+        await state.update_data(day_iso=day_iso)
+        await state.set_state(BookingNegotiationStates.choose_slot)
+        await callback_query.message.edit_text(
+            f"Выберите время на {day.strftime('%d.%m.%Y')}:",
+            reply_markup=appointment_slot_grid_kb(occupancy, cancel_callback_data="admin_book_back_to_day"),
+        )
+        return True
+
+    @router.callback_query(BookingNegotiationStates.choose_day, ApptCalendarDayCB.filter())
+    async def pick_propose_calendar_day(
+        callback_query: CallbackQuery, callback_data: ApptCalendarDayCB, state: FSMContext,
+    ):
+        year, month, day_num = clamp_calendar_date(callback_data.year, callback_data.month, callback_data.day)
+        day_iso = date(year, month, day_num).isoformat()
+
+        if not await render_propose_slot_grid(callback_query, state, day_iso):
+            await callback_query.answer("На этот день нет доступных слотов.", show_alert=True)
+            return
+
+        await callback_query.answer()
+
+    @router.callback_query(BookingNegotiationStates.choose_slot, F.data == "admin_book_back_to_day")
+    async def back_to_propose_day_selection(callback_query: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        today = get_current_tashkent_datetime().date()
+        year = data.get("calendar_year", today.year)
+        month = data.get("calendar_month", today.month)
+        back_callback_data, back_label = propose_calendar_back_target(data["appointment_id"])
+        await ah.render_calendar_month(
+            callback_query, state, year, month,
+            choose_day_state=BookingNegotiationStates.choose_day,
+            back_callback_data=back_callback_data, back_label=back_label,
+        )
+
+    @router.callback_query(BookingNegotiationStates.choose_slot, AdminOccupiedSlotCB.filter())
+    async def view_propose_occupied_slot(
+        callback_query: CallbackQuery, callback_data: AdminOccupiedSlotCB, state: FSMContext,
+    ):
+        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
+        if appointment is None:
+            await callback_query.answer("Запись не найдена.", show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment),
+            reply_markup=occupied_slot_card_kb(),
+        )
+
+    @router.callback_query(BookingNegotiationStates.choose_slot, F.data == "admin_book_back_to_slots")
+    async def back_to_propose_slot_grid(callback_query: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        await render_propose_slot_grid(callback_query, state, data["day_iso"])
+        await callback_query.answer()
+
+    @router.callback_query(BookingNegotiationStates.choose_slot, ClientBookSlotCB.filter())
+    async def pick_propose_slot(callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext):
+        try:
+            datetime.strptime(callback_data.slot, "%H:%M")
+        except ValueError:
+            await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
+            return
+
+        data = await state.get_data()
+        appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
+        parsed_dt = datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
+        new_display = format_datetime_for_confirmation(parsed_dt)
+
+        await state.update_data(appointment_datetime_parsed=parsed_dt, appointment_datetime_display=new_display)
+        await state.set_state(BookingNegotiationStates.confirm_propose_datetime)
+
+        old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]))
+        await callback_query.message.edit_text(
+            f"Предложить клиенту время: {old_display} → {new_display}?",
+            reply_markup=booking_request_confirm_propose_kb(data["appointment_id"]),
+        )
+        await callback_query.answer()
+
     @router.callback_query(BookingRequestActionCB.filter(F.action == "retry_propose_datetime"))
     async def retry_propose_datetime(callback_query: CallbackQuery, callback_data: BookingRequestActionCB, state: FSMContext):
+        if DATA_PARSE_MODE.get(instance) == "slots":
+            await enter_propose_calendar(callback_query, state, callback_data.appointment_id)
+            return
+
         await state.set_state(BookingNegotiationStates.propose_datetime)
         await callback_query.answer('')
         await callback_query.message.edit_text(

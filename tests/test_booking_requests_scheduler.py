@@ -176,7 +176,7 @@ def _find_handler(router, name):
 
 def _build_router(appt_repo, appointment_scheduler, user_repo=None, notification_service=None):
     return create_admin_booking_requests_router(
-        appt_repo, user_repo or FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appt_repo, user_repo or FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         notification_service=notification_service, appointment_scheduler=appointment_scheduler,
     )
 

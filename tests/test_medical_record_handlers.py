@@ -130,6 +130,7 @@ def _admin_appointment(clinic_id=1, status=AppointmentStatus.COMPLETED):
 
 def _admin_router(appointment, admin, medical_record_service):
     return create_admin_appointment_browser_router(
+        "zb",
         FakeAdminAppointmentRepository(appointment),
         FakeAdminUserRepo(admin),
         FakeAdminStaffRepo(),

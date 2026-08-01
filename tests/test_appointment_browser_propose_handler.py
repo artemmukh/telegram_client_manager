@@ -176,7 +176,7 @@ async def test_approve_new_datetime_commits_and_demotes_to_pending_then_resyncs_
     notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=321)
 
     router = create_admin_appointment_browser_router(
-        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     approve_new_datetime = _get_approve_new_datetime_handler(router)
@@ -242,7 +242,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
     notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=321)
 
     router = create_admin_appointment_browser_router(
-        appt_repo, FakeUserRepo(client), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appt_repo, FakeUserRepo(client), FakeStaffRepo(), FakeClinicRepo(),
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     approve_new_datetime = _get_approve_new_datetime_handler(router)

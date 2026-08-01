@@ -92,7 +92,7 @@ def _callback_query():
 async def _run_set_status(post_appt: bool, notification_service, appointment_scheduler=None, value="cancelled"):
     appointment_repo = FakeAppointmentRepository(_appointment())
     router = create_admin_appointment_browser_router(
-        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     set_status = _find_handler(router, "set_status")
@@ -113,7 +113,7 @@ async def test_set_status_with_invalid_value_shows_alert_and_does_not_update_sta
     notification_service = AsyncMock()
     appointment_scheduler = AsyncMock()
     router = create_admin_appointment_browser_router(
-        appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         appointment_scheduler=appointment_scheduler, notification_service=notification_service,
     )
     set_status = _find_handler(router, "set_status")

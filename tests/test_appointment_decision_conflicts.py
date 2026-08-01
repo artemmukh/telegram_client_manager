@@ -125,7 +125,7 @@ async def test_confirm_request_shows_alert_and_invalidates_own_message_on_lost_r
     appt_repo = FakeAppointmentRepository(appointment)
     notification_service = _notification_service()
     router = create_admin_booking_requests_router(
-        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
     )
     confirm_request = _find_handler(router, "confirm_request")
     callback_query = _callback_query()
@@ -182,7 +182,7 @@ async def test_accept_reschedule_shows_alert_and_invalidates_own_message_on_lost
     appt_repo = FakeAppointmentRepository(pre_race, post_race)
     notification_service = _notification_service()
     router = create_admin_reschedule_requests_router(
-        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
     )
     accept_reschedule = _find_handler(router, "accept_reschedule")
     callback_query = _callback_query()
@@ -276,7 +276,7 @@ async def test_approve_propose_datetime_shows_alert_and_invalidates_own_message_
     appt_repo = FakeAppointmentRepository(pre_race, post_race)
     notification_service = _notification_service()
     router = create_admin_booking_requests_router(
-        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
     )
     approve_propose_datetime = _find_handler(router, "approve_propose_datetime")
     callback_query = _callback_query()

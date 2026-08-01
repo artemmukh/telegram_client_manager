@@ -210,7 +210,7 @@ async def test_approve_propose_datetime_commits_demotes_resyncs_and_notifies():
     notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=654)
 
     router = create_admin_reschedule_requests_router(
-        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         notification_service=notification_service, appointment_scheduler=appointment_scheduler,
     )
     approve_propose_datetime = _get_approve_propose_datetime_handler(router)
@@ -266,7 +266,7 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
     notification_service.invalidate_stale_decision_message = AsyncMock()
 
     router = create_admin_reschedule_requests_router(
-        appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
         notification_service=notification_service,
     )
     approve_propose_datetime = _get_approve_propose_datetime_handler(router)
@@ -315,7 +315,7 @@ async def test_approve_propose_datetime_immediately_applies_when_client_has_no_t
     notification_service.notify_client_appointment_with_buttons = AsyncMock(return_value=654)
 
     router = create_admin_reschedule_requests_router(
-        appt_repo, FakeUserRepo(client), FakeStaffRepo(), FakeClinicRepo(),
+        "zb", appt_repo, FakeUserRepo(client), FakeStaffRepo(), FakeClinicRepo(),
         notification_service=notification_service, appointment_scheduler=appointment_scheduler,
     )
     approve_propose_datetime = _get_approve_propose_datetime_handler(router)
