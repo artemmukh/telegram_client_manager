@@ -9,9 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import bot.handlers.common.profile as profile_module
 from bot.handlers.common.profile import create_profile_router
 from bot.keyboards.utils.language_cb import LanguageCB
 from bot.models.user import User
+from bot.utils.commands import client_commands
 from bot.utils.role import Role
 
 
@@ -24,6 +26,25 @@ class FakeClientManagement:
         self.calls.append((user_id, language))
         self.user.language = language
         return self.user
+
+
+class FakeProfileBot:
+    """Stands in for bot.loader.get_bot() so update_language_preset doesn't hit
+    the real aiogram Bot / aiohttp session (see test_registration_handlers.py
+    for the same get_bot-faking convention)."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def set_my_commands(self, commands, scope):
+        self.calls.append((commands, scope.chat_id))
+
+
+@pytest.fixture(autouse=True)
+def _patch_get_bot(monkeypatch):
+    fake_bot = FakeProfileBot()
+    monkeypatch.setattr(profile_module, "get_bot", lambda: fake_bot)
+    return fake_bot
 
 
 def _get_handler(observer, name):
@@ -78,7 +99,7 @@ async def test_open_language_settings_shows_current_language_with_checkmark():
 
 
 @pytest.mark.asyncio
-async def test_update_language_preset_persists_and_rerenders():
+async def test_update_language_preset_persists_and_rerenders(_patch_get_bot):
     current_user = _client_user()
     client_management = FakeClientManagement(current_user)
     router = _router(client_management)
@@ -97,3 +118,5 @@ async def test_update_language_preset_persists_and_rerenders():
     assert texts_by_value["uz"].startswith("✅")
     assert not texts_by_value["ru"].startswith("✅")
     callback.answer.assert_awaited_once_with("Sozlamalar yangilandi")
+
+    assert _patch_get_bot.calls == [(client_commands("uz"), 555)]

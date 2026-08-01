@@ -27,7 +27,7 @@ from bot.services.client.client_notifications import ClientNotificationService
 from bot.services.utils.auth import AuthService
 from bot.services.utils.registration import RegistrationService
 from bot.states.register_states import RegisterStates
-from bot.utils.commands import ADMIN_COMMANDS, CLIENT_COMMANDS
+from bot.utils.commands import admin_commands, client_commands
 from bot.utils.info import (
     show_main_admin_menu,
     show_main_client_menu,
@@ -258,12 +258,12 @@ def create_reg_router(
 
         if role == Role.ADMIN:
             await show_main_admin_menu(callback.message, full_name=data["full_name"], lang=lang)
-            await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
+            await bot.set_my_commands(admin_commands(lang), scope=BotCommandScopeChat(chat_id=callback.from_user.id))
         else:
             await show_main_client_menu(
                 callback.message, full_name=data["full_name"], clinic_name=data["clinic_name"], lang=lang,
             )
-            await bot.set_my_commands(CLIENT_COMMANDS, scope=BotCommandScopeChat(chat_id=callback.from_user.id))
+            await bot.set_my_commands(client_commands(lang), scope=BotCommandScopeChat(chat_id=callback.from_user.id))
 
         await callback.answer()
         await state.clear()

@@ -3,7 +3,7 @@
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, Message
 
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.admin_utils.confirmations import GENDER_LABELS
@@ -14,8 +14,10 @@ from bot.keyboards.client.reminder_kb import reminder_settings_kb
 from bot.keyboards.common.profile_kb import profile_menu_kb
 from bot.keyboards.utils.language_cb import LanguageCB
 from bot.keyboards.utils.language_kb import language_settings_kb
+from bot.loader import get_bot
 from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
+from bot.utils.commands import admin_commands, client_commands
 from bot.utils.role import Role, RoleFilter
 
 
@@ -91,7 +93,10 @@ def create_profile_router(client_management_service: ClientManagement = None):
         )
         return reply_markup
 
-    @router.message(F.text.in_({"/profile", "⚙️ Мой профиль", "👤 Профиль"}), RoleFilter("*"))
+    @router.message(
+        F.text.in_({"/profile", "⚙️ Мой профиль", "👤 Профиль", "⚙️ Mening profilim", "👤 Profil"}),
+        RoleFilter("*"),
+    )
     async def profile(message: Message, current_user: User | None = None):
 
         reply_markup = profile_menu_kb() if client_management_service else None
@@ -142,6 +147,17 @@ def create_profile_router(client_management_service: ClientManagement = None):
             except TelegramBadRequest as e:
                 if "message is not modified" not in str(e):
                     raise
+
+            if updated_user.telegram_user_id:
+                commands = (
+                    admin_commands(updated_user.language)
+                    if updated_user.role == Role.ADMIN
+                    else client_commands(updated_user.language)
+                )
+                bot = get_bot()
+                await bot.set_my_commands(
+                    commands, scope=BotCommandScopeChat(chat_id=updated_user.telegram_user_id)
+                )
 
             await callback_query.answer(SETTINGS_UPDATED_TEXT.get(updated_user.language, SETTINGS_UPDATED_TEXT["ru"]))
 

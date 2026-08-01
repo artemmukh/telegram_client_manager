@@ -79,8 +79,15 @@ _REGISTRATION_GUIDE = {
     ),
 }
 
-MAIN_ADMIN_MENU_CHOOSE_OPTION = 'Выберите вариант: '
-MAIN_CLIENT_MENU_CHOOSE_OPTION = 'Выберите вариант: '
+_MAIN_ADMIN_MENU_CHOOSE_OPTION = {
+    "ru": "Выберите вариант: ",
+    "uz": "Variantni tanlang: ",
+}
+
+_MAIN_CLIENT_MENU_CHOOSE_OPTION = {
+    "ru": "Выберите вариант: ",
+    "uz": "Variantni tanlang: ",
+}
 
 CHOOSE_LANGUAGE_PROMPT = "Выберите язык / Tilni tanlang:"
 
@@ -187,6 +194,14 @@ def gender_prompt(lang: str) -> str:
 
 def registration_success(lang: str) -> str:
     return _REGISTRATION_SUCCESS.get(lang, _REGISTRATION_SUCCESS["ru"])
+
+
+def main_admin_menu_choose_option(lang: str) -> str:
+    return _MAIN_ADMIN_MENU_CHOOSE_OPTION.get(lang, _MAIN_ADMIN_MENU_CHOOSE_OPTION["ru"])
+
+
+def main_client_menu_choose_option(lang: str) -> str:
+    return _MAIN_CLIENT_MENU_CHOOSE_OPTION.get(lang, _MAIN_CLIENT_MENU_CHOOSE_OPTION["ru"])
 
 
 def admin_greeting(full_name: str, lang: str = "ru") -> str:

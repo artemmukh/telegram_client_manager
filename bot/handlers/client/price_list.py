@@ -11,7 +11,7 @@ def create_price_list_router(instance: str):
 
     router.message.filter(RoleFilter("client"))
 
-    @router.message(F.text.in_({"/price", "📋 Прайс-лист"}), RoleFilter("client"))
+    @router.message(F.text.in_({"/price", "📋 Прайс-лист", "📋 Narxlar ro'yxati"}), RoleFilter("client"))
     async def price_client(message: Message):
         price_list = PRICE_LIST_BY_INSTANCE.get(instance)
 

@@ -203,7 +203,7 @@ def create_admin_appointment_browser_router(
             return
         await show_calendar(callback, state)
 
-    @router.message(F.text.in_({"/calendar", "📆 Календарь"}))
+    @router.message(F.text.in_({"/calendar", "📆 Календарь", "📆 Kalendar"}))
     async def open_calendar_message(message: Message, state: FSMContext):
         await state.clear()
         if await maybe_prompt_doctor_filter(message, state, mode="calendar_entry", page=1, tab="confirmed"):

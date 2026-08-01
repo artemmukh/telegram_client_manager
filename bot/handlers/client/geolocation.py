@@ -11,7 +11,7 @@ def create_price_geo_router(instance: str):
 
     router.message.filter(RoleFilter("client"))
 
-    @router.message(F.text.in_({"/geo", "📍 Локация"}), RoleFilter("client"))
+    @router.message(F.text.in_({"/geo", "📍 Локация", "📍 Manzil"}), RoleFilter("client"))
     async def geo_client(message: Message):
         location = LOCATION_BY_INSTANCE.get(instance)
 

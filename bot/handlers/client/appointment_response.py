@@ -69,7 +69,9 @@ def create_client_appointment_router(
     router.message.filter(RoleFilter("client"))
     router.callback_query.filter(RoleFilter("client"))
 
-    @router.message(F.text.in_({"/appointments", "/book", "/history", "📋 Управление записями"}))
+    @router.message(F.text.in_({
+        "/appointments", "/book", "/history", "📋 Управление записями", "📋 Yozuvlarni boshqarish",
+    }))
     async def show_appointment_management(message: Message):
         await message.answer(
             "Выберите действие:",

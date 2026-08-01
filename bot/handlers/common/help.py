@@ -12,11 +12,11 @@ def create_help_router():
 
     router.message.filter(RoleFilter("*"))
 
-    @router.message(F.text.in_({"/help", "❓ Справка"}), RoleFilter("admin"))
+    @router.message(F.text.in_({"/help", "❓ Справка", "❓ Ma'lumot"}), RoleFilter("admin"))
     async def help_admin(message: Message):
         await message.answer(msg.ADMIN_HELP)
 
-    @router.message(F.text.in_({"/help", "❓ Помощь"}), RoleFilter("client"))
+    @router.message(F.text.in_({"/help", "❓ Помощь", "❓ Yordam"}), RoleFilter("client"))
     async def help_client(message: Message):
         await message.answer(msg.CLIENT_HELP, reply_markup=client_help_guide_kb())
 

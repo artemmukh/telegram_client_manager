@@ -8,10 +8,10 @@ from bot.keyboards.client.client_main_keyboard import start_client_keyboard
 async def show_main_admin_menu(message: Message, full_name: str, lang: str = "ru"):
     await message.answer(msg.admin_greeting(full_name, lang))
 
-    await message.answer(text=msg.MAIN_ADMIN_MENU_CHOOSE_OPTION, reply_markup=start_admin_keyboard())
+    await message.answer(text=msg.main_admin_menu_choose_option(lang), reply_markup=start_admin_keyboard(lang))
 
 
 async def show_main_client_menu(message: Message, full_name: str, clinic_name: str, lang: str = "ru"):
     await message.answer(msg.client_greeting(full_name, clinic_name, lang))
 
-    await message.answer(text=msg.MAIN_CLIENT_MENU_CHOOSE_OPTION, reply_markup=start_client_keyboard())
+    await message.answer(text=msg.main_client_menu_choose_option(lang), reply_markup=start_client_keyboard(lang))
