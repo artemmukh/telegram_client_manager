@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -22,7 +22,6 @@ from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, datetime_processing
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarDayCB, ApptCalendarMonthCB
 from bot.keyboards.admin.record_management_kb.appointment_creation_cb import AdminOccupiedSlotCB
-from bot.keyboards.admin.record_management_kb.appointment_slot_kb import appointment_slot_grid_kb, occupied_slot_card_kb
 from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
 from bot.keyboards.admin.record_management_kb.reschedule_request_kb import (
     reschedule_request_confirm_propose_kb,
@@ -32,7 +31,6 @@ from bot.keyboards.admin.record_management_kb.reschedule_request_kb import (
 from bot.keyboards.client.booking_cb import ClientBookSlotCB
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.utils.date_parser import (
-    format_datetime_for_confirmation,
     format_datetime_for_db,
     get_current_tashkent_datetime,
 )
@@ -165,23 +163,6 @@ def create_admin_reschedule_requests_router(
         await callback_query.message.edit_text(build_appointment_card(appointment))
         await invalidate_reschedule_siblings(callback_query, appointment)
 
-    def propose_calendar_back_target(appointment_id: int) -> tuple[str, str]:
-        return (
-            RescheduleRequestActionCB(action="cancel_propose", appointment_id=appointment_id).pack(),
-            "❌ Отменить",
-        )
-
-    async def enter_propose_calendar(callback_query: CallbackQuery, state: FSMContext, appointment_id: int) -> None:
-        await callback_query.answer('')
-        today = get_current_tashkent_datetime().date()
-        year, month = clamp_month_to_range(today.year, today.month)
-        back_callback_data, back_label = propose_calendar_back_target(appointment_id)
-        await ah.render_calendar_month(
-            callback_query, state, year, month,
-            choose_day_state=RescheduleRequestStates.choose_day,
-            back_callback_data=back_callback_data, back_label=back_label,
-        )
-
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "propose"))
     async def start_propose_datetime(
         callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB, state: FSMContext,
@@ -197,7 +178,11 @@ def create_admin_reschedule_requests_router(
                 return
 
             await state.update_data(staff_user_id=appointment.doctor_id, old_datetime=appointment.datetime)
-            await enter_propose_calendar(callback_query, state, callback_data.appointment_id)
+            await ah.render_propose_calendar_start(
+                callback_query, state, callback_data.appointment_id,
+                choose_day_state=RescheduleRequestStates.choose_day, cb_class=RescheduleRequestActionCB,
+                today=get_current_tashkent_datetime().date(),
+            )
             return
 
         await state.set_state(RescheduleRequestStates.new_datetime)
@@ -234,31 +219,12 @@ def create_admin_reschedule_requests_router(
     ):
         year, month = clamp_month_to_range(callback_data.year, callback_data.month)
         data = await state.get_data()
-        back_callback_data, back_label = propose_calendar_back_target(data["appointment_id"])
+        back_callback_data, back_label = ah.propose_calendar_back_target(RescheduleRequestActionCB, data["appointment_id"])
         await ah.render_calendar_month(
             callback_query, state, year, month,
             choose_day_state=RescheduleRequestStates.choose_day,
             back_callback_data=back_callback_data, back_label=back_label,
         )
-
-    async def render_propose_slot_grid(callback_query: CallbackQuery, state: FSMContext, day_iso: str) -> bool:
-        day = date.fromisoformat(day_iso)
-        now = get_current_tashkent_datetime()
-        data = await state.get_data()
-        occupancy = await appt_mng.get_day_slot_occupancy(
-            data["staff_user_id"], day, now, exclude_appointment_id=data["appointment_id"],
-        )
-
-        if not occupancy:
-            return False
-
-        await state.update_data(day_iso=day_iso)
-        await state.set_state(RescheduleRequestStates.choose_slot)
-        await callback_query.message.edit_text(
-            f"Выберите время на {day.strftime('%d.%m.%Y')}:",
-            reply_markup=appointment_slot_grid_kb(occupancy, cancel_callback_data="admin_book_back_to_day"),
-        )
-        return True
 
     @router.callback_query(RescheduleRequestStates.choose_day, ApptCalendarDayCB.filter())
     async def pick_propose_calendar_day(
@@ -266,8 +232,11 @@ def create_admin_reschedule_requests_router(
     ):
         year, month, day_num = clamp_calendar_date(callback_data.year, callback_data.month, callback_data.day)
         day_iso = date(year, month, day_num).isoformat()
+        now = get_current_tashkent_datetime()
 
-        if not await render_propose_slot_grid(callback_query, state, day_iso):
+        if not await ah.render_propose_slot_grid(
+            appt_mng, callback_query, state, day_iso, choose_slot_state=RescheduleRequestStates.choose_slot, now=now,
+        ):
             await callback_query.answer("На этот день нет доступных слотов.", show_alert=True)
             return
 
@@ -279,7 +248,7 @@ def create_admin_reschedule_requests_router(
         today = get_current_tashkent_datetime().date()
         year = data.get("calendar_year", today.year)
         month = data.get("calendar_month", today.month)
-        back_callback_data, back_label = propose_calendar_back_target(data["appointment_id"])
+        back_callback_data, back_label = ah.propose_calendar_back_target(RescheduleRequestActionCB, data["appointment_id"])
         await ah.render_calendar_month(
             callback_query, state, year, month,
             choose_day_state=RescheduleRequestStates.choose_day,
@@ -290,52 +259,36 @@ def create_admin_reschedule_requests_router(
     async def view_propose_occupied_slot(
         callback_query: CallbackQuery, callback_data: AdminOccupiedSlotCB, state: FSMContext,
     ):
-        appointment = await appt_mng.get_appointment_by_id(callback_data.appointment_id)
-        if appointment is None:
-            await callback_query.answer("Запись не найдена.", show_alert=True)
-            return
-
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            build_appointment_card(appointment),
-            reply_markup=occupied_slot_card_kb(),
-        )
+        await ah.render_occupied_slot_card(appt_mng, callback_query, callback_data.appointment_id)
 
     @router.callback_query(RescheduleRequestStates.choose_slot, F.data == "admin_book_back_to_slots")
     async def back_to_propose_slot_grid(callback_query: CallbackQuery, state: FSMContext):
         data = await state.get_data()
-        await render_propose_slot_grid(callback_query, state, data["day_iso"])
+        now = get_current_tashkent_datetime()
+        await ah.render_propose_slot_grid(
+            appt_mng, callback_query, state, data["day_iso"], choose_slot_state=RescheduleRequestStates.choose_slot,
+            now=now,
+        )
         await callback_query.answer()
 
     @router.callback_query(RescheduleRequestStates.choose_slot, ClientBookSlotCB.filter())
     async def pick_propose_slot(callback_query: CallbackQuery, callback_data: ClientBookSlotCB, state: FSMContext):
-        try:
-            datetime.strptime(callback_data.slot, "%H:%M")
-        except ValueError:
-            await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
-            return
-
-        data = await state.get_data()
-        appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
-        parsed_dt = datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
-        new_display = format_datetime_for_confirmation(parsed_dt)
-
-        await state.update_data(appointment_datetime_parsed=parsed_dt, appointment_datetime_display=new_display)
-        await state.set_state(RescheduleRequestStates.confirm_new_datetime)
-
-        old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]))
-        await callback_query.message.edit_text(
-            f"Предложить клиенту время: {old_display} → {new_display}?",
-            reply_markup=reschedule_request_confirm_propose_kb(data["appointment_id"]),
+        await ah.apply_picked_propose_slot(
+            callback_query, callback_data, state,
+            confirm_state=RescheduleRequestStates.confirm_new_datetime,
+            confirm_kb_builder=reschedule_request_confirm_propose_kb,
         )
-        await callback_query.answer()
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "retry_propose_datetime"))
     async def retry_propose_datetime(
         callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB, state: FSMContext,
     ):
         if DATA_PARSE_MODE.get(instance) == "slots":
-            await enter_propose_calendar(callback_query, state, callback_data.appointment_id)
+            await ah.render_propose_calendar_start(
+                callback_query, state, callback_data.appointment_id,
+                choose_day_state=RescheduleRequestStates.choose_day, cb_class=RescheduleRequestActionCB,
+                today=get_current_tashkent_datetime().date(),
+            )
             return
 
         await state.set_state(RescheduleRequestStates.new_datetime)

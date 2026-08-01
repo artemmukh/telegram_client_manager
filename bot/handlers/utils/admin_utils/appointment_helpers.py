@@ -1,4 +1,5 @@
 import logging
+from datetime import date, datetime
 
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
@@ -14,6 +15,10 @@ from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_calendar_kb
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
+from bot.keyboards.admin.record_management_kb.appointment_slot_kb import (
+    appointment_slot_grid_kb,
+    occupied_slot_card_kb,
+)
 from bot.keyboards.client.booking_kb import booking_day_kb, booking_doctor_kb
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
@@ -296,6 +301,84 @@ async def render_calendar_start_from_message(appt_mng, message: Message, state: 
         await message.answer(text, reply_markup=reply_markup)
 
     await _send_calendar_month(state, year, month, send)
+
+
+def propose_calendar_back_target(cb_class, appointment_id: int) -> tuple[str, str]:
+    return cb_class(action="cancel_propose", appointment_id=appointment_id).pack(), "❌ Отменить"
+
+
+async def render_propose_calendar_start(
+    callback_query: CallbackQuery, state: FSMContext, appointment_id: int,
+    choose_day_state: State, cb_class, today: date,
+) -> None:
+    await callback_query.answer('')
+    year, month = clamp_month_to_range(today.year, today.month)
+    back_callback_data, back_label = propose_calendar_back_target(cb_class, appointment_id)
+    await render_calendar_month(
+        callback_query, state, year, month,
+        choose_day_state=choose_day_state,
+        back_callback_data=back_callback_data, back_label=back_label,
+    )
+
+
+async def render_propose_slot_grid(
+    appt_mng, callback_query: CallbackQuery, state: FSMContext, day_iso: str, choose_slot_state: State, now: datetime,
+) -> bool:
+    day = date.fromisoformat(day_iso)
+    data = await state.get_data()
+    occupancy = await appt_mng.get_day_slot_occupancy(
+        data["staff_user_id"], day, now, exclude_appointment_id=data["appointment_id"],
+    )
+
+    if not occupancy:
+        return False
+
+    await state.update_data(day_iso=day_iso)
+    await state.set_state(choose_slot_state)
+    await callback_query.message.edit_text(
+        f"Выберите время на {day.strftime('%d.%m.%Y')}:",
+        reply_markup=appointment_slot_grid_kb(occupancy, cancel_callback_data="admin_book_back_to_day"),
+    )
+    return True
+
+
+async def render_occupied_slot_card(appt_mng, callback_query: CallbackQuery, appointment_id: int) -> None:
+    appointment = await appt_mng.get_appointment_by_id(appointment_id)
+    if appointment is None:
+        await callback_query.answer("Запись не найдена.", show_alert=True)
+        return
+
+    await callback_query.answer('')
+    await callback_query.message.edit_text(
+        build_appointment_card(appointment),
+        reply_markup=occupied_slot_card_kb(),
+    )
+
+
+async def apply_picked_propose_slot(
+    callback_query: CallbackQuery, callback_data, state: FSMContext,
+    confirm_state: State, confirm_kb_builder,
+) -> None:
+    try:
+        datetime.strptime(callback_data.slot, "%H:%M")
+    except ValueError:
+        await callback_query.answer("Некорректное время, попробуйте ещё раз.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
+    parsed_dt = datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
+    new_display = format_datetime_for_confirmation(parsed_dt)
+
+    await state.update_data(appointment_datetime_parsed=parsed_dt, appointment_datetime_display=new_display)
+    await state.set_state(confirm_state)
+
+    old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]))
+    await callback_query.message.edit_text(
+        f"Предложить клиенту время: {old_display} → {new_display}?",
+        reply_markup=confirm_kb_builder(data["appointment_id"]),
+    )
+    await callback_query.answer()
 
 
 async def begin_appointment_creation(
