@@ -194,29 +194,27 @@ class AppointmentNotificationService:
 
         return True
 
-    # async def notify_client_appointment_changed(self, appointment: Appointment) -> bool:
-    #     """Notify client that details of their appointment (datetime or purpose) were changed.
-    #
-    #     Returns True if message sent, False if user not found or no telegram_id.
-    #     """
-    #     client = await self.user_repo.get_client_by_id(appointment.client_id)
-    #
-    #     if client is None or client.telegram_user_id is None:
-    #         return False
-    #
-    #     message_text = (
-    #         "✏️ Детали вашей записи изменены администратором\n\n"
-    #         f"Дата и время: {appointment.datetime}\n"
-    #         f"Услуга: {appointment.purpose}"
-    #     )
-    #
-    #     await self.bot.send_message(
-    #         chat_id=client.telegram_user_id,
-    #         text=message_text,
-    #         reply_parameters=self._reply_parameters(appointment),
-    #     )
-    #
-    #     return True
+    async def notify_client_appointment_changed(self, appointment: Appointment) -> bool:
+        """Notify client that details of their appointment (datetime or purpose) were changed.
+
+        Returns True if message sent, False if user not found or no telegram_id.
+        """
+        client = await self.user_repo.get_client_by_id(appointment.client_id)
+
+        if client is None or client.telegram_user_id is None:
+            return False
+
+        await self.notifier.send_message(
+            chat_id=client.telegram_user_id,
+            text=(
+                "✏️ Детали вашей записи изменены администратором\n\n"
+                f"Дата и время: {appointment.datetime}\n"
+                f"Услуга: {appointment.purpose}"
+            ),
+            reply_to_message_id=self._reply_to_message_id(appointment),
+        )
+
+        return True
 
     def _reply_to_message_id(self, appointment: Appointment) -> int | None:
         return appointment.notification_message_id
