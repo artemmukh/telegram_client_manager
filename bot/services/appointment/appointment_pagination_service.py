@@ -12,6 +12,30 @@ from bot.utils.pagination import APPOINTMENTS_PER_PAGE
 
 logger = logging.getLogger(__name__)
 
+_UNKNOWN_TAB_MESSAGE = {
+    "ru": "Неизвестная вкладка: {tab}",
+    "uz": "Noma'lum bo'lim: {tab}",
+}
+
+_UNKNOWN_PAGINATION_MODE_MESSAGE = {
+    "ru": "Неизвестный режим пагинации: {mode}",
+    "uz": "Noma'lum sahifalash rejimi: {mode}",
+}
+
+
+def _unknown_tab_error(tab: str) -> PaginationError:
+    return PaginationError({
+        "ru": _UNKNOWN_TAB_MESSAGE["ru"].format(tab=tab),
+        "uz": _UNKNOWN_TAB_MESSAGE["uz"].format(tab=tab),
+    })
+
+
+def _unknown_mode_error(mode: str) -> PaginationError:
+    return PaginationError({
+        "ru": _UNKNOWN_PAGINATION_MODE_MESSAGE["ru"].format(mode=mode),
+        "uz": _UNKNOWN_PAGINATION_MODE_MESSAGE["uz"].format(mode=mode),
+    })
+
 
 @dataclass
 class AppointmentPaginationResult:
@@ -121,7 +145,7 @@ class AppointmentPaginationService:
 
     def _filter_by_tab(self, appointments: list[Appointment], tab: str) -> list[Appointment]:
         if tab not in self._STATUS_TABS:
-            raise PaginationError(f"Неизвестная вкладка: {tab}")
+            raise _unknown_tab_error(tab)
 
         status = self._STATUS_TABS[tab]
         bucket = [appointment for appointment in appointments if self._matches_tab(appointment, status)]
@@ -160,7 +184,7 @@ class AppointmentPaginationService:
             )
         elif mode == "search":
             if tab not in self._STATUS_TABS:
-                raise PaginationError(f"Неизвестная вкладка: {tab}")
+                raise _unknown_tab_error(tab)
 
             full_name = (search_data or {}).get("full_name", "")
             status = self._STATUS_TABS[tab]
@@ -188,7 +212,7 @@ class AppointmentPaginationService:
             ordered = self._filter_by_tab(appointments, tab)
             total_count = len(ordered)
         else:
-            raise PaginationError(f"Неизвестный режим пагинации: {mode}")
+            raise _unknown_mode_error(mode)
 
         page, total_pages = self._paginate_math(total_count, page, APPOINTMENTS_PER_PAGE)
 
@@ -262,7 +286,7 @@ class AppointmentPaginationService:
             doctor_id: если задан, ограничивает выборку записями этого врача
         """
         if tab not in self._STATUS_TABS:
-            raise PaginationError(f"Неизвестная вкладка: {tab}")
+            raise _unknown_tab_error(tab)
 
         per_page = per_page or APPOINTMENTS_PER_PAGE
         status = self._STATUS_TABS[tab]
@@ -308,7 +332,7 @@ class AppointmentPaginationService:
             doctor_id: если задан, ограничивает выборку записями этого врача
         """
         if tab not in self._STATUS_TABS:
-            raise PaginationError(f"Неизвестная вкладка: {tab}")
+            raise _unknown_tab_error(tab)
 
         per_page = per_page or APPOINTMENTS_PER_PAGE
         status = self._STATUS_TABS[tab]

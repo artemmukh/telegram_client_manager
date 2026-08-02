@@ -45,8 +45,157 @@ from bot.validators.validators import validate_datetime, validate_price, validat
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
-SLOT_UNAVAILABLE_MESSAGE = "Это время уже занято другой подтверждённой записью, выберите другое."
-DUPLICATE_CLIENT_SLOT_MESSAGE = "У этого клиента уже есть запись на это время."
+SLOT_UNAVAILABLE_MESSAGE = {
+    "ru": "Это время уже занято другой подтверждённой записью, выберите другое.",
+    "uz": "Bu vaqt boshqa tasdiqlangan yozuv tomonidan band qilingan, boshqasini tanlang.",
+}
+DUPLICATE_CLIENT_SLOT_MESSAGE = {
+    "ru": "У этого клиента уже есть запись на это время.",
+    "uz": "Bu mijozning bu vaqtga allaqachon yozuvi bor.",
+}
+
+_DOCTOR_NOT_FOUND_MESSAGE = {
+    "ru": "Врач не найден.",
+    "uz": "Shifokor topilmadi.",
+}
+
+_CLIENT_NOT_LINKED_MESSAGE = {
+    "ru": "Клиент не найден или не привязан к клинике.",
+    "uz": "Mijoz topilmadi yoki klinikaga bog'lanmagan.",
+}
+
+_CLIENT_NOT_FOUND_MESSAGE = {
+    "ru": "Клиент не найден.",
+    "uz": "Mijoz topilmadi.",
+}
+
+_STAFF_MEMBER_NOT_FOUND_MESSAGE = {
+    "ru": "Специалист не найден.",
+    "uz": "Mutaxassis topilmadi.",
+}
+
+_PENDING_REQUEST_LIMIT_MESSAGE = {
+    "ru": "У вас уже есть заявка на рассмотрении. Дождитесь решения клиники, прежде чем создавать новую.",
+    "uz": "Sizda allaqachon ko'rib chiqilayotgan ariza bor. Yangisini yaratishdan oldin klinika javobini kuting.",
+}
+
+_CANCELLATION_COOLDOWN_MESSAGE = {
+    "ru": "Вы слишком часто отменяете заявки. Подождите немного, прежде чем создать новую.",
+    "uz": "Siz arizalarni juda tez-tez bekor qilyapsiz. Yangisini yaratishdan oldin biroz kuting.",
+}
+
+_AWAIT_CLINIC_DECISION_MESSAGE = {
+    "ru": "Дождитесь решения клиники по вашей заявке.",
+    "uz": "Arizangiz bo'yicha klinika javobini kuting.",
+}
+
+_CONFIRM_NOT_AVAILABLE_MESSAGE = {
+    "ru": (
+        "Эта запись больше недоступна для подтверждения. "
+        "Возможно, она была отменена или уже завершена. Обновите список записей."
+    ),
+    "uz": (
+        "Bu yozuv endi tasdiqlash uchun mavjud emas. "
+        "Ehtimol, u bekor qilingan yoki allaqachon yakunlangan. Yozuvlar ro'yxatini yangilang."
+    ),
+}
+
+_CANCEL_NOT_AVAILABLE_MESSAGE = {
+    "ru": (
+        "Эта запись больше недоступна для отмены. "
+        "Возможно, она уже была отменена или завершена. Обновите список записей."
+    ),
+    "uz": (
+        "Bu yozuv endi bekor qilish uchun mavjud emas. "
+        "Ehtimol, u allaqachon bekor qilingan yoki yakunlangan. Yozuvlar ro'yxatini yangilang."
+    ),
+}
+
+_REQUEST_NO_LONGER_AVAILABLE_MESSAGE = {
+    "ru": "Эта заявка больше недоступна.",
+    "uz": "Bu ariza endi mavjud emas.",
+}
+
+_RECORD_NO_LONGER_AVAILABLE_MESSAGE = {
+    "ru": "Эта запись больше недоступна.",
+    "uz": "Bu yozuv endi mavjud emas.",
+}
+
+_CANCELLATION_WINDOW_EXPIRED_MESSAGE = {
+    "ru": "Отмена возможна не позднее чем за 1 час, свяжитесь с клиникой",
+    "uz": "Bekor qilish faqat 1 soat oldin mumkin, klinika bilan bog'laning",
+}
+
+_PROPOSAL_PENDING_CLIENT_ANSWER_MESSAGE = {
+    "ru": "По этой заявке уже предложено новое время. Дождитесь ответа клиента.",
+    "uz": "Bu ariza uchun allaqachon yangi vaqt taklif qilingan. Mijoz javobini kuting.",
+}
+
+_PROPOSAL_ALREADY_PENDING_MESSAGE = {
+    "ru": "По этой записи уже есть предложение, ожидающее ответа.",
+    "uz": "Bu yozuv uchun allaqachon javob kutilayotgan taklif bor.",
+}
+
+_RESCHEDULE_NOT_AVAILABLE_MESSAGE = {
+    "ru": (
+        "Перенос доступен только для подтверждённых записей, ещё не решённых "
+        "клиникой записей или собственных заявок на самозапись, ожидающих решения клиники."
+    ),
+    "uz": (
+        "Ko'chirish faqat tasdiqlangan yozuvlar, klinika hali qaror qabul qilmagan yozuvlar "
+        "yoki klinika javobini kutayotgan o'z mustaqil yozilish arizalari uchun mavjud."
+    ),
+}
+
+_NO_PENDING_PROPOSAL_MESSAGE = {
+    "ru": "По этой записи нет предложенного времени, ожидающего ответа.",
+    "uz": "Bu yozuv uchun javob kutilayotgan taklif qilingan vaqt yo'q.",
+}
+
+_NO_CLIENT_PROPOSAL_MESSAGE = {
+    "ru": "Нет предложения от клиента, ожидающего решения.",
+    "uz": "Mijozdan qaror kutilayotgan taklif yo'q.",
+}
+
+_CLIENT_NOT_FOUND_BY_PHONE_MESSAGE = {
+    "ru": "Клиент с таким номером не найден. Сначала создайте клиента.",
+    "uz": "Bu raqamli mijoz topilmadi. Avval mijozni yarating.",
+}
+
+_STAFF_NOT_FOUND_MESSAGE = {
+    "ru": "Сотрудник не найден.",
+    "uz": "Xodim topilmadi.",
+}
+
+_BOOKING_TOO_SOON_MESSAGE = {
+    "ru": "Время записи должно быть не менее чем через 2 часа от текущего момента, свяжитесь с клиникой.",
+    "uz": "Yozuv vaqti hozirgi vaqtdan kamida 2 soat keyin bo'lishi kerak, klinika bilan bog'laning.",
+}
+
+_OTHER_STAFF_LABEL = {
+    "ru": "Другой сотрудник",
+    "uz": "Boshqa xodim",
+}
+
+_DEFAULT_OUTCOME_TEXT = {
+    "ru": "решение принято",
+    "uz": "qaror qabul qilindi",
+}
+
+_BOOKING_ALREADY_DECIDED_MESSAGE = {
+    "ru": "Эта заявка уже обработана",
+    "uz": "Bu ariza allaqachon ko'rib chiqilgan",
+}
+
+_RESCHEDULE_ALREADY_DECIDED_MESSAGE = {
+    "ru": "Заявка на перенос уже обработана",
+    "uz": "Ko'chirish arizasi allaqachon ko'rib chiqilgan",
+}
+
+_COMPLETION_ALREADY_DECIDED_MESSAGE = {
+    "ru": "Запись уже обработана",
+    "uz": "Yozuv allaqachon ko'rib chiqilgan",
+}
 
 
 class AppointmentManagement:
@@ -76,19 +225,19 @@ class AppointmentManagement:
 
         admin = await self.user_repository.get_user_by_telegram_id(doctor_telegram_id)
         if admin is None:
-            raise UserNotFoundError("Врач не найден.")
+            raise UserNotFoundError(_DOCTOR_NOT_FOUND_MESSAGE)
 
         doctor_id = admin.ID
         if data.get("staff_user_id") is not None:
             doctor = await self.user_repository.get_user_by_id(data["staff_user_id"])
             if doctor is None:
-                raise UserNotFoundError("Врач не найден.")
+                raise UserNotFoundError(_DOCTOR_NOT_FOUND_MESSAGE)
             if doctor.clinic_id != clinic.clinic_id:
-                raise UserNotFoundError("Врач не найден.")
+                raise UserNotFoundError(_DOCTOR_NOT_FOUND_MESSAGE)
             if doctor.ID != admin.ID:
                 staff_record = await self.staff_repository.get_staff(doctor_telegram_id)
                 if staff_record is None or staff_record.visibility_scope != "clinic":
-                    raise UserNotFoundError("Врач не найден.")
+                    raise UserNotFoundError(_DOCTOR_NOT_FOUND_MESSAGE)
             doctor_id = doctor.ID
 
         await self._ensure_slot_available(doctor_id, appointment_datetime, None, client.ID)
@@ -129,7 +278,7 @@ class AppointmentManagement:
     async def list_bookable_staff(self, client_telegram_id: int) -> list[User]:
         client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
         if client is None or client.clinic_id is None:
-            raise UserNotFoundError("Клиент не найден или не привязан к клинике.")
+            raise UserNotFoundError(_CLIENT_NOT_LINKED_MESSAGE)
 
         return await self.list_clinic_doctors(client.clinic_id)
 
@@ -163,14 +312,14 @@ class AppointmentManagement:
     async def create_self_booking(self, client_telegram_id: int, data: dict) -> Appointment:
         client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
         if client is None:
-            raise UserNotFoundError("Клиент не найден.")
+            raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
 
         await self.ensure_pending_limit_not_exceeded(client_telegram_id)
         await self.ensure_cancellation_cooldown_not_exceeded(client_telegram_id)
 
         staff = await self.user_repository.get_user_by_id(data["staff_user_id"])
         if staff is None:
-            raise UserNotFoundError("Специалист не найден.")
+            raise UserNotFoundError(_STAFF_MEMBER_NOT_FOUND_MESSAGE)
 
         appointment_datetime = validate_datetime(data["appointment_datetime"])
         self._validate_min_lead_time(appointment_datetime)
@@ -195,16 +344,12 @@ class AppointmentManagement:
     async def ensure_pending_limit_not_exceeded(self, client_telegram_id: int) -> None:
         pending_count = await self._count_pending_self_bookings(client_telegram_id)
         if pending_count >= MAX_PENDING_REQUESTS_PER_CLIENT:
-            raise PendingRequestLimitExceededError(
-                "У вас уже есть заявка на рассмотрении. Дождитесь решения клиники, прежде чем создавать новую."
-            )
+            raise PendingRequestLimitExceededError(_PENDING_REQUEST_LIMIT_MESSAGE)
 
     async def ensure_cancellation_cooldown_not_exceeded(self, client_telegram_id: int) -> None:
         recent_cancellations = await self._count_recent_client_cancellations(client_telegram_id)
         if recent_cancellations >= MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW:
-            raise CancellationCooldownExceededError(
-                "Вы слишком часто отменяете заявки. Подождите немного, прежде чем создать новую."
-            )
+            raise CancellationCooldownExceededError(_CANCELLATION_COOLDOWN_MESSAGE)
 
     async def get_admin_clinic(self, doctor_telegram_id: int) -> Clinic:
         return await resolve_staff_clinic(
@@ -324,20 +469,25 @@ class AppointmentManagement:
 
         return appointment
 
-    async def resolve_decision_label(self, user_id: int | None) -> str:
+    async def resolve_decision_label(self, user_id: int | None) -> dict[str, str]:
         if user_id is None:
-            return "Другой сотрудник"
+            return _OTHER_STAFF_LABEL
 
         user = await self.user_repository.get_user_by_id(user_id)
         if user is None:
-            return "Другой сотрудник"
+            return _OTHER_STAFF_LABEL
 
         staff_record = await self.staff_repository.get_staff(user.telegram_user_id)
-        role = "Администратор" if staff_record is not None and staff_record.visibility_scope == "clinic" else "Доктор"
+        is_admin = staff_record is not None and staff_record.visibility_scope == "clinic"
+        role_ru = "Администратор" if is_admin else "Доктор"
+        role_uz = "Administrator" if is_admin else "Shifokor"
 
-        return f"{role} {user.full_name}"
+        return {
+            "ru": f"{role_ru} {user.full_name}",
+            "uz": f"{role_uz} {user.full_name}",
+        }
 
-    def resolve_decision_outcome_text(self, appointment: Appointment, kind: str) -> str:
+    def resolve_decision_outcome_text(self, appointment: Appointment, kind: str) -> dict[str, str]:
         # The PENDING+no-proposal branches below only match a request that has just
         # been decided by propose_new_datetime (confirm_pending_request/reject_pending_request
         # and accept/reject_client_reschedule always land on CONFIRMED/CANCELLED, never
@@ -346,41 +496,43 @@ class AppointmentManagement:
         # call sites), so it can't misfire on a plain, never-touched self-booking request.
         if kind == "booking":
             if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None:
-                return "подтверждена"
+                return {"ru": "подтверждена", "uz": "tasdiqlandi"}
             if appointment.status == AppointmentStatus.CANCELLED:
-                return "отклонена"
+                return {"ru": "отклонена", "uz": "rad etildi"}
             if appointment.status == AppointmentStatus.PENDING and appointment.proposed_datetime is None:
-                return "назначено новое время, ожидает подтверждения клиента"
+                return {
+                    "ru": "назначено новое время, ожидает подтверждения клиента",
+                    "uz": "yangi vaqt belgilandi, mijoz tasdiqlashini kutmoqda",
+                }
             if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
-                return "предложено другое время"
+                return {"ru": "предложено другое время", "uz": "boshqa vaqt taklif qilindi"}
         elif kind == "reschedule":
             if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is None:
-                return "перенос принят"
+                return {"ru": "перенос принят", "uz": "ko'chirish qabul qilindi"}
             if appointment.status == AppointmentStatus.CANCELLED:
-                return "перенос отклонён"
+                return {"ru": "перенос отклонён", "uz": "ko'chirish rad etildi"}
             if appointment.status == AppointmentStatus.PENDING and appointment.proposed_datetime is None:
-                return "время изменено, ожидает подтверждения клиента"
+                return {
+                    "ru": "время изменено, ожидает подтверждения клиента",
+                    "uz": "vaqt o'zgartirildi, mijoz tasdiqlashini kutmoqda",
+                }
             if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
-                return "предложено другое время"
+                return {"ru": "предложено другое время", "uz": "boshqa vaqt taklif qilindi"}
         elif kind == "completion":
             if appointment.status == AppointmentStatus.COMPLETED:
-                return "приём завершён"
+                return {"ru": "приём завершён", "uz": "qabul yakunlandi"}
 
-        return "решение принято"
+        return _DEFAULT_OUTCOME_TEXT
 
     async def confirm_appointment_by_client(self, appointment_id: int, telegram_user_id: int) -> Appointment:
         appointment = await self.get_appointment_for_client(appointment_id, telegram_user_id)
         if appointment is None:
             raise AppointmentNotFoundError()
 
-        self._ensure_not_finalized(
-            appointment,
-            "Эта запись больше недоступна для подтверждения. "
-            "Возможно, она была отменена или уже завершена. Обновите список записей.",
-        )
+        self._ensure_not_finalized(appointment, _CONFIRM_NOT_AVAILABLE_MESSAGE)
 
         if appointment.created_by == CreatedBy.CLIENT and appointment.status == AppointmentStatus.PENDING:
-            raise AwaitingClinicDecisionError("Дождитесь решения клиники по вашей заявке.")
+            raise AwaitingClinicDecisionError(_AWAIT_CLINIC_DECISION_MESSAGE)
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
 
@@ -393,16 +545,10 @@ class AppointmentManagement:
         if appointment is None:
             raise AppointmentNotFoundError()
 
-        self._ensure_not_finalized(
-            appointment,
-            "Эта запись больше недоступна для отмены. "
-            "Возможно, она уже была отменена или завершена. Обновите список записей.",
-        )
+        self._ensure_not_finalized(appointment, _CANCEL_NOT_AVAILABLE_MESSAGE)
 
         if enforce_cutoff and self._is_within_cancellation_cutoff(appointment):
-            raise CancellationWindowExpiredError(
-                "Отмена возможна не позднее чем за 1 час, свяжитесь с клиникой"
-            )
+            raise CancellationWindowExpiredError(_CANCELLATION_WINDOW_EXPIRED_MESSAGE)
 
         if appointment.proposed_datetime is not None:
             await self.appointment_repository.update_proposed_datetime(appointment_id, None)
@@ -414,12 +560,10 @@ class AppointmentManagement:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
         if appointment is None:
             raise AppointmentNotFoundError()
-        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+        self._ensure_not_finalized(appointment, _REQUEST_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_datetime is not None:
-            raise NegotiationInProgressError(
-                "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
-            )
+            raise NegotiationInProgressError(_PROPOSAL_PENDING_CLIENT_ANSWER_MESSAGE)
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
 
@@ -429,7 +573,7 @@ class AppointmentManagement:
             appointment_id, AppointmentStatus.CONFIRMED, acting_user_id, status_updated_at
         )
         if not confirmed:
-            await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind="booking")
+            await self._raise_already_decided(appointment_id, _BOOKING_ALREADY_DECIDED_MESSAGE, kind="booking")
 
         appointment.status = AppointmentStatus.CONFIRMED
         appointment.status_updated_at = status_updated_at
@@ -441,12 +585,10 @@ class AppointmentManagement:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
         if appointment is None:
             raise AppointmentNotFoundError()
-        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+        self._ensure_not_finalized(appointment, _REQUEST_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_datetime is not None:
-            raise NegotiationInProgressError(
-                "По этой заявке уже предложено новое время. Дождитесь ответа клиента."
-            )
+            raise NegotiationInProgressError(_PROPOSAL_PENDING_CLIENT_ANSWER_MESSAGE)
 
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
         status_updated_at = get_current_tashkent_time()
@@ -454,7 +596,7 @@ class AppointmentManagement:
             appointment_id, AppointmentStatus.CANCELLED, acting_user_id, status_updated_at
         )
         if not rejected:
-            await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind="booking")
+            await self._raise_already_decided(appointment_id, _BOOKING_ALREADY_DECIDED_MESSAGE, kind="booking")
 
         appointment.status = AppointmentStatus.CANCELLED
         appointment.status_updated_at = status_updated_at
@@ -468,12 +610,10 @@ class AppointmentManagement:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
         if appointment is None:
             raise AppointmentNotFoundError()
-        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+        self._ensure_not_finalized(appointment, _REQUEST_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
-            raise NegotiationInProgressError(
-                "По этой записи уже есть предложение, ожидающее ответа."
-            )
+            raise NegotiationInProgressError(_PROPOSAL_ALREADY_PENDING_MESSAGE)
 
         validated = validate_datetime(proposed_datetime)
         self._validate_min_lead_time(validated)
@@ -489,7 +629,7 @@ class AppointmentManagement:
                 appointment_id, validated, acting_user_id, status_updated_at, appointment.status.value
             )
             if not applied:
-                await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind=kind)
+                await self._raise_already_decided(appointment_id, _BOOKING_ALREADY_DECIDED_MESSAGE, kind=kind)
 
             appointment.datetime = validated
             appointment.status = AppointmentStatus.CONFIRMED
@@ -505,7 +645,7 @@ class AppointmentManagement:
             appointment_id, validated, acting_user_id, status_updated_at, appointment.status.value
         )
         if not proposed:
-            await self._raise_already_decided(appointment_id, "Эта заявка уже обработана", kind=kind)
+            await self._raise_already_decided(appointment_id, _BOOKING_ALREADY_DECIDED_MESSAGE, kind=kind)
 
         appointment.datetime = validated
         appointment.status = AppointmentStatus.PENDING
@@ -521,13 +661,13 @@ class AppointmentManagement:
         if appointment is None:
             raise AppointmentNotFoundError()
 
-        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+        self._ensure_not_finalized(appointment, _REQUEST_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_datetime is None:
-            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+            raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         if appointment.proposed_by != CreatedBy.ADMIN:
-            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+            raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id, appointment.client_id)
 
@@ -539,7 +679,7 @@ class AppointmentManagement:
             new_datetime=appointment.proposed_datetime,
         )
         if not accepted:
-            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+            raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
@@ -554,13 +694,13 @@ class AppointmentManagement:
         if appointment is None:
             raise AppointmentNotFoundError()
 
-        self._ensure_not_finalized(appointment, "Эта заявка больше недоступна.")
+        self._ensure_not_finalized(appointment, _REQUEST_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_datetime is None:
-            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+            raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         if appointment.proposed_by != CreatedBy.ADMIN:
-            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+            raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         status_updated_at = get_current_tashkent_time()
         rejected = await self.appointment_repository.try_resolve_admin_proposal(
@@ -569,7 +709,7 @@ class AppointmentManagement:
             status_updated_at=status_updated_at,
         )
         if not rejected:
-            raise NoPendingProposalError("По этой записи нет предложенного времени, ожидающего ответа.")
+            raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         appointment.status = AppointmentStatus.CANCELLED
         appointment.proposed_datetime = None
@@ -585,7 +725,7 @@ class AppointmentManagement:
         if appointment is None:
             raise AppointmentNotFoundError()
 
-        self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
+        self._ensure_not_finalized(appointment, _RECORD_NO_LONGER_AVAILABLE_MESSAGE)
 
         is_own_pending_self_booking = (
             appointment.status == AppointmentStatus.PENDING
@@ -597,15 +737,10 @@ class AppointmentManagement:
         )
 
         if not is_own_pending_self_booking and not can_negotiate:
-            raise AwaitingClinicDecisionError(
-                "Перенос доступен только для подтверждённых записей, ещё не решённых "
-                "клиникой записей или собственных заявок на самозапись, ожидающих решения клиники."
-            )
+            raise AwaitingClinicDecisionError(_RESCHEDULE_NOT_AVAILABLE_MESSAGE)
 
         if appointment.proposed_datetime is not None:
-            raise NegotiationInProgressError(
-                "По этой записи уже есть предложение, ожидающее ответа."
-            )
+            raise NegotiationInProgressError(_PROPOSAL_ALREADY_PENDING_MESSAGE)
 
         validated = validate_datetime(new_datetime)
         self._validate_min_lead_time(validated)
@@ -629,10 +764,10 @@ class AppointmentManagement:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
         if appointment is None:
             raise AppointmentNotFoundError()
-        self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
+        self._ensure_not_finalized(appointment, _RECORD_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_by != CreatedBy.CLIENT:
-            raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
+            raise NoPendingProposalError(_NO_CLIENT_PROPOSAL_MESSAGE)
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.proposed_datetime, appointment_id, appointment.client_id)
 
@@ -646,7 +781,7 @@ class AppointmentManagement:
             new_datetime=appointment.proposed_datetime,
         )
         if not accepted:
-            await self._raise_already_decided(appointment_id, "Заявка на перенос уже обработана", kind="reschedule")
+            await self._raise_already_decided(appointment_id, _RESCHEDULE_ALREADY_DECIDED_MESSAGE, kind="reschedule")
 
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
@@ -661,10 +796,10 @@ class AppointmentManagement:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
         if appointment is None:
             raise AppointmentNotFoundError()
-        self._ensure_not_finalized(appointment, "Эта запись больше недоступна.")
+        self._ensure_not_finalized(appointment, _RECORD_NO_LONGER_AVAILABLE_MESSAGE)
 
         if appointment.proposed_by != CreatedBy.CLIENT:
-            raise NoPendingProposalError("Нет предложения от клиента, ожидающего решения.")
+            raise NoPendingProposalError(_NO_CLIENT_PROPOSAL_MESSAGE)
 
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
         status_updated_at = get_current_tashkent_time()
@@ -675,7 +810,7 @@ class AppointmentManagement:
             status_updated_at=status_updated_at,
         )
         if not rejected:
-            await self._raise_already_decided(appointment_id, "Заявка на перенос уже обработана", kind="reschedule")
+            await self._raise_already_decided(appointment_id, _RESCHEDULE_ALREADY_DECIDED_MESSAGE, kind="reschedule")
 
         appointment.status = AppointmentStatus.CANCELLED
         appointment.proposed_datetime = None
@@ -725,7 +860,7 @@ class AppointmentManagement:
             appointment.id, acting_user_id, status_updated_at
         )
         if not completed:
-            await self._raise_already_decided(appointment.id, "Запись уже обработана", kind="completion")
+            await self._raise_already_decided(appointment.id, _COMPLETION_ALREADY_DECIDED_MESSAGE, kind="completion")
 
         appointment.status = AppointmentStatus.COMPLETED
         appointment.status_updated_at = status_updated_at
@@ -816,9 +951,7 @@ class AppointmentManagement:
 
         client = await self.user_repository.get_client_by_phone(phone)
         if client is None:
-            raise UserNotFoundError(
-                "Клиент с таким номером не найден. Сначала создайте клиента."
-            )
+            raise UserNotFoundError(_CLIENT_NOT_FOUND_BY_PHONE_MESSAGE)
 
         return client
 
@@ -844,22 +977,28 @@ class AppointmentManagement:
     async def _resolve_acting_user_id(self, staff_telegram_id: int) -> int:
         acting_user = await self.user_repository.get_user_by_telegram_id(staff_telegram_id)
         if acting_user is None:
-            raise UserNotFoundError("Сотрудник не найден.")
+            raise UserNotFoundError(_STAFF_NOT_FOUND_MESSAGE)
 
         return acting_user.ID
 
-    async def _raise_already_decided(self, appointment_id: int, action_message: str, kind: str) -> None:
+    async def _raise_already_decided(
+        self, appointment_id: int, action_message: dict[str, str], kind: str
+    ) -> None:
         current = await self.appointment_repository.get_appointment_by_id(appointment_id)
         decided_by_user_id = current.decided_by_user_id if current is not None else None
         label = await self.resolve_decision_label(decided_by_user_id)
-        outcome_text = self.resolve_decision_outcome_text(current, kind) if current is not None else "решение принято"
+        outcome_text = self.resolve_decision_outcome_text(current, kind) if current is not None else _DEFAULT_OUTCOME_TEXT
+        message = {
+            "ru": f"{action_message['ru']}: {label['ru']}.",
+            "uz": f"{action_message['uz']}: {label['uz']}.",
+        }
         raise AppointmentAlreadyDecidedError(
-            f"{action_message}: {label}.",
+            message,
             decided_by_label=label,
             outcome_text=outcome_text,
         )
 
-    def _ensure_not_finalized(self, appointment: Appointment, message: str) -> None:
+    def _ensure_not_finalized(self, appointment: Appointment, message: str | dict[str, str]) -> None:
         if appointment.status in (
             AppointmentStatus.CANCELLED,
             AppointmentStatus.COMPLETED,
@@ -879,10 +1018,7 @@ class AppointmentManagement:
         now = get_current_tashkent_datetime()
 
         if target_dt - now < MIN_LEAD_TIME:
-            raise BookingTooSoonError(
-                "Время записи должно быть не менее чем через 2 часа от текущего момента, "
-                "свяжитесь с клиникой."
-            )
+            raise BookingTooSoonError(_BOOKING_TOO_SOON_MESSAGE)
 
     async def _count_pending_self_bookings(self, client_telegram_id: int) -> int:
         appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)

@@ -316,7 +316,7 @@ def create_client_appointment_router(
                 except AppointmentNotFoundError:
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
                 except BotException as e:
-                    await callback_query.answer(str(e), show_alert=True)
+                    await callback_query.answer(e.localized(lang), show_alert=True)
                 return
 
             if callback_data.action == "cancel_no":
@@ -368,7 +368,7 @@ def create_client_appointment_router(
                 except AppointmentNotFoundError:
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
                 except BotException as e:
-                    await callback_query.answer(str(e), show_alert=True)
+                    await callback_query.answer(e.localized(lang), show_alert=True)
                 return
 
             if callback_data.action == "reject_proposal":
@@ -416,7 +416,7 @@ def create_client_appointment_router(
                 except AppointmentNotFoundError:
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
                 except BotException as e:
-                    await callback_query.answer(str(e), show_alert=True)
+                    await callback_query.answer(e.localized(lang), show_alert=True)
                 return
 
         @router.callback_query(ClientHistoryActionCB.filter())
@@ -478,7 +478,7 @@ def create_client_appointment_router(
                 except AppointmentNotFoundError:
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
                 except BotException as e:
-                    await callback_query.answer(str(e), show_alert=True)
+                    await callback_query.answer(e.localized(lang), show_alert=True)
                 return
 
             if callback_data.action == "cancel_no":
@@ -546,7 +546,7 @@ def create_client_appointment_router(
             except AppointmentNotFoundError:
                 await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(lang), show_alert=True)
 
         @router.callback_query(F.data.startswith("appt_details:"))
         async def handle_appointment_details(callback_query: CallbackQuery, current_user: User):
@@ -591,7 +591,7 @@ def create_client_appointment_router(
             except ValueError:
                 await callback_query.answer(_INVALID_APPOINTMENT.get(lang, _INVALID_APPOINTMENT["ru"]), show_alert=True)
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(lang), show_alert=True)
 
         # Handler for cancellation confirmation YES
         @router.callback_query(AppointmentResponseStates.confirm_cancel, F.data == "appt_cancel_confirm_yes")
@@ -638,7 +638,7 @@ def create_client_appointment_router(
             except AppointmentNotFoundError:
                 await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(lang), show_alert=True)
             finally:
                 await state.clear()
 
@@ -657,7 +657,7 @@ def create_client_appointment_router(
                 )
                 await callback_query.answer()
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(lang), show_alert=True)
             finally:
                 await state.clear()
 
@@ -685,7 +685,7 @@ def create_client_appointment_router(
                 await callback_query.answer(_EDIT_ERROR.get(lang, _EDIT_ERROR["ru"]), show_alert=False)
         except PaginationError as e:
             logger.warning(f"Pagination error in render_history_list: {e}")
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
         except Exception as e:
             logger.exception(f"Unexpected error in render_history_list: {e}")
             await callback_query.answer(_UNEXPECTED_ERROR.get(lang, _UNEXPECTED_ERROR["ru"]), show_alert=True)
@@ -744,7 +744,7 @@ def create_client_appointment_router(
                 await callback_query.answer(_EDIT_ERROR.get(lang, _EDIT_ERROR["ru"]), show_alert=False)
         except PaginationError as e:
             logger.warning(f"Pagination error in render_manage_list: {e}")
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
         except Exception as e:
             logger.exception(f"Unexpected error in render_manage_list: {e}")
             await callback_query.answer(_UNEXPECTED_ERROR.get(lang, _UNEXPECTED_ERROR["ru"]), show_alert=True)

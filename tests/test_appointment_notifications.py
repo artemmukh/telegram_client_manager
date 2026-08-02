@@ -1252,7 +1252,11 @@ async def test_invalidate_stale_decision_message_edits_message():
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
-    await service.invalidate_stale_decision_message(12345, 777, "Доктор Петров", "подтверждена")
+    await service.invalidate_stale_decision_message(
+        12345, 777,
+        {"ru": "Доктор Петров", "uz": "Shifokor Петров"},
+        {"ru": "подтверждена", "uz": "tasdiqlandi"},
+    )
 
     assert len(notifier.edited_messages) == 1
     edited = notifier.edited_messages[0]
@@ -1273,7 +1277,11 @@ async def test_invalidate_stale_decision_message_swallows_telegram_bad_request()
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
-    await service.invalidate_stale_decision_message(12345, 777, "Доктор Петров", "подтверждена")
+    await service.invalidate_stale_decision_message(
+        12345, 777,
+        {"ru": "Доктор Петров", "uz": "Shifokor Петров"},
+        {"ru": "подтверждена", "uz": "tasdiqlandi"},
+    )
 
     assert len(notifier.edited_messages) == 0
 

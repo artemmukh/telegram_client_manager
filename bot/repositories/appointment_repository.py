@@ -9,7 +9,10 @@ from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
 logger = logging.getLogger(__name__)
 
-SLOT_UNAVAILABLE_MESSAGE = "Это время уже занято другой подтверждённой записью, выберите другое."
+SLOT_UNAVAILABLE_MESSAGE = {
+    "ru": "Это время уже занято другой подтверждённой записью, выберите другое.",
+    "uz": "Bu vaqt boshqa tasdiqlangan yozuv tomonidan band qilingan, boshqasini tanlang.",
+}
 
 APPOINTMENT_SELECT = """
 SELECT

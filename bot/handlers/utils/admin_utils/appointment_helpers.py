@@ -290,11 +290,11 @@ async def datetime_processing(message: Message, state: FSMContext, next_state: S
     return True
 
 
-async def purpose_processing(message: Message, state: FSMContext, next_state: State) -> bool:
+async def purpose_processing(message: Message, state: FSMContext, next_state: State, lang: str = "ru") -> bool:
     try:
         value = validate_purpose(message.text.strip())
     except ValidationError as e:
-        await message.answer(str(e))
+        await message.answer(e.localized(lang))
         return False
 
     await state.update_data(purpose=value)
@@ -302,11 +302,11 @@ async def purpose_processing(message: Message, state: FSMContext, next_state: St
     return True
 
 
-async def price_processing(message: Message, state: FSMContext, next_state: State) -> bool:
+async def price_processing(message: Message, state: FSMContext, next_state: State, lang: str = "ru") -> bool:
     try:
         value = validate_price(message.text.strip())
     except ValidationError as e:
-        await message.answer(str(e))
+        await message.answer(e.localized(lang))
         return False
 
     await state.update_data(price=value)
@@ -551,7 +551,7 @@ async def begin_appointment_creation(
     try:
         clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
     except BotException as e:
-        await callback_query.answer(str(e), show_alert=True)
+        await callback_query.answer(e.localized(lang), show_alert=True)
         return
 
     await state.update_data(clinic_name=clinic.name)

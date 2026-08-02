@@ -54,7 +54,7 @@ def create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic
             try:
                 clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(lang), show_alert=True)
                 return
             found = await render_client_card(
                 cl_mng, callback_query, state, origin_client_id, origin_mode, origin_page, clinic.clinic_id, lang,

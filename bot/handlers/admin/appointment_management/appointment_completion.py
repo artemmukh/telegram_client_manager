@@ -66,7 +66,7 @@ def create_admin_completion_router(
                 try:
                     await invalidate_actor_stale_message(
                         notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id, lang=lang,
+                        callback_query.message.chat.id, callback_query.message.message_id,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -75,7 +75,7 @@ def create_admin_completion_router(
                     )
             return
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         if appointment_scheduler:
@@ -125,7 +125,7 @@ def create_admin_completion_router(
                 try:
                     await invalidate_actor_stale_message(
                         notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id, lang=lang,
+                        callback_query.message.chat.id, callback_query.message.message_id,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -134,7 +134,7 @@ def create_admin_completion_router(
                     )
             return
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         if appointment_scheduler:

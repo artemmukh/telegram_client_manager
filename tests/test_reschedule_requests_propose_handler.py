@@ -298,10 +298,12 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
     state.clear.assert_awaited_once()
 
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777, "Другой сотрудник", "перенос отклонён"
+        555, 777,
+        {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
+        {"ru": "перенос отклонён", "uz": "ko'chirish rad etildi"},
     )
     outcome_text = notification_service.invalidate_stale_decision_message.call_args.args[3]
-    assert outcome_text != "отклонена"
+    assert outcome_text["ru"] != "отклонена"
 
 
 @pytest.mark.asyncio

@@ -204,7 +204,9 @@ async def test_open_edit_invalidates_sibling_notifications_on_success():
     await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777, "Доктор Петров Петр", "приём завершён",
+        555, 777,
+        {"ru": "Доктор Петров Петр", "uz": "Shifokor Петров Петр"},
+        {"ru": "приём завершён", "uz": "qabul yakunlandi"},
     )
 
 
@@ -229,7 +231,9 @@ async def test_open_edit_shows_alert_and_does_not_render_card_when_already_decid
     callback_query.message.edit_text.assert_not_called()
     assert appointment_repo.status_updates == []
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        111, 222, "Другой сотрудник", "приём завершён",
+        111, 222,
+        {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
+        {"ru": "приём завершён", "uz": "qabul yakunlandi"},
     )
 
 
@@ -320,5 +324,7 @@ async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided(
     callback_query.message.edit_text.assert_not_called()
     assert appointment_repo.status_updates == []
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        111, 222, "Другой сотрудник", "приём завершён",
+        111, 222,
+        {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
+        {"ru": "приём завершён", "uz": "qabul yakunlandi"},
     )

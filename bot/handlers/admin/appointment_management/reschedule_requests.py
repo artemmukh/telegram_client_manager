@@ -135,14 +135,14 @@ def create_admin_reschedule_requests_router(
             )
 
     async def invalidate_own_stale_reschedule_message(
-        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError, lang: str = "ru",
+        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError,
     ) -> None:
         if not notification_service:
             return
         try:
             await invalidate_actor_stale_message(
                 notification_service, error,
-                callback_query.message.chat.id, callback_query.message.message_id, lang=lang,
+                callback_query.message.chat.id, callback_query.message.message_id,
             )
         except Exception as e:
             logger.warning(
@@ -169,11 +169,11 @@ def create_admin_reschedule_requests_router(
             await callback_query.answer(_REQUEST_NOT_FOUND.get(lang, _REQUEST_NOT_FOUND["ru"]), show_alert=True)
             return
         except AppointmentAlreadyDecidedError as e:
-            await callback_query.answer(str(e), show_alert=True)
-            await invalidate_own_stale_reschedule_message(callback_query, e, lang)
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await invalidate_own_stale_reschedule_message(callback_query, e)
             return
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         if appointment_scheduler:
@@ -212,11 +212,11 @@ def create_admin_reschedule_requests_router(
             await callback_query.answer(_REQUEST_NOT_FOUND.get(lang, _REQUEST_NOT_FOUND["ru"]), show_alert=True)
             return
         except AppointmentAlreadyDecidedError as e:
-            await callback_query.answer(str(e), show_alert=True)
-            await invalidate_own_stale_reschedule_message(callback_query, e, lang)
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await invalidate_own_stale_reschedule_message(callback_query, e)
             return
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         if appointment_scheduler:
@@ -436,15 +436,15 @@ def create_admin_reschedule_requests_router(
             await callback_query.answer(_REQUEST_NOT_FOUND.get(lang, _REQUEST_NOT_FOUND["ru"]), show_alert=True)
             return
         except AppointmentAlreadyDecidedError as e:
-            await callback_query.answer(str(e), show_alert=True)
-            await invalidate_own_stale_reschedule_message(callback_query, e, lang)
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await invalidate_own_stale_reschedule_message(callback_query, e)
             await state.clear()
             return
         except ValidationError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
-            await callback_query.answer(_GENERIC_ERROR.get(lang, _GENERIC_ERROR["ru"]).format(error=e), show_alert=True)
+            await callback_query.answer(_GENERIC_ERROR.get(lang, _GENERIC_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True)
             return
 
         if appointment_scheduler:

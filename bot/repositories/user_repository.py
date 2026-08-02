@@ -10,6 +10,11 @@ from bot.exceptions.user_exceptions import (
 from bot.models.user import User
 from bot.utils.role import Role
 
+_CLIENT_UPDATE_FAILED_MESSAGE = {
+    "ru": "Не удалось обновить данные клиента.",
+    "uz": "Mijoz ma'lumotlarini yangilab bo'lmadi.",
+}
+
 USER_SELECT = """
 SELECT
     u.id,
@@ -305,7 +310,7 @@ class UserRepository:
         except aiosqlite.IntegrityError as error:
             if self._is_phone_unique_violation(error):
                 raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE) from error
-            raise ValidationError("Не удалось обновить данные клиента.") from error
+            raise ValidationError(_CLIENT_UPDATE_FAILED_MESSAGE) from error
 
         return await self.get_client_by_id(user_id)
 
@@ -366,7 +371,7 @@ class UserRepository:
         except aiosqlite.IntegrityError as error:
             if self._is_telegram_id_unique_violation(error):
                 raise UserAlreadyExistsError() from error
-            raise ValidationError("Не удалось обновить данные клиента.") from error
+            raise ValidationError(_CLIENT_UPDATE_FAILED_MESSAGE) from error
 
     @staticmethod
     def _is_telegram_id_unique_violation(error: aiosqlite.IntegrityError) -> bool:

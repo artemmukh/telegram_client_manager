@@ -17,9 +17,9 @@ class AppointmentAlreadyDecidedError(ValidationError):
 
     def __init__(
         self,
-        message: str,
-        decided_by_label: str | None = None,
-        outcome_text: str | None = None,
+        message: str | dict[str, str],
+        decided_by_label: dict[str, str] | None = None,
+        outcome_text: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.decided_by_label = decided_by_label

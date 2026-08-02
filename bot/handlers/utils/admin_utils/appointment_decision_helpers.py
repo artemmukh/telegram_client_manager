@@ -19,8 +19,8 @@ async def invalidate_sibling_notifications(
     appointment_id: int,
     kind: str,
     actor_chat_id: int,
-    decided_by_label: str,
-    outcome_text: str,
+    decided_by_label: dict[str, str],
+    outcome_text: dict[str, str],
 ) -> None:
     """Стереть клавиатуры у уведомлений остальных получателей той же заявки.
 
@@ -43,7 +43,6 @@ async def invalidate_actor_stale_message(
     error: AppointmentAlreadyDecidedError,
     chat_id: int,
     message_id: int,
-    lang: str = "ru",
 ) -> None:
     """Стереть клавиатуру у собственного сообщения действующего сотрудника.
 
@@ -52,8 +51,8 @@ async def invalidate_actor_stale_message(
     берутся из самого исключения (уже вычислены сервисом при попытке действия),
     чтобы не повторять запрос к БД.
     """
-    decided_by_label = error.decided_by_label or DEFAULT_DECIDED_BY_LABEL.get(lang, DEFAULT_DECIDED_BY_LABEL["ru"])
-    outcome_text = error.outcome_text or DEFAULT_OUTCOME_TEXT.get(lang, DEFAULT_OUTCOME_TEXT["ru"])
+    decided_by_label = error.decided_by_label or DEFAULT_DECIDED_BY_LABEL
+    outcome_text = error.outcome_text or DEFAULT_OUTCOME_TEXT
 
     await notification_service.invalidate_stale_decision_message(
         chat_id, message_id, decided_by_label, outcome_text,

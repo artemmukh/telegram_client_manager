@@ -51,7 +51,7 @@ def create_client_booking_router(
             await appointment_management_service.ensure_pending_limit_not_exceeded(callback_query.from_user.id)
             staff_list = await appointment_management_service.list_bookable_staff(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         if not staff_list:
@@ -191,7 +191,7 @@ def create_client_booking_router(
         try:
             complaint = validate_purpose(message.text)
         except BotException as e:
-            await message.answer(str(e))
+            await message.answer(e.localized(current_user.language))
             return
 
         await state.update_data(complaint=complaint)
@@ -225,7 +225,7 @@ def create_client_booking_router(
                 },
             )
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(current_user.language), show_alert=True)
             return
 
         await state.clear()

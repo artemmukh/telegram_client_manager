@@ -73,7 +73,8 @@ def create_personal_data_router(client_management_service: ClientManagement) -> 
             await callback_query.answer()
             try:
                 await callback_query.message.edit_text(
-                    f"{e}\n\n{BIRTH_DATE_PROMPT}", reply_markup=_BACK_TO_PERSONAL_DATA_KB
+                    f"{e.localized(current_user.language)}\n\n{BIRTH_DATE_PROMPT}",
+                    reply_markup=_BACK_TO_PERSONAL_DATA_KB,
                 )
             except TelegramBadRequest as edit_error:
                 if "message is not modified" not in str(edit_error):

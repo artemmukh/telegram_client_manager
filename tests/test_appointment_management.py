@@ -2898,7 +2898,7 @@ async def test_resolve_decision_label_falls_back_when_user_id_is_none():
 
     label = await service.resolve_decision_label(None)
 
-    assert label == "Другой сотрудник"
+    assert label == {"ru": "Другой сотрудник", "uz": "Boshqa xodim"}
 
 
 # --- Slot conflict detection ---
@@ -3886,7 +3886,7 @@ async def test_mm_slot_allows_three_confirmed_walk_ins_and_blocks_a_fourth(monke
                 {"phone": fourth_client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
             )
 
-        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE
+        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE["ru"]
     finally:
         await connection.close()
 
@@ -3923,11 +3923,11 @@ async def test_mm_slot_allows_exactly_three_active_bookings_for_every_status_com
 
         with pytest.raises(SlotUnavailableError) as confirmed_exc:
             await _real_book_confirmed(service, user_repo, doctor_telegram_id, slot)
-        assert str(confirmed_exc.value) == SLOT_UNAVAILABLE_MESSAGE
+        assert str(confirmed_exc.value) == SLOT_UNAVAILABLE_MESSAGE["ru"]
 
         with pytest.raises(SlotUnavailableError) as pending_exc:
             await _real_book_pending(service, user_repo, admin.ID, clinic_id, slot)
-        assert str(pending_exc.value) == SLOT_UNAVAILABLE_MESSAGE
+        assert str(pending_exc.value) == SLOT_UNAVAILABLE_MESSAGE["ru"]
     finally:
         await connection.close()
 
@@ -3977,7 +3977,7 @@ async def test_create_self_booking_raises_duplicate_message_when_same_client_reb
                 {"staff_user_id": admin.ID, "appointment_datetime": slot, "complaint": "Болит зуб"},
             )
 
-        assert str(exc_info.value) == DUPLICATE_CLIENT_SLOT_MESSAGE
+        assert str(exc_info.value) == DUPLICATE_CLIENT_SLOT_MESSAGE["ru"]
     finally:
         await connection.close()
 
@@ -4006,7 +4006,7 @@ async def test_create_appointment_raises_duplicate_message_when_admin_rebooks_sa
                 {"phone": client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
             )
 
-        assert str(exc_info.value) == DUPLICATE_CLIENT_SLOT_MESSAGE
+        assert str(exc_info.value) == DUPLICATE_CLIENT_SLOT_MESSAGE["ru"]
     finally:
         await connection.close()
 
@@ -4032,7 +4032,7 @@ async def test_zb_slot_blocks_second_confirmed_from_different_client():
                 {"phone": second_client.phone, "appointment_datetime": slot, "purpose": "Консультация"},
             )
 
-        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE
+        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE["ru"]
     finally:
         await connection.close()
 
@@ -4054,7 +4054,7 @@ async def test_zb_slot_blocks_second_pending_from_different_client():
         with pytest.raises(SlotUnavailableError) as exc_info:
             await _real_book_pending(service, user_repo, admin.ID, clinic_id, slot)
 
-        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE
+        assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE["ru"]
     finally:
         await connection.close()
 

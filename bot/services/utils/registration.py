@@ -14,6 +14,11 @@ from bot.services.utils.date_parser import get_current_tashkent_time
 from bot.services.utils.personal_data import validate_and_normalize_personal_data
 from bot.validators.validators import validate_full_name, validate_phone, SEARCH_NAME_PATTERN
 
+_CLIENT_NOT_FOUND_MESSAGE = {
+    "ru": "Клиент не найден.",
+    "uz": "Mijoz topilmadi.",
+}
+
 
 @dataclass
 class PhoneLookupResult:
@@ -78,7 +83,7 @@ class RegistrationService:
         user = await self.user_repository.get_client_by_id(existing_user_id)
 
         if user is None:
-            raise UserNotFoundError("Клиент не найден.")
+            raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
 
         user.full_name = new_full_name
         await self.user_repository.update_client(existing_user_id, user)
@@ -109,7 +114,7 @@ class RegistrationService:
             user = await self.user_repository.get_client_by_id(existing_user_id)
 
             if user is None:
-                raise UserNotFoundError("Клиент не найден.")
+                raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
 
             if user.full_name.strip().casefold() != full_name.casefold():
                 user = await self.apply_name_conflict_resolution(existing_user_id, full_name)

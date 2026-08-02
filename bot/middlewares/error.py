@@ -16,7 +16,9 @@ class ErrorMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         except ValidationError as e:
-            await event.answer(str(e))
+            current_user = data.get("current_user")
+            lang = current_user.language if current_user else "ru"
+            await event.answer(e.localized(lang))
 
         except BotException:
             logger.exception("Unexpected")

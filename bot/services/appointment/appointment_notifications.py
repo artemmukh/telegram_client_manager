@@ -874,9 +874,13 @@ class AppointmentNotificationService:
         await self.notifier.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
     async def invalidate_stale_decision_message(
-        self, chat_id: int, message_id: int, decided_by_label: str, outcome_text: str
+        self, chat_id: int, message_id: int, decided_by_label: dict[str, str], outcome_text: dict[str, str]
     ) -> None:
         """Edit a stale staff notification once another recipient has already decided.
+
+        decided_by_label/outcome_text are resolved to this recipient's own language
+        (independent of the acting user's language), since siblings receiving this
+        invalidation may use a different language than the staff member who decided.
 
         Strips the inline keyboard and replaces the text so the message no longer
         looks actionable. Never raises — a failed edit (message deleted, bot blocked,
@@ -884,10 +888,12 @@ class AppointmentNotificationService:
         of invalidation calls across multiple recipients.
         """
         lang = await self._resolve_lang(chat_id)
+        label = decided_by_label.get(lang, decided_by_label.get("ru", ""))
+        outcome = outcome_text.get(lang, outcome_text.get("ru", ""))
         if not await self.notifier.try_edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=stale_decision_text(decided_by_label, outcome_text, lang),
+            text=stale_decision_text(label, outcome, lang),
             reply_markup=None,
         ):
             logger.warning(

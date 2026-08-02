@@ -42,7 +42,7 @@ ADMIN_TELEGRAM_ID = 999
 ADMIN_ID = 1
 WINNER_ID = 55
 WINNER_TELEGRAM_ID = 2000
-DECIDED_LABEL = "Администратор Ivanova Irina"
+DECIDED_LABEL = {"ru": "Администратор Ivanova Irina", "uz": "Administrator Ivanova Irina"}
 
 
 class FakeUserRepo:
@@ -145,7 +145,7 @@ async def test_confirm_request_shows_alert_and_invalidates_own_message_on_lost_r
     assert "Ivanova Irina" in args[0]
     assert kwargs == {"show_alert": True}
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777, DECIDED_LABEL, "подтверждена"
+        555, 777, DECIDED_LABEL, {"ru": "подтверждена", "uz": "tasdiqlandi"},
     )
 
 
@@ -202,7 +202,7 @@ async def test_accept_reschedule_shows_alert_and_invalidates_own_message_on_lost
     assert "Ivanova Irina" in args[0]
     assert kwargs == {"show_alert": True}
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777, DECIDED_LABEL, "перенос принят"
+        555, 777, DECIDED_LABEL, {"ru": "перенос принят", "uz": "ko'chirish qabul qilindi"},
     )
 
 
@@ -239,7 +239,7 @@ async def test_skip_edit_shows_alert_and_invalidates_own_message_on_lost_race():
         "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»", show_alert=True,
     )
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777, DECIDED_LABEL, "приём завершён"
+        555, 777, DECIDED_LABEL, {"ru": "приём завершён", "uz": "qabul yakunlandi"},
     )
 
 
@@ -305,6 +305,6 @@ async def test_approve_propose_datetime_shows_alert_and_invalidates_own_message_
     assert "Ivanova Irina" in args[0]
     assert kwargs == {"show_alert": True}
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777, DECIDED_LABEL, "предложено другое время"
+        555, 777, DECIDED_LABEL, {"ru": "предложено другое время", "uz": "boshqa vaqt taklif qilindi"},
     )
     state.clear.assert_awaited_once()

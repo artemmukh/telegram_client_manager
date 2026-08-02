@@ -136,7 +136,7 @@ def create_profile_router(client_management_service: ClientManagement = None):
                     current_user.ID, callback_data.value
                 )
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(current_user.language), show_alert=True)
                 return
 
             try:
@@ -187,7 +187,7 @@ def create_profile_router(client_management_service: ClientManagement = None):
                     current_user.ID, callback_data.preset
                 )
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(current_user.language), show_alert=True)
                 return
 
             try:
@@ -215,7 +215,7 @@ def create_profile_router(client_management_service: ClientManagement = None):
                     current_user.ID, callback_data.preset
                 )
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(current_user.language), show_alert=True)
                 return
 
             try:

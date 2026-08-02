@@ -194,6 +194,7 @@ def create_admin_client_browser_router(
             message, state,
             next_state=ClientBrowserStates.confirm_search,
             re_pattern=SEARCH_NAME_PATTERN,
+            lang=lang,
         ):
             return
         await show_confirmation(message, state, reply_markup=client_browser_confirm_name_kb(lang), lang=lang)
@@ -215,6 +216,7 @@ def create_admin_client_browser_router(
             message, state,
             next_state=ClientBrowserStates.confirm_search,
             re_pattern=SEARCH_NAME_PATTERN,
+            lang=lang,
         ):
             return
         await show_confirmation(message, state, reply_markup=client_browser_confirm_name_kb(lang), lang=lang)
@@ -234,7 +236,7 @@ def create_admin_client_browser_router(
     @router.message(ClientBrowserStates.search_phone, F.text)
     async def process_search_phone(message: Message, state: FSMContext, current_user: User):
         lang = current_user.language
-        if not await phone_processing(message, state, final_state=ClientBrowserStates.confirm_search):
+        if not await phone_processing(message, state, final_state=ClientBrowserStates.confirm_search, lang=lang):
             return
         await show_confirmation(message, state, reply_markup=client_browser_confirm_phone_kb(lang), lang=lang)
 
@@ -251,7 +253,7 @@ def create_admin_client_browser_router(
     @router.message(ClientBrowserStates.edit_search_phone, F.text)
     async def process_edit_search_phone(message: Message, state: FSMContext, current_user: User):
         lang = current_user.language
-        if not await phone_processing(message, state, final_state=ClientBrowserStates.confirm_search):
+        if not await phone_processing(message, state, final_state=ClientBrowserStates.confirm_search, lang=lang):
             return
         await show_confirmation(message, state, reply_markup=client_browser_confirm_phone_kb(lang), lang=lang)
 
@@ -263,7 +265,7 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(current_user.language), show_alert=True)
             return
         await render_list(callback_query, state, mode="list", page=1, clinic_id=clinic.clinic_id, lang=current_user.language)
 
@@ -277,16 +279,16 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         try:
             found = await cl_mng.search_client(data, clinic.clinic_id)
         except (InvalidPhoneError, InvalidFullNameError, UserNotFoundError) as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
-            await callback_query.answer(_SEARCH_ERROR.get(lang, _SEARCH_ERROR["ru"]).format(error=e), show_alert=True)
+            await callback_query.answer(_SEARCH_ERROR.get(lang, _SEARCH_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True)
             return
 
         if data.get("phone"):
@@ -309,7 +311,7 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(current_user.language), show_alert=True)
             return
         await render_list(
             callback_query, state, mode=callback_data.mode, page=callback_data.page, clinic_id=clinic.clinic_id,
@@ -335,7 +337,7 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         client = await cl_mng.get_client_by_id(callback_data.client_id, clinic.clinic_id)
@@ -395,7 +397,7 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         user = await cl_mng.get_client_by_id(callback_data.client_id, clinic.clinic_id)
@@ -441,13 +443,13 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         try:
             fully_deleted = await cl_mng.delete_client(callback_data.client_id, clinic.clinic_id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         result_text = (
@@ -488,6 +490,7 @@ def create_admin_client_browser_router(
             message, state,
             next_state=ClientBrowserStates.confirm_new_full_name,
             re_pattern=SEARCH_NAME_PATTERN,
+            lang=lang,
         ):
             return
 
@@ -523,16 +526,16 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         try:
             await cl_mng.update_client_name(callback_data.client_id, data["full_name"], clinic.clinic_id)
         except (InvalidFullNameError, UserNotFoundError) as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
-            await callback_query.answer(_UPDATE_ERROR.get(lang, _UPDATE_ERROR["ru"]).format(error=e), show_alert=True)
+            await callback_query.answer(_UPDATE_ERROR.get(lang, _UPDATE_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True)
             return
 
         await render_card(
@@ -552,7 +555,7 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(message.from_user.id)
         except BotException as e:
-            await message.answer(str(e))
+            await message.answer(e.localized(lang))
             return
 
         async def validate_update_phone(phone: str):
@@ -568,6 +571,7 @@ def create_admin_client_browser_router(
             message, state,
             validator=validate_update_phone,
             final_state=ClientBrowserStates.confirm_new_phone,
+            lang=lang,
         ):
             return
 
@@ -603,16 +607,16 @@ def create_admin_client_browser_router(
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         try:
             await cl_mng.update_client_phone(callback_data.client_id, data["phone"], clinic.clinic_id)
         except ValidationError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
-            await callback_query.answer(_UPDATE_ERROR.get(lang, _UPDATE_ERROR["ru"]).format(error=e), show_alert=True)
+            await callback_query.answer(_UPDATE_ERROR.get(lang, _UPDATE_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True)
             return
 
         await render_card(
@@ -661,7 +665,7 @@ def create_admin_client_browser_router(
                 await callback_query.answer(_EDIT_MESSAGE_ERROR.get(lang, _EDIT_MESSAGE_ERROR["ru"]), show_alert=False)
         except PaginationError as e:
             logger.warning(f"Pagination error in render_list: {e}")
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
         except Exception as e:
             logger.exception(f"Unexpected error in render_list: {e}")
             await callback_query.answer(_UNEXPECTED_ERROR.get(lang, _UNEXPECTED_ERROR["ru"]), show_alert=True)
@@ -674,7 +678,7 @@ def create_admin_client_browser_router(
             try:
                 clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
             except BotException as e:
-                await callback_query.answer(str(e), show_alert=True)
+                await callback_query.answer(e.localized(lang), show_alert=True)
                 return
             clinic_id = clinic.clinic_id
         await render_client_card(cl_mng, callback_query, state, client_id, mode, page, clinic_id, lang)

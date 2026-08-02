@@ -20,6 +20,36 @@ from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import validate_full_name, validate_phone, FULL_NAME_PATTERN, SEARCH_NAME_PATTERN
 
+_CLIENT_NOT_FOUND_MESSAGE = {
+    "ru": "Клиент не найден.",
+    "uz": "Mijoz topilmadi.",
+}
+
+_CLIENT_NOT_FOUND_SEARCH_MESSAGE = {
+    "ru": "Клиент не был найден.",
+    "uz": "Mijoz topilmadi.",
+}
+
+_SAME_PHONE_MESSAGE = {
+    "ru": "Введён такой же номер телефона",
+    "uz": "Xuddi shu telefon raqami kiritildi",
+}
+
+_USER_NOT_FOUND_MESSAGE = {
+    "ru": "Пользователь не найден.",
+    "uz": "Foydalanuvchi topilmadi.",
+}
+
+_CLIENT_DELETE_ERROR_MESSAGE = {
+    "ru": "Ошибка удаления клиента",
+    "uz": "Mijozni o'chirishda xatolik",
+}
+
+_APPOINTMENT_COUNT_UNAVAILABLE_MESSAGE = {
+    "ru": "Проверка количества записей недоступна",
+    "uz": "Yozuvlar sonini tekshirish mavjud emas",
+}
+
 
 class ClientManagement:
     def __init__(
@@ -87,9 +117,9 @@ class ClientManagement:
     async def _ensure_client_in_clinic(self, user_id: int, clinic_id: int) -> User:
         client = await self.user_repository.get_client_by_id(user_id)
         if client is None or self.client_clinic_repository is None:
-            raise UserNotFoundError("Клиент не найден.")
+            raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
         if not await self.client_clinic_repository.client_linked_to_clinic(user_id, clinic_id):
-            raise UserNotFoundError("Клиент не найден.")
+            raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
         return client
 
     async def is_phone_taken(self, phone: str) -> bool:
@@ -105,7 +135,7 @@ class ClientManagement:
             user = await self.user_repository.get_client_by_phone_in_clinic(phone, clinic_id)
 
             if user is None:
-                raise UserNotFoundError("Клиент не был найден.")
+                raise UserNotFoundError(_CLIENT_NOT_FOUND_SEARCH_MESSAGE)
 
             return [user]
 
@@ -115,11 +145,11 @@ class ClientManagement:
             users = await self.user_repository.get_clients_by_name_in_clinic(full_name, clinic_id)
 
             if not users:
-                raise UserNotFoundError("Клиент не был найден.")
+                raise UserNotFoundError(_CLIENT_NOT_FOUND_SEARCH_MESSAGE)
 
             return users
 
-        raise UserNotFoundError("Клиент не был найден.")
+        raise UserNotFoundError(_CLIENT_NOT_FOUND_SEARCH_MESSAGE)
 
     async def find_clients_by_exact_name(self, full_name: str, clinic_id: int) -> list[User]:
         full_name = full_name.strip()
@@ -129,7 +159,7 @@ class ClientManagement:
         """Returns True if the client was fully deleted, False if only unlinked from this clinic."""
 
         if not user_id:
-            raise BotException("Ошибка удаления клиента")
+            raise BotException(_CLIENT_DELETE_ERROR_MESSAGE)
 
         await self._ensure_client_in_clinic(user_id, clinic_id)
 
@@ -144,12 +174,12 @@ class ClientManagement:
 
     async def count_client_appointments(self, user_id: int, clinic_id: int) -> int:
         if self.appointment_repository is None:
-            raise BotException("Проверка количества записей недоступна")
+            raise BotException(_APPOINTMENT_COUNT_UNAVAILABLE_MESSAGE)
         return await self.appointment_repository.count_appointments_by_client_id(user_id, clinic_id)
 
     async def is_last_linked_clinic(self, user_id: int, clinic_id: int) -> bool:
         if self.client_clinic_repository is None:
-            raise UserNotFoundError("Клиент не найден.")
+            raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
         clinic_ids = await self.client_clinic_repository.get_client_clinic_ids(user_id)
         return clinic_id in clinic_ids and len(clinic_ids) <= 1
 
@@ -174,7 +204,7 @@ class ClientManagement:
         user = await self._ensure_client_in_clinic(user_id, clinic_id)
 
         if new_phone == user.phone:
-            raise ValidationError("Введён такой же номер телефона")
+            raise ValidationError(_SAME_PHONE_MESSAGE)
 
         if await self.user_repository.phone_exists(new_phone):
             raise PhoneAlreadyExistsError(PHONE_ALREADY_EXISTS_MESSAGE)
@@ -195,7 +225,7 @@ class ClientManagement:
         user = await self.user_repository.get_user_by_id(user_id)
 
         if user is None:
-            raise UserNotFoundError("Пользователь не найден.")
+            raise UserNotFoundError(_USER_NOT_FOUND_MESSAGE)
 
         return user
 
@@ -220,7 +250,7 @@ class ClientManagement:
 
         user = await self.user_repository.get_user_by_id(user_id)
         if user is None:
-            raise UserNotFoundError("Пользователь не найден.")
+            raise UserNotFoundError(_USER_NOT_FOUND_MESSAGE)
 
         await self.user_settings_repository.upsert(user_id, reminder_24h, reminder_2h)
         user.reminder_24h = reminder_24h
@@ -233,7 +263,7 @@ class ClientManagement:
 
         user = await self.user_repository.get_user_by_id(user_id)
         if user is None:
-            raise UserNotFoundError("Пользователь не найден.")
+            raise UserNotFoundError(_USER_NOT_FOUND_MESSAGE)
 
         await self.user_settings_repository.set_language(user_id, language)
         user.language = language
@@ -244,7 +274,7 @@ class ClientManagement:
 
         user = await self.user_repository.get_user_by_id(user_id)
         if user is None:
-            raise UserNotFoundError("Пользователь не найден.")
+            raise UserNotFoundError(_USER_NOT_FOUND_MESSAGE)
 
         await self.user_repository.update_personal_data(user_id, gender=gender, birth_date=birth_date)
         user.gender = gender

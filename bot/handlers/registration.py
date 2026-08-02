@@ -139,13 +139,13 @@ def create_reg_router(
 
     @router.message(RegisterStates.full_name, F.text)
     async def get_full_name(message: Message, state: FSMContext):
+        lang = (await state.get_data()).get("language", "ru")
 
         if not await full_name_processing(
-                message, state, next_state=RegisterStates.birth_date, re_pattern=FULL_NAME_PATTERN):
+                message, state, next_state=RegisterStates.birth_date, re_pattern=FULL_NAME_PATTERN, lang=lang):
             return
 
         data = await state.get_data()
-        lang = data.get("language", "ru")
         existing_user_id = data.get("existing_user_id")
 
         if existing_user_id is not None:
@@ -177,10 +177,9 @@ def create_reg_router(
 
     @router.message(RegisterStates.birth_date, F.text)
     async def get_birth_date(message: Message, state: FSMContext):
-        if not await birth_date_processing(message, state, next_state=RegisterStates.gender):
+        lang = (await state.get_data()).get("language", "ru")
+        if not await birth_date_processing(message, state, next_state=RegisterStates.gender, lang=lang):
             return
-        data = await state.get_data()
-        lang = data.get("language", "ru")
         await message.answer(msg.gender_prompt(lang), reply_markup=gender_kb())
 
     @router.callback_query(RegisterStates.gender, GenderCB.filter())
@@ -204,12 +203,10 @@ def create_reg_router(
     @router.message(
         RegisterStates.edit_full_name, F.text)
     async def process_full_name_edition(message: Message, state: FSMContext):
+        lang = (await state.get_data()).get("language", "ru")
         if not await full_name_processing(
-
-                message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN):
+                message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN, lang=lang):
             return
-        data = await state.get_data()
-        lang = data.get("language", "ru")
         await show_confirmation(message, state, reg_confirm_kb(), lang=lang)
 
     @router.callback_query(RegisterStates.edit_full_name, F.data == "reg_edit_name_back")

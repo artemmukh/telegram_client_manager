@@ -246,7 +246,7 @@ def create_client_reschedule_router(
                 appointment_id, callback_query.from_user.id, data["new_datetime"],
             )
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         await state.clear()

@@ -245,14 +245,14 @@ def create_admin_appointment_creation_router(instance:str,
                 phone=data['phone'],
             )
         except PhoneAlreadyExistsError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except ValidationError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
             await callback_query.answer(
-                _CLIENT_CREATION_ERROR.get(lang, _CLIENT_CREATION_ERROR["ru"]).format(error=e), show_alert=True,
+                _CLIENT_CREATION_ERROR.get(lang, _CLIENT_CREATION_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True,
             )
             return
 
@@ -472,7 +472,7 @@ def create_admin_appointment_creation_router(instance:str,
     @router.message(AppointmentCreationStates.purpose, F.text)
     async def get_purpose(message: Message, state: FSMContext, current_user: User):
         lang = current_user.language
-        if not await purpose_processing(message, state, AppointmentCreationStates.confirm):
+        if not await purpose_processing(message, state, AppointmentCreationStates.confirm, lang=lang):
             return
         data = await state.get_data()
         await message.answer(
@@ -488,11 +488,11 @@ def create_admin_appointment_creation_router(instance:str,
         try:
             appointment = await appt_mng.create_appointment(callback_query.from_user.id, data)
         except ValidationError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
             await callback_query.answer(
-                _APPOINTMENT_CREATION_ERROR.get(lang, _APPOINTMENT_CREATION_ERROR["ru"]).format(error=e), show_alert=True,
+                _APPOINTMENT_CREATION_ERROR.get(lang, _APPOINTMENT_CREATION_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True,
             )
             return
 

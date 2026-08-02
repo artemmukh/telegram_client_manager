@@ -90,7 +90,7 @@ def create_client_appointment_invite_router(
         except AppointmentNotFoundError:
             await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
 
     @router.callback_query(AppointmentInviteActionCB.filter(F.action == "cancel"))
     async def cancel_invite_ask(
@@ -150,7 +150,7 @@ def create_client_appointment_invite_router(
         except AppointmentNotFoundError:
             await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
         finally:
             await state.clear()
 
@@ -167,7 +167,7 @@ def create_client_appointment_invite_router(
             )
             await callback_query.answer()
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
         finally:
             await state.clear()
 

@@ -6,6 +6,11 @@ from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.utils.pagination import CLIENTS_PER_PAGE
 
+_UNKNOWN_PAGINATION_MODE_MESSAGE = {
+    "ru": "Неизвестный режим пагинации: {mode}",
+    "uz": "Noma'lum sahifalash rejimi: {mode}",
+}
+
 
 @dataclass
 class PaginationResult:
@@ -53,7 +58,10 @@ class ClientPaginationService:
                 full_name, clinic_id, page, CLIENTS_PER_PAGE
             )
         else:
-            raise PaginationError(f"Неизвестный режим пагинации: {mode}")
+            raise PaginationError({
+                "ru": _UNKNOWN_PAGINATION_MODE_MESSAGE["ru"].format(mode=mode),
+                "uz": _UNKNOWN_PAGINATION_MODE_MESSAGE["uz"].format(mode=mode),
+            })
 
         total_pages = ceil(total_count / CLIENTS_PER_PAGE) if total_count > 0 else 1
 

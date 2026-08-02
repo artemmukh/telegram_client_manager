@@ -18,7 +18,10 @@ class UserNotFoundError(ValidationError):
 
 
 
-PHONE_ALREADY_EXISTS_MESSAGE = "Номер уже зарегистрирован. Пожалуйста, введите другой:"
+PHONE_ALREADY_EXISTS_MESSAGE = {
+    "ru": "Номер уже зарегистрирован. Пожалуйста, введите другой:",
+    "uz": "Raqam allaqachon ro'yxatdan o'tgan. Iltimos, boshqasini kiriting:",
+}
 
 
 class PhoneAlreadyExistsError(ValidationError):

@@ -61,13 +61,13 @@ def create_admin_name_change_router(user_repo, staff_repo, clinic_repo, client_c
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(admin_lang), show_alert=True)
             return
 
         try:
             user = await cl_mng.approve_name_change(callback_data.user_id, clinic.clinic_id)
         except UserNotFoundError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(admin_lang), show_alert=True)
             return
 
         if user is None:
@@ -89,13 +89,13 @@ def create_admin_name_change_router(user_repo, staff_repo, clinic_repo, client_c
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(admin_lang), show_alert=True)
             return
 
         try:
             user = await cl_mng.reject_name_change(callback_data.user_id, clinic.clinic_id)
         except UserNotFoundError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(admin_lang), show_alert=True)
             return
 
         if user is None:

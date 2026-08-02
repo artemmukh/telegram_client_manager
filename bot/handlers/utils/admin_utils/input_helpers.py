@@ -37,13 +37,15 @@ async def ask_phone(callback: CallbackQuery, state: FSMContext, next_state: Stat
     )
 
 
-async def full_name_processing(message: Message, state: FSMContext, next_state: State, re_pattern) -> bool:
+async def full_name_processing(
+    message: Message, state: FSMContext, next_state: State, re_pattern, lang: str = "ru",
+) -> bool:
     client_full_name = message.text.strip()
 
     try:
         validate_full_name(client_full_name, re_pattern)
     except InvalidFullNameError as e:
-        await message.answer(str(e))
+        await message.answer(e.localized(lang))
         return False
 
     await state.update_data(full_name=client_full_name)
@@ -51,13 +53,13 @@ async def full_name_processing(message: Message, state: FSMContext, next_state: 
     return True
 
 
-async def birth_date_processing(message: Message, state: FSMContext, next_state: State) -> bool:
+async def birth_date_processing(message: Message, state: FSMContext, next_state: State, lang: str = "ru") -> bool:
     birth_date = message.text.strip()
 
     try:
         validate_birth_date(birth_date)
     except InvalidBirthDateError as e:
-        await message.answer(str(e))
+        await message.answer(e.localized(lang))
         return False
 
     await state.update_data(birth_date=birth_date)
@@ -70,6 +72,7 @@ async def phone_processing(message: Message,
     *,
     final_state: State,
     validator: Callable[[str], Awaitable[None]] | None = None,
+    lang: str = "ru",
 ) -> bool:
 
     try:
@@ -79,7 +82,7 @@ async def phone_processing(message: Message,
             await validator(client_phone)
 
     except ValidationError as e:
-        await message.answer(str(e))
+        await message.answer(e.localized(lang))
         return False
 
     await state.update_data(phone=client_phone)

@@ -69,7 +69,7 @@ def create_name_change_request_router(
     async def process_name_change(message: Message, state: FSMContext, current_user: User):
         lang = current_user.language
         if not await full_name_processing(
-                message, state, next_state=NameChangeStates.entering_name, re_pattern=FULL_NAME_PATTERN):
+                message, state, next_state=NameChangeStates.entering_name, re_pattern=FULL_NAME_PATTERN, lang=lang):
             return
 
         data = await state.get_data()
@@ -78,7 +78,7 @@ def create_name_change_request_router(
         try:
             user = await client_management_service.request_name_change(current_user.ID, new_full_name)
         except BotException as e:
-            await message.answer(str(e))
+            await message.answer(e.localized(lang))
             return
 
         await client_notification_service.notify_admins_name_change_request(

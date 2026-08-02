@@ -76,7 +76,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
         try:
             clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
         except BotException as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         await state.update_data(clinic_id=clinic.clinic_id, clinic_name=clinic.name)
@@ -90,7 +90,9 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
     @router.message(ClientCreationStates.client_full_name, F.text)
     async def create_client_phone(message: Message, state: FSMContext, current_user: User):
        lang = current_user.language
-       if not await full_name_processing(message, state, next_state=ClientCreationStates.client_phone, re_pattern=SEARCH_NAME_PATTERN):
+       if not await full_name_processing(
+           message, state, next_state=ClientCreationStates.client_phone, re_pattern=SEARCH_NAME_PATTERN, lang=lang,
+       ):
            return
        await message.answer(text=ASK_PHONE_PROMPT.get(lang, ASK_PHONE_PROMPT["ru"]), reply_markup=client_creation_back_kb(lang))
 
@@ -101,7 +103,8 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
                 message,
                 state,
                 validator=validate_phone_available,
-                final_state=ClientCreationStates.confirm_create
+                final_state=ClientCreationStates.confirm_create,
+                lang=lang,
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb(lang), lang=lang)
@@ -124,7 +127,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
         lang = current_user.language
         if not await full_name_processing(
             message, state,
-            next_state=ClientCreationStates.confirm_create, re_pattern=SEARCH_NAME_PATTERN
+            next_state=ClientCreationStates.confirm_create, re_pattern=SEARCH_NAME_PATTERN, lang=lang,
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb(lang), lang=lang)
@@ -148,7 +151,8 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
         if not await phone_processing(message,
                 state,
                 validator=validate_phone_available,
-                final_state=ClientCreationStates.confirm_create
+                final_state=ClientCreationStates.confirm_create,
+                lang=lang,
         ):
             return
         await show_confirmation(message, state, reply_markup=client_creation_kb(lang), lang=lang)
@@ -166,10 +170,10 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
             await callback_query.answer('')
             return
         except (InvalidPhoneError, InvalidFullNameError) as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
         except BotException as e:
-            await callback_query.answer(_CLIENT_CREATION_ERROR.get(lang, _CLIENT_CREATION_ERROR["ru"]).format(error=e), show_alert=True)
+            await callback_query.answer(_CLIENT_CREATION_ERROR.get(lang, _CLIENT_CREATION_ERROR["ru"]).format(error=e.localized(lang)), show_alert=True)
             return
 
         await show_success(
@@ -191,7 +195,7 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
         try:
             validate_fields_filled(data)
         except ValidationError as e:
-            await callback_query.answer(str(e), show_alert=True)
+            await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
         duplicates = await cl_mng.find_clients_by_exact_name(data['full_name'], data['clinic_id'])
