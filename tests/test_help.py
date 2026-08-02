@@ -8,6 +8,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.common.help import create_help_router
+from bot.models.user import User
+from bot.utils.role import Role
 
 
 def _get_handler(observer, name):
@@ -37,6 +39,13 @@ def _message(text=None):
     message.from_user.id = 999
     message.answer = AsyncMock()
     return message
+
+
+def _current_user(language="ru"):
+    return User(
+        full_name="Клиентов Клиент", phone="+998900000000", role=Role.CLIENT,
+        telegram_user_id=999, ID=1, language=language,
+    )
 
 
 def _callback(data=None):
@@ -97,7 +106,7 @@ async def test_client_help_guide_callback_sends_all_six_steps_in_order():
 
     callback = _callback(data="client_help_guide")
 
-    await help_client_guide(callback)
+    await help_client_guide(callback, _current_user())
 
     callback.message.edit_text.assert_awaited_once()
     sent_text = callback.message.edit_text.call_args.args[0]

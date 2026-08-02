@@ -8,7 +8,14 @@ import re
 from bot.models.appointment import Appointment
 from bot.utils.appointment_enums import CreatedBy
 
-RESCHEDULE_NEGOTIATION_NOTE = "ℹ️ Ответить на предложение можно в уведомлении о переносе."
+_RESCHEDULE_NEGOTIATION_NOTE = {
+    "ru": "ℹ️ Ответить на предложение можно в уведомлении о переносе.",
+    "uz": "ℹ️ Taklifga ko'chirish haqidagi bildirishnomada javob berishingiz mumkin.",
+}
+
+
+def reschedule_negotiation_note(lang: str = "ru") -> str:
+    return _RESCHEDULE_NEGOTIATION_NOTE.get(lang, _RESCHEDULE_NEGOTIATION_NOTE["ru"])
 
 MAX_YEARS_AHEAD = 1
 
@@ -168,7 +175,23 @@ def is_appointment_upcoming(appointment: Appointment, now: datetime) -> bool:
     return appointment_dt >= now
 
 
-def build_reschedule_proposal_line(appointment: Appointment, viewer: CreatedBy) -> str | None:
+_YOU_PROPOSED_RESCHEDULE = {
+    "ru": "Вы предложили перенос на: {proposed_display}",
+    "uz": "Siz {proposed_display} vaqtiga ko'chirishni taklif qildingiz",
+}
+
+_CLINIC_PROPOSED_RESCHEDULE = {
+    "ru": "Клиника предложила перенос на: {proposed_display}",
+    "uz": "Klinika {proposed_display} vaqtiga ko'chirishni taklif qildi",
+}
+
+_CLIENT_PROPOSED_RESCHEDULE = {
+    "ru": "Клиент предложил перенос на: {proposed_display}",
+    "uz": "Mijoz {proposed_display} vaqtiga ko'chirishni taklif qildi",
+}
+
+
+def build_reschedule_proposal_line(appointment: Appointment, viewer: CreatedBy, lang: str = "ru") -> str | None:
     """Build the "X predlozhil perenos na: ..." line shown to `viewer` when a
     reschedule negotiation is in progress, or None if there is no proposal.
     """
@@ -181,7 +204,10 @@ def build_reschedule_proposal_line(appointment: Appointment, viewer: CreatedBy) 
         proposed_display = appointment.proposed_datetime
 
     if appointment.proposed_by == viewer:
-        return f"Вы предложили перенос на: {proposed_display}"
-    if viewer == CreatedBy.CLIENT:
-        return f"Клиника предложила перенос на: {proposed_display}"
-    return f"Клиент предложил перенос на: {proposed_display}"
+        template = _YOU_PROPOSED_RESCHEDULE
+    elif viewer == CreatedBy.CLIENT:
+        template = _CLINIC_PROPOSED_RESCHEDULE
+    else:
+        template = _CLIENT_PROPOSED_RESCHEDULE
+
+    return template.get(lang, template["ru"]).format(proposed_display=proposed_display)

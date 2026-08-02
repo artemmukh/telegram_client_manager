@@ -33,9 +33,15 @@ def reg_name_conflict_kb():
     ])
 
 
-def back_to_help_kb():
+_BACK_LABEL = {
+    "ru": "⬅️ Назад",
+    "uz": "⬅️ Orqaga",
+}
+
+
+def back_to_help_kb(lang: str = "ru"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_help")]
+        [InlineKeyboardButton(text=_BACK_LABEL.get(lang, _BACK_LABEL["ru"]), callback_data="back_to_help")]
     ])
 
 

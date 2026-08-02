@@ -9,6 +9,36 @@ from bot.services.utils.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
 
+_NAME_CHANGED_ON_REGISTRATION_TEXT = {
+    "ru": (
+        "ℹ️ Клиент изменил ФИ при регистрации.\n"
+        "Было: {stored_name}\n"
+        "Стало: {new_name}\n"
+        "Телефон: {client_phone}"
+    ),
+    "uz": (
+        "ℹ️ Mijoz ro'yxatdan o'tishda F.I.Sh.ni o'zgartirdi.\n"
+        "Avval: {stored_name}\n"
+        "Endi: {new_name}\n"
+        "Telefon: {client_phone}"
+    ),
+}
+
+_NAME_CHANGE_REQUEST_TEXT = {
+    "ru": (
+        "✏️ Клиент запросил изменение ФИ\n\n"
+        "Текущее ФИ: {current_full_name}\n"
+        "Новое ФИ: {new_full_name}\n"
+        "Телефон: {phone}"
+    ),
+    "uz": (
+        "✏️ Mijoz F.I.Sh.ni o'zgartirishni so'radi\n\n"
+        "Joriy F.I.Sh.: {current_full_name}\n"
+        "Yangi F.I.Sh.: {new_full_name}\n"
+        "Telefon: {phone}"
+    ),
+}
+
 
 class ClientNotificationService:
     def __init__(self, notifier: TelegramNotifier, user_repository: UserRepository) -> None:
@@ -21,18 +51,15 @@ class ClientNotificationService:
         """Best-effort broadcast informing admins that a client changed their name
         during registration. Never raises: a failed delivery to one admin must
         not block delivery to the others."""
-        message_text = (
-            "ℹ️ Клиент изменил ФИ при регистрации.\n"
-            f"Было: {stored_name}\n"
-            f"Стало: {new_name}\n"
-            f"Телефон: {client_phone}"
-        )
-
         admins = await self.user_repository.get_staff_users_by_clinic_id(clinic_id)
 
         for admin in admins:
             if admin.telegram_user_id is None:
                 continue
+
+            message_text = _NAME_CHANGED_ON_REGISTRATION_TEXT.get(
+                admin.language, _NAME_CHANGED_ON_REGISTRATION_TEXT["ru"]
+            ).format(stored_name=stored_name, new_name=new_name, client_phone=client_phone)
 
             try:
                 await self.notifier.send_message(
@@ -50,18 +77,15 @@ class ClientNotificationService:
         """Best-effort broadcast asking admins to approve/reject a client's
         name-change request. Never raises: a failed delivery to one admin must
         not block delivery to the others."""
-        message_text = (
-            "✏️ Клиент запросил изменение ФИ\n\n"
-            f"Текущее ФИ: {user.full_name}\n"
-            f"Новое ФИ: {new_full_name}\n"
-            f"Телефон: {user.phone}"
-        )
-
         admins = await self.user_repository.get_staff_users_by_clinic_id(user.clinic_id)
 
         for admin in admins:
             if admin.telegram_user_id is None:
                 continue
+
+            message_text = _NAME_CHANGE_REQUEST_TEXT.get(admin.language, _NAME_CHANGE_REQUEST_TEXT["ru"]).format(
+                current_full_name=user.full_name, new_full_name=new_full_name, phone=user.phone
+            )
 
             try:
                 await self.notifier.send_message(

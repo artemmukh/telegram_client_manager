@@ -16,9 +16,9 @@ from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.date_parser import (
-    RESCHEDULE_NEGOTIATION_NOTE,
     build_reschedule_proposal_line,
     format_datetime_for_display,
+    reschedule_negotiation_note,
 )
 from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
@@ -1083,7 +1083,7 @@ class AppointmentNotificationService:
         )
 
         if appointment.status == AppointmentStatus.CONFIRMED and appointment.proposed_datetime is not None:
-            proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
-            message += f"\n\n{proposal_line}\n{RESCHEDULE_NEGOTIATION_NOTE}"
+            proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT, lang=lang)
+            message += f"\n\n{proposal_line}\n{reschedule_negotiation_note(lang)}"
 
         return message

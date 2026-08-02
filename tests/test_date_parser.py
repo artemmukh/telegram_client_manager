@@ -6,7 +6,6 @@ import bot.services.utils.date_parser as date_parser_module
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
     MAX_YEARS_AHEAD,
-    RESCHEDULE_NEGOTIATION_NOTE,
     build_reschedule_proposal_line,
     format_appointment_card_datetime,
     format_datetime_for_confirmation,
@@ -14,6 +13,7 @@ from bot.services.utils.date_parser import (
     get_current_tashkent_datetime,
     is_appointment_upcoming,
     parse_ru_datetime,
+    reschedule_negotiation_note,
 )
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
@@ -278,4 +278,15 @@ def test_build_reschedule_proposal_line_falls_back_to_raw_string_on_malformed_pr
 
 
 def test_reschedule_negotiation_note_text():
-    assert RESCHEDULE_NEGOTIATION_NOTE == "ℹ️ Ответить на предложение можно в уведомлении о переносе."
+    assert reschedule_negotiation_note("ru") == "ℹ️ Ответить на предложение можно в уведомлении о переносе."
+
+
+def test_reschedule_negotiation_note_defaults_to_ru():
+    assert reschedule_negotiation_note() == reschedule_negotiation_note("ru")
+
+
+def test_reschedule_negotiation_note_uz():
+    note = reschedule_negotiation_note("uz")
+
+    assert note != reschedule_negotiation_note("ru")
+    assert note.startswith("ℹ️")

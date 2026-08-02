@@ -1,4 +1,5 @@
-ADMIN_HELP = ("Справочное меню.\n\n\n"
+_ADMIN_HELP = {
+    "ru": ("Справочное меню.\n\n\n"
         "👥 Управление клиентами:\n\n"
         "  1. /create_client - добавить клиента.\n"
         "  2. /clients - поиск по имени или номеру телефона, либо список "
@@ -11,9 +12,25 @@ ADMIN_HELP = ("Справочное меню.\n\n\n"
         "  3. /calendar - календарь записей по дням.\n\n\n"
         "/start - запуск бота.\n"
         "/help - справка.\n"
-        "/profile - личные данные.")
+        "/profile - личные данные."),
+    "uz": ("Ma'lumot menyusi.\n\n\n"
+        "👥 Mijozlarni boshqarish:\n\n"
+        "  1. /create_client - mijoz qo'shish.\n"
+        "  2. /clients - ism yoki telefon raqami bo'yicha qidirish, yoki barcha "
+        "mijozlar ro'yxati; mijoz kartasida F.I.Sh./telefonni o'zgartirish "
+        "va o'chirish mavjud.\n\n\n"
+        "📋 Qabullarni boshqarish:\n\n"
+        "  1. /create_appointment - qabul yaratish.\n"
+        "  2. /appointments - ism yoki telefon raqami bo'yicha qidirish, yoki barcha "
+        "qabullar ro'yxati; qabul kartasida tahrirlash va o'chirish mavjud.\n"
+        "  3. /calendar - kunlar bo'yicha qabullar kalendari.\n\n\n"
+        "/start - botni ishga tushirish.\n"
+        "/help - ma'lumot.\n"
+        "/profile - shaxsiy ma'lumotlar."),
+}
 
-CLIENT_HELP = ("Меню помощи.\n\n\n"
+_CLIENT_HELP = {
+    "ru": ("Меню помощи.\n\n\n"
         "📋 Управление записями:\n\n"
         "  1. /book - записаться на прием: выбор даты, времени и услуги для новой записи.\n"
         "  2. /history - история записей: список всех ваших прошлых и предстоящих записей.\n"
@@ -24,21 +41,49 @@ CLIENT_HELP = ("Меню помощи.\n\n\n"
         "/help - помощь.\n"
         "/profile - личные данные.\n"
         "/price - прайс-лист.\n"
-        "/geo - адрес клиники")
+        "/geo - адрес клиники"),
+    "uz": ("Yordam menyusi.\n\n\n"
+        "📋 Qabullarni boshqarish:\n\n"
+        "  1. /book - qabulga yozilish: yangi qabul uchun sana, vaqt va xizmatni tanlash.\n"
+        "  2. /history - qabullar tarixi: barcha o'tgan va kelayotgan qabullaringiz ro'yxati.\n"
+        "  3. /appointments - qabulni boshqarish: yaratilgan qabul vaqtini ko'chirish yoki bekor qilish.\n\n"
+        "Kelayotgan qabullar haqida bot tasdiqlash va bekor qilish tugmalari bilan "
+        "alohida eslatmalar yuboradi.\n\n\n"
+        "/start - botni ishga tushirish.\n"
+        "/help - yordam.\n"
+        "/profile - shaxsiy ma'lumotlar.\n"
+        "/price - narxlar ro'yxati.\n"
+        "/geo - klinika manzili"),
+}
 
-CLIENT_HELP_GUIDE = (
-    "Как это работает:\n\n"
-    "1️⃣ «📋 Управление записями» → «Записаться на приём».\n"
-    "2️⃣ Выбираете врача, день и свободное время, коротко описываете причину визита.\n"
-    "3️⃣ Заявка уходит в клинику: администратор подтверждает, отклоняет "
-    "или предлагает другое время.\n"
-    "4️⃣ Если предложено новое время — соглашаетесь или отклоняете прямо в чате.\n"
-    "5️⃣ Когда запись подтверждена, бот пришлёт напоминания за 24ч и за 2ч "
-    "до приёма с кнопками «Приду» / «Не приду».\n"
-    "6️⃣ Перенести или отменить запись можно в «Управлении записями» в любой "
-    "момент, кроме последнего часа перед приёмом."
-    "\n\n Если у вас возникли трудности или вы хотите что-то предложить, напишите пожалуйста @Art56g"
-)
+_CLIENT_HELP_GUIDE = {
+    "ru": (
+        "Как это работает:\n\n"
+        "1️⃣ «📋 Управление записями» → «Записаться на приём».\n"
+        "2️⃣ Выбираете врача, день и свободное время, коротко описываете причину визита.\n"
+        "3️⃣ Заявка уходит в клинику: администратор подтверждает, отклоняет "
+        "или предлагает другое время.\n"
+        "4️⃣ Если предложено новое время — соглашаетесь или отклоняете прямо в чате.\n"
+        "5️⃣ Когда запись подтверждена, бот пришлёт напоминания за 24ч и за 2ч "
+        "до приёма с кнопками «Приду» / «Не приду».\n"
+        "6️⃣ Перенести или отменить запись можно в «Управлении записями» в любой "
+        "момент, кроме последнего часа перед приёмом."
+        "\n\n Если у вас возникли трудности или вы хотите что-то предложить, напишите пожалуйста @Art56g"
+    ),
+    "uz": (
+        "Bu qanday ishlaydi:\n\n"
+        "1️⃣ «📋 Qabullarni boshqarish» → «Qabulga yozilish».\n"
+        "2️⃣ Shifokor, kun va bo'sh vaqtni tanlaysiz, tashrif sababini qisqacha yozasiz.\n"
+        "3️⃣ Ariza klinikaga yuboriladi: administrator tasdiqlaydi, rad etadi "
+        "yoki boshqa vaqt taklif qiladi.\n"
+        "4️⃣ Agar yangi vaqt taklif qilingan bo'lsa — chatda to'g'ridan-to'g'ri rozi bo'lasiz yoki rad etasiz.\n"
+        "5️⃣ Qabul tasdiqlangach, bot qabuldan 24 soat va 2 soat oldin «Boraman» / «Bormayman» "
+        "tugmalari bilan eslatmalar yuboradi.\n"
+        "6️⃣ Qabulni ko'chirish yoki bekor qilishni «Qabullarni boshqarish»da istalgan "
+        "vaqtda, qabuldan oldingi so'nggi soatdan tashqari, amalga oshirish mumkin."
+        "\n\n Agar qiyinchiliklarga duch kelsangiz yoki biror narsa taklif qilmoqchi bo'lsangiz, iltimos @Art56g ga yozing"
+    ),
+}
 
 _REGISTRATION_GUIDE = {
     "ru": (
@@ -145,6 +190,18 @@ _REGISTRATION_SUCCESS = {
     "ru": "Регистрация прошла успешно!",
     "uz": "Ro'yxatdan o'tish muvaffaqiyatli yakunlandi!",
 }
+
+
+def admin_help(lang: str) -> str:
+    return _ADMIN_HELP.get(lang, _ADMIN_HELP["ru"])
+
+
+def client_help(lang: str) -> str:
+    return _CLIENT_HELP.get(lang, _CLIENT_HELP["ru"])
+
+
+def client_help_guide(lang: str) -> str:
+    return _CLIENT_HELP_GUIDE.get(lang, _CLIENT_HELP_GUIDE["ru"])
 
 
 def registration_guide(lang: str) -> str:

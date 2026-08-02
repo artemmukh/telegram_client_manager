@@ -8,7 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import bot.handlers.utils.admin_utils.appointment_helpers as appointment_helpers_module
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, datetime_processing
 from bot.models.appointment import Appointment
-from bot.services.utils.date_parser import RESCHEDULE_NEGOTIATION_NOTE
+from bot.services.utils.date_parser import reschedule_negotiation_note
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
@@ -81,7 +81,7 @@ def test_build_appointment_card_shows_proposal_line_and_note_when_negotiating():
     )
 
     assert "Клиент предложил перенос на: 15 августа 2026, 15:00" in card
-    assert RESCHEDULE_NEGOTIATION_NOTE in card
+    assert reschedule_negotiation_note("ru") in card
 
 
 def test_build_appointment_card_shows_own_proposal_when_admin_proposed():
@@ -94,14 +94,14 @@ def test_build_appointment_card_shows_own_proposal_when_admin_proposed():
     )
 
     assert "Вы предложили перенос на: 15 августа 2026, 15:00" in card
-    assert RESCHEDULE_NEGOTIATION_NOTE in card
+    assert reschedule_negotiation_note("ru") in card
 
 
 def test_build_appointment_card_omits_proposal_line_and_note_when_no_proposal():
     card = build_appointment_card(_appointment(status=AppointmentStatus.CONFIRMED))
 
     assert "предложил" not in card
-    assert RESCHEDULE_NEGOTIATION_NOTE not in card
+    assert reschedule_negotiation_note("ru") not in card
 
 
 def _message(text):

@@ -22,12 +22,12 @@ from bot.keyboards.admin.record_management_kb.appointment_slot_kb import (
 from bot.keyboards.client.booking_kb import booking_day_kb, booking_doctor_kb
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
-    RESCHEDULE_NEGOTIATION_NOTE,
     build_reschedule_proposal_line,
     format_appointment_card_datetime,
     format_datetime_for_confirmation,
     get_current_tashkent_datetime,
     parse_ru_datetime,
+    reschedule_negotiation_note,
 )
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
@@ -229,10 +229,10 @@ def build_appointment_card(appointment: Appointment, lang: str = "ru") -> str:
         f"{labels['status']}: {status_label(appointment.status, lang)}",
     ]
 
-    proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN)
+    proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN, lang=lang)
     if proposal_line is not None:
         lines.append(proposal_line)
-        lines.append(RESCHEDULE_NEGOTIATION_NOTE)
+        lines.append(reschedule_negotiation_note(lang))
 
     if appointment.price is not None:
         lines.append(f"{labels['price']}: {appointment.price}")

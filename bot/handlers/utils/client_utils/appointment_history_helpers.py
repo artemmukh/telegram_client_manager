@@ -32,7 +32,7 @@ def build_history_card_text(appointment: Appointment, lang: str = "ru") -> str:
     if appointment.purpose:
         lines.append(f"Услуга: {appointment.purpose}")
 
-    proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT)
+    proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT, lang=lang)
     if proposal_line is not None:
         lines.append(proposal_line)
 
