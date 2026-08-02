@@ -30,7 +30,7 @@ from bot.services.utils.date_parser import (
     parse_ru_datetime,
 )
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 from bot.validators.validators import (
     validate_price,
     validate_purpose,
@@ -197,7 +197,7 @@ def build_appointment_confirmation(data: dict, lang: str = "ru") -> str:
         f"{labels['phone']}: {data.get('phone', '')}",
         f"{labels['datetime']}: {display_datetime}",
         f"{labels['purpose']}: {data.get('purpose', '')}",
-        f"{labels['status']}: {APPOINTMENT_STATUS_LABELS[AppointmentStatus.PENDING]}",
+        f"{labels['status']}: {status_label(AppointmentStatus.PENDING, lang)}",
     ])
 
 
@@ -226,7 +226,7 @@ def build_appointment_card(appointment: Appointment, lang: str = "ru") -> str:
     lines += [
         f"{labels['time']}: {format_appointment_card_datetime(appointment.datetime)}",
         f"{labels['purpose']}: {appointment.purpose}",
-        f"{labels['status']}: {APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)}",
+        f"{labels['status']}: {status_label(appointment.status, lang)}",
     ]
 
     proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN)

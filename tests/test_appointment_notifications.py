@@ -13,7 +13,7 @@ from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
     reminder_text,
 )
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 from bot.utils.role import Role
 
 CONFIRM_CTA = "Пожалуйста, подтвердите вашу готовность посетить запись"
@@ -1476,7 +1476,7 @@ async def test_build_appointment_message_confirmed_shows_status_label_instead_of
 
     text = service._build_appointment_message(appointment)
 
-    expected_label = APPOINTMENT_STATUS_LABELS[AppointmentStatus.CONFIRMED]
+    expected_label = status_label(AppointmentStatus.CONFIRMED)
     assert text.splitlines()[-1] == f"Статус: {expected_label}"
     assert CONFIRM_CTA not in text
 
@@ -1532,7 +1532,7 @@ async def test_build_appointment_message_cancelled_shows_status_label_instead_of
 
     text = service._build_appointment_message(appointment)
 
-    expected_label = APPOINTMENT_STATUS_LABELS[AppointmentStatus.CANCELLED]
+    expected_label = status_label(AppointmentStatus.CANCELLED)
     assert text.splitlines()[-1] == f"Статус: {expected_label}"
     assert CONFIRM_CTA not in text
 
@@ -1575,7 +1575,7 @@ async def test_notify_client_appointment_details_uses_details_only_keyboard_for_
     assert edited['message_id'] == 555
     assert edited['reply_markup'] == appointment_reminder_details_kb(appointment.id)
     assert edited['reply_markup'] != appointment_invite_kb(appointment.id)
-    assert f"Статус: {APPOINTMENT_STATUS_LABELS[AppointmentStatus.CONFIRMED]}" in edited['text']
+    assert f"Статус: {status_label(AppointmentStatus.CONFIRMED)}" in edited['text']
 
 
 @pytest.mark.asyncio

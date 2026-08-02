@@ -11,10 +11,10 @@ from bot.keyboards.client.appointment_history_cb import (
 from bot.keyboards.client.appointment_manage_kb import _add_status_action_buttons
 from bot.keyboards.client.reschedule_cb import ClientRescheduleStartCB
 from bot.models.appointment import Appointment
-from bot.utils.appointment_enums import APPOINTMENT_TAB_LABELS, APPOINTMENT_TAB_ORDER, AppointmentStatus
+from bot.utils.appointment_enums import APPOINTMENT_TAB_ORDER, AppointmentStatus, tab_label
 from bot.utils.pagination import get_circular_page
 
-_TAB_LABELS = {status.value: label for status, label in APPOINTMENT_TAB_LABELS.items()}
+_TAB_STATUSES = {status.value: status for status in APPOINTMENT_TAB_ORDER}
 _TAB_ORDER = [status.value for status in APPOINTMENT_TAB_ORDER]
 
 _PAGE_LABEL = {
@@ -56,7 +56,7 @@ def appointment_history_list_kb(
     rows = [1] * len(items)
 
     for tab_value in _TAB_ORDER:
-        label = _TAB_LABELS[tab_value]
+        label = tab_label(_TAB_STATUSES[tab_value], lang)
         text = f"• {label}" if tab_value == tab else label
         builder.button(text=text, callback_data=ClientHistoryPageCB(tab=tab_value, page=1).pack())
     rows += [3, 3]

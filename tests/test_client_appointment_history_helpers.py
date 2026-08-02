@@ -1,12 +1,11 @@
 import pytest
 
 from bot.handlers.utils.client_utils.appointment_history_helpers import (
-    HISTORY_STATUS_LABELS,
     build_history_button_text,
     build_history_card_text,
 )
 from bot.models.appointment import Appointment
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 
 
 def _appointment(status: AppointmentStatus, purpose: str | None = "Консультация", clinic_name: str | None = "Клиника №1") -> Appointment:
@@ -28,7 +27,7 @@ def test_build_history_button_text_for_all_statuses(status):
 
     text = build_history_button_text(appointment)
 
-    expected_emoji = HISTORY_STATUS_LABELS[status].split()[0]
+    expected_emoji = status_label(status).split()[0]
     assert text.startswith(expected_emoji)
     assert "2026" in text
 
@@ -39,7 +38,7 @@ def test_build_history_card_text_for_all_statuses(status):
 
     text = build_history_card_text(appointment)
 
-    assert HISTORY_STATUS_LABELS[status] in text
+    assert status_label(status) in text
     assert "Консультация" in text
     assert "Клиника №1" in text
 
@@ -79,7 +78,7 @@ def test_build_history_card_text_falls_back_to_raw_string_on_malformed_datetime(
 
 
 class _FakeUnlabeledStatus:
-    """Duck-types an AppointmentStatus member that has no entry in HISTORY_STATUS_LABELS."""
+    """Duck-types an AppointmentStatus member that has no entry in APPOINTMENT_STATUS_LABELS."""
 
     value = "archived"
 
@@ -171,7 +170,7 @@ def test_build_history_button_text_shows_marker_when_negotiating():
     text = build_history_button_text(appointment)
 
     assert text.startswith("🔁")
-    expected_emoji = HISTORY_STATUS_LABELS[AppointmentStatus.CONFIRMED].split()[0]
+    expected_emoji = status_label(AppointmentStatus.CONFIRMED).split()[0]
     assert expected_emoji in text
 
 

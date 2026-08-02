@@ -112,7 +112,7 @@ def create_client_reschedule_router(
 
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            build_history_card_text(appointment),
+            build_history_card_text(appointment, lang),
             reply_markup=appointment_manage_card_kb(appointment, page=1, lang=lang),
         )
 
@@ -132,7 +132,7 @@ def create_client_reschedule_router(
 
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            build_history_card_text(appointment),
+            build_history_card_text(appointment, lang),
             reply_markup=appointment_history_card_kb(appointment, tab, page, can_cancel, can_reschedule, lang),
         )
 

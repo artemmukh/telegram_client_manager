@@ -2,9 +2,7 @@ from datetime import datetime
 
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import build_reschedule_proposal_line, format_datetime_for_display
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
-
-HISTORY_STATUS_LABELS = APPOINTMENT_STATUS_LABELS
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 
 
 def _format_appointment_datetime(appointment: Appointment) -> str:
@@ -19,14 +17,14 @@ def _is_negotiating(appointment: Appointment) -> bool:
 
 
 def build_history_button_text(appointment: Appointment) -> str:
-    status_label = HISTORY_STATUS_LABELS.get(appointment.status, appointment.status.value)
-    status_emoji = status_label.split()[0]
+    label = status_label(appointment.status)
+    status_emoji = label.split()[0]
     display_datetime = _format_appointment_datetime(appointment)
     marker = "🔁" if _is_negotiating(appointment) else ""
     return f"{marker}{status_emoji} {display_datetime}"
 
 
-def build_history_card_text(appointment: Appointment) -> str:
+def build_history_card_text(appointment: Appointment, lang: str = "ru") -> str:
     display_datetime = _format_appointment_datetime(appointment)
 
     lines = [f"Дата и время: {display_datetime}"]
@@ -38,7 +36,7 @@ def build_history_card_text(appointment: Appointment) -> str:
     if proposal_line is not None:
         lines.append(proposal_line)
 
-    lines.append(f"Статус: {HISTORY_STATUS_LABELS.get(appointment.status, appointment.status.value)}")
+    lines.append(f"Статус: {status_label(appointment.status, lang)}")
 
     lines.append(f"Клиника: {appointment.clinic_name or 'Информация не доступна'}")
 

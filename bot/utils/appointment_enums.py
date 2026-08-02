@@ -16,12 +16,12 @@ class CreatedBy(Enum):
 
 
 APPOINTMENT_STATUS_LABELS = {
-    AppointmentStatus.PENDING: "🕐 ожидает",
-    AppointmentStatus.CONFIRMED: "✅ подтверждена",
-    AppointmentStatus.CANCELLED: "❌ отменена",
-    AppointmentStatus.COMPLETED: "✔️ завершена",
-    AppointmentStatus.NO_SHOW: "🙅 неявка",
-    AppointmentStatus.EXPIRED: "⏳ истекла",
+    AppointmentStatus.PENDING: {"ru": "🕐 ожидает", "uz": "🕐 kutilmoqda"},
+    AppointmentStatus.CONFIRMED: {"ru": "✅ подтверждена", "uz": "✅ tasdiqlangan"},
+    AppointmentStatus.CANCELLED: {"ru": "❌ отменена", "uz": "❌ bekor qilingan"},
+    AppointmentStatus.COMPLETED: {"ru": "✔️ завершена", "uz": "✔️ yakunlangan"},
+    AppointmentStatus.NO_SHOW: {"ru": "🙅 неявка", "uz": "🙅 kelmadi"},
+    AppointmentStatus.EXPIRED: {"ru": "⏳ истекла", "uz": "⏳ muddati o'tgan"},
 }
 
 APPOINTMENT_TAB_ORDER = [
@@ -34,10 +34,24 @@ APPOINTMENT_TAB_ORDER = [
 ]
 
 APPOINTMENT_TAB_LABELS = {
-    AppointmentStatus.CONFIRMED: "✅ Подтверждённые",
-    AppointmentStatus.PENDING: "🕐 Ожидание",
-    AppointmentStatus.CANCELLED: "❌ Отменённые",
-    AppointmentStatus.NO_SHOW: "🙅 Неявка",
-    AppointmentStatus.COMPLETED: "✔️ Завершённые",
-    AppointmentStatus.EXPIRED: "⏳ Истёкшие",
+    AppointmentStatus.CONFIRMED: {"ru": "✅ Подтверждённые", "uz": "✅ Tasdiqlangan"},
+    AppointmentStatus.PENDING: {"ru": "🕐 Ожидание", "uz": "🕐 Kutilmoqda"},
+    AppointmentStatus.CANCELLED: {"ru": "❌ Отменённые", "uz": "❌ Bekor qilingan"},
+    AppointmentStatus.NO_SHOW: {"ru": "🙅 Неявка", "uz": "🙅 Kelmadi"},
+    AppointmentStatus.COMPLETED: {"ru": "✔️ Завершённые", "uz": "✔️ Yakunlangan"},
+    AppointmentStatus.EXPIRED: {"ru": "⏳ Истёкшие", "uz": "⏳ Muddati o'tgan"},
 }
+
+
+def status_label(status: AppointmentStatus, lang: str = "ru") -> str:
+    entry = APPOINTMENT_STATUS_LABELS.get(status)
+    if entry is None:
+        return status.value
+    return entry.get(lang, entry.get("ru", status.value))
+
+
+def tab_label(status: AppointmentStatus, lang: str = "ru") -> str:
+    entry = APPOINTMENT_TAB_LABELS.get(status)
+    if entry is None:
+        return status.value
+    return entry.get(lang, entry.get("ru", status.value))

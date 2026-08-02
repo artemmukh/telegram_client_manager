@@ -20,10 +20,10 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
 )
 from bot.models.appointment import Appointment
 from bot.models.user import User
-from bot.utils.appointment_enums import APPOINTMENT_TAB_LABELS, APPOINTMENT_TAB_ORDER, AppointmentStatus
+from bot.utils.appointment_enums import APPOINTMENT_TAB_ORDER, AppointmentStatus, tab_label
 from bot.utils.pagination import get_circular_page
 
-_TAB_LABELS = {status.value: label for status, label in APPOINTMENT_TAB_LABELS.items()}
+_TAB_LABELS = {status.value: tab_label(status) for status in APPOINTMENT_TAB_ORDER}
 _TAB_ORDER = [status.value for status in APPOINTMENT_TAB_ORDER]
 
 _STATUS_BUTTON_LABELS = {

@@ -21,7 +21,7 @@ from bot.services.utils.date_parser import (
     format_datetime_for_display,
 )
 from bot.services.utils.telegram_notifier import TelegramNotifier
-from bot.utils.appointment_enums import APPOINTMENT_STATUS_LABELS, AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 
 logger = logging.getLogger(__name__)
 
@@ -1070,8 +1070,8 @@ class AppointmentNotificationService:
                 else _APPOINTMENT_MESSAGE_CONFIRM_CTA.get(lang, _APPOINTMENT_MESSAGE_CONFIRM_CTA["ru"])
             )
         else:
-            status_label = APPOINTMENT_STATUS_LABELS.get(appointment.status, appointment.status.value)
-            last_line = f"Статус: {status_label}"
+            status_text = status_label(appointment.status, lang)
+            last_line = f"Статус: {status_text}"
 
         message = _APPOINTMENT_MESSAGE_BODY.get(lang, _APPOINTMENT_MESSAGE_BODY["ru"]).format(
             header=_APPOINTMENT_MESSAGE_HEADER.get(lang, _APPOINTMENT_MESSAGE_HEADER["ru"]),

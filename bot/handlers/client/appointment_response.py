@@ -42,18 +42,22 @@ from bot.services.appointment.appointment_pagination_service import AppointmentP
 from bot.services.utils.date_parser import get_current_tashkent_datetime, is_appointment_upcoming
 from bot.states.client.appointment_states import AppointmentResponseStates
 from bot.utils.appointment_enums import (
-    APPOINTMENT_TAB_LABELS,
     APPOINTMENT_TAB_ORDER,
     AppointmentStatus,
+    tab_label,
 )
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
 
-_HISTORY_TAB_TITLES = {
-    status.value: APPOINTMENT_TAB_LABELS[status]
-    for status in APPOINTMENT_TAB_ORDER
-}
+_HISTORY_TAB_STATUSES = {status.value: status for status in APPOINTMENT_TAB_ORDER}
+
+
+def _history_tab_title(tab: str, lang: str) -> str | None:
+    status = _HISTORY_TAB_STATUSES.get(tab)
+    if status is None:
+        return None
+    return tab_label(status, lang)
 
 _CHOOSE_ACTION_PROMPT = {
     "ru": "Выберите действие:",
@@ -667,7 +671,7 @@ def create_client_appointment_router(
                 callback_query.from_user.id, tab, page,
             )
 
-            title = _HISTORY_TAB_TITLES.get(tab, _DEFAULT_HISTORY_TITLE.get(lang, _DEFAULT_HISTORY_TITLE["ru"]))
+            title = _history_tab_title(tab, lang) or _DEFAULT_HISTORY_TITLE.get(lang, _DEFAULT_HISTORY_TITLE["ru"])
             text = _list_header(title, result.current_page, result.total_pages, result.total_count, lang)
 
             await callback_query.message.edit_text(
@@ -708,7 +712,7 @@ def create_client_appointment_router(
 
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            build_history_card_text(appointment),
+            build_history_card_text(appointment, lang),
             reply_markup=appointment_history_card_kb(appointment, tab, page, can_cancel, can_reschedule, lang),
         )
 
@@ -763,7 +767,7 @@ def create_client_appointment_router(
 
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            build_history_card_text(appointment),
+            build_history_card_text(appointment, lang),
             reply_markup=appointment_manage_card_kb(appointment, page, lang),
         )
 
