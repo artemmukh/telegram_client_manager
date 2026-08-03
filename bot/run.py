@@ -198,7 +198,7 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot with appointment reminders enabled")
         # dp["personal_data_broadcast_task"] = asyncio.create_task(
-        #     client_notification_service.broadcast_personal_data_request(personal_data_broadcast_kb())
+        #     client_notification_service.broadcast_personal_data_request()
         # )
         await bot.set_my_commands(DEFAULT_COMMANDS, scope=BotCommandScopeDefault())
         await dp.start_polling(bot)

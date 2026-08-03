@@ -68,7 +68,7 @@ _CLIENT_HELP_GUIDE = {
         "до приёма с кнопками «Приду» / «Не приду».\n"
         "6️⃣ Перенести или отменить запись можно в «Управлении записями» в любой "
         "момент, кроме последнего часа перед приёмом."
-        "\n\n Если у вас возникли трудности или вы хотите что-то предложить, напишите пожалуйста @Art56g"
+        "\n\n Если у вас возникли трудности или вы хотите что-то предложить, напишите пожалуйста @lidok_crm_bot_support"
     ),
     "uz": (
         "Bu qanday ishlaydi:\n\n"
@@ -81,7 +81,7 @@ _CLIENT_HELP_GUIDE = {
         "tugmalari bilan eslatmalar yuboradi.\n"
         "6️⃣ Qabulni ko'chirish yoki bekor qilishni «Qabullarni boshqarish»da istalgan "
         "vaqtda, qabuldan oldingi so'nggi soatdan tashqari, amalga oshirish mumkin."
-        "\n\n Agar qiyinchiliklarga duch kelsangiz yoki biror narsa taklif qilmoqchi bo'lsangiz, iltimos @Art56g ga yozing"
+        "\n\n Agar qiyinchiliklarga duch kelsangiz yoki biror narsa taklif qilmoqchi bo'lsangiz, iltimos @lidok_crm_bot_support ga yozing"
     ),
 }
 

@@ -78,6 +78,7 @@ def create_reg_router(
             clinic_name=clinic.name,
         )
 
+
         await state.set_state(RegisterStates.language)
         await message.answer(msg.CHOOSE_LANGUAGE_PROMPT, reply_markup=language_kb())
 
