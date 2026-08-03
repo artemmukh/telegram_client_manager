@@ -17,11 +17,19 @@ from bot.keyboards.client.booking_cb import ClientBookDayCB, ClientBookSlotCB
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.reply_menu_labels import REPLY_MENU_TEXT_MESSAGE
 from bot.utils.role import Role
 
 
 def _get_handler_by_name(router, name):
     for handler in router.callback_query.handlers:
+        if handler.callback.__name__ == name:
+            return handler.callback
+    raise AssertionError(f"{name} handler not found on router")
+
+
+def _get_message_handler_by_name(router, name):
+    for handler in router.message.handlers:
         if handler.callback.__name__ == name:
             return handler.callback
     raise AssertionError(f"{name} handler not found on router")
@@ -299,3 +307,55 @@ async def test_pick_slot_with_valid_slot_updates_state_and_renders_complaint_pro
     state.set_state.assert_awaited_once_with(ClientBookingStates.complaint)
     callback_query.message.edit_text.assert_called_once()
     callback_query.answer.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_complaint_with_reply_menu_button_label_shows_special_message_instead_of_accepting_it():
+    """Tapping a persistent reply-keyboard button (e.g. the client main menu's
+    price-list button) while the FSM is awaiting the free-text complaint must
+    not be silently accepted as the complaint text -- process_complaint calls
+    validate_purpose directly (not the shared purpose_processing helper), so
+    this is the one entry point that would otherwise corrupt the appointment's
+    purpose with a button label."""
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+
+    router = _build_router(appointment_management_service, notification_service)
+    process_complaint = _get_message_handler_by_name(router, "process_complaint")
+
+    message = MagicMock()
+    message.text = "📋 Прайс-лист"
+    message.answer = AsyncMock()
+
+    state = MagicMock()
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    await process_complaint(message, state, _current_user())
+
+    message.answer.assert_awaited_once_with(REPLY_MENU_TEXT_MESSAGE["ru"])
+    state.update_data.assert_not_awaited()
+    state.set_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_complaint_with_ordinary_text_is_accepted_as_before():
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+
+    router = _build_router(appointment_management_service, notification_service)
+    process_complaint = _get_message_handler_by_name(router, "process_complaint")
+
+    message = MagicMock()
+    message.text = "Болит зуб"
+    message.answer = AsyncMock()
+
+    state = MagicMock()
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+    state.get_data = AsyncMock(return_value={"staff_name": "Врач", "day_iso": "2026-08-01", "slot": "10:00"})
+
+    await process_complaint(message, state, _current_user())
+
+    state.update_data.assert_awaited_once_with(complaint="Болит зуб")
+    message.answer.assert_awaited_once()

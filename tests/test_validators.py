@@ -4,14 +4,18 @@ from bot.exceptions.user_exceptions import (
     InvalidBirthDateError,
     InvalidFullNameError,
     InvalidPhoneError,
+    ReplyMenuButtonInputError,
     ValidationError,
 )
 from bot.validators.validators import (
     FULL_NAME_PATTERN,
     validate_birth_date,
+    validate_datetime,
     validate_fields_filled,
     validate_full_name,
     validate_phone,
+    validate_price,
+    validate_purpose,
 )
 
 
@@ -118,3 +122,77 @@ def test_validate_birth_date_raises_exact_exception_type():
         validate_birth_date("not a date")
 
     assert type(exc_info.value) is InvalidBirthDateError
+
+
+@pytest.mark.parametrize(
+    "button_label",
+    ["📋 Прайс-лист", "⚙️ Мой профиль", "📱 Отправить контакт", "📍 Локация", "👤 Управление клиентами"],
+)
+def test_validate_full_name_rejects_reply_menu_button_labels(button_label):
+    with pytest.raises(ReplyMenuButtonInputError):
+        validate_full_name(button_label, FULL_NAME_PATTERN)
+
+
+@pytest.mark.parametrize(
+    "button_label",
+    ["📋 Прайс-лист", "⚙️ Мой профиль", "📱 Отправить контакт"],
+)
+def test_validate_phone_rejects_reply_menu_button_labels(button_label):
+    with pytest.raises(ReplyMenuButtonInputError):
+        validate_phone(button_label)
+
+
+@pytest.mark.parametrize(
+    "button_label",
+    ["📋 Прайс-лист", "⚙️ Мой профиль", "📱 Отправить контакт"],
+)
+def test_validate_birth_date_rejects_reply_menu_button_labels(button_label):
+    with pytest.raises(ReplyMenuButtonInputError):
+        validate_birth_date(button_label)
+
+
+@pytest.mark.parametrize(
+    "button_label",
+    ["📋 Прайс-лист", "⚙️ Мой профиль", "📱 Отправить контакт"],
+)
+def test_validate_purpose_rejects_reply_menu_button_labels(button_label):
+    with pytest.raises(ReplyMenuButtonInputError):
+        validate_purpose(button_label)
+
+
+def test_validate_purpose_accepts_ordinary_text():
+    assert validate_purpose("Консультация") == "Консультация"
+
+
+@pytest.mark.parametrize(
+    "button_label",
+    ["📋 Прайс-лист", "⚙️ Мой профиль", "📱 Отправить контакт"],
+)
+def test_validate_price_rejects_reply_menu_button_labels(button_label):
+    with pytest.raises(ReplyMenuButtonInputError):
+        validate_price(button_label)
+
+
+def test_validate_price_accepts_ordinary_value():
+    assert validate_price("150000") == 150000.0
+
+
+@pytest.mark.parametrize(
+    "button_label",
+    ["📋 Прайс-лист", "⚙️ Мой профиль", "📱 Отправить контакт"],
+)
+def test_validate_datetime_rejects_reply_menu_button_labels(button_label):
+    with pytest.raises(ReplyMenuButtonInputError):
+        validate_datetime(button_label)
+
+
+def test_validate_datetime_accepts_ordinary_value():
+    assert validate_datetime("2026-07-10 14:30") == "2026-07-10 14:30"
+
+
+def test_purpose_matching_button_word_without_emoji_does_not_collide():
+    """A legitimately typed purpose that happens to share a word with a
+    button label (but without the button's emoji prefix) must NOT be
+    rejected -- is_reply_menu_label is an exact match, not a substring
+    match."""
+    assert validate_purpose("Локация") == "Локация"

@@ -54,4 +54,9 @@ class InvalidBirthDateError(ValidationError):
     pass
 
 
+class ReplyMenuButtonInputError(ValidationError):
+    """User tapped a persistent reply-keyboard button while a free-text FSM field was awaiting input."""
+    pass
+
+
 

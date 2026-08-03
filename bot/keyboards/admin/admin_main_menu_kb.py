@@ -1,21 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-ADMIN_MENU_LABELS = {
-    "ru": {
-        "clients": "👤 Управление клиентами",
-        "records": "📒 Управление записями",
-        "calendar": "📆 Календарь",
-        "help": "❓ Справка",
-        "profile": "⚙️ Мой профиль",
-    },
-    "uz": {
-        "clients": "👤 Mijozlarni boshqarish",
-        "records": "📒 Yozuvlarni boshqarish",
-        "calendar": "📆 Kalendar",
-        "help": "❓ Ma'lumot",
-        "profile": "⚙️ Mening profilim",
-    },
-}
+from bot.utils.reply_menu_labels import ADMIN_MENU_LABELS
 
 ADMIN_MENU_PLACEHOLDER = {
     "ru": "Выберите вариант:",

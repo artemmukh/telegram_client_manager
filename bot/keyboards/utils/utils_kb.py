@@ -1,11 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-
-_CONTACT_LABEL = {
-    "ru": "📱 Отправить контакт",
-    "uz": "📱 Kontaktni yuborish",
-}
+from bot.utils.reply_menu_labels import CONTACT_LABEL
 
 _REG_CONFIRM_LABEL = {
     "ru": "✅ Подтверждаю",
@@ -36,7 +32,7 @@ _REG_NAME_CONFLICT_NO_LABEL = {
 def contact_keyboard(lang: str = "ru"):
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=_CONTACT_LABEL.get(lang, _CONTACT_LABEL["ru"]), request_contact=True)]
+            [KeyboardButton(text=CONTACT_LABEL.get(lang, CONTACT_LABEL["ru"]), request_contact=True)]
         ],
         resize_keyboard=True,
         one_time_keyboard=True

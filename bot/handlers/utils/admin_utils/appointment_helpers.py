@@ -31,6 +31,7 @@ from bot.services.utils.date_parser import (
 )
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
+from bot.utils.reply_menu_labels import REPLY_MENU_TEXT_MESSAGE, is_reply_menu_label
 from bot.validators.validators import (
     validate_price,
     validate_purpose,
@@ -273,6 +274,11 @@ async def show_appointments_with_actions(
 async def datetime_processing(message: Message, state: FSMContext, next_state: State, lang: str = "ru") -> bool:
 
     raw_text = message.text.strip()
+
+    if is_reply_menu_label(raw_text):
+        await message.answer(REPLY_MENU_TEXT_MESSAGE.get(lang, REPLY_MENU_TEXT_MESSAGE["ru"]))
+        return False
+
     parsed_dt = parse_ru_datetime(raw_text)
 
     if parsed_dt is None:

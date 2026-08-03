@@ -2,8 +2,21 @@
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import InvalidDatetimeError, InvalidPriceError, InvalidPurposeError
-from bot.exceptions.user_exceptions import InvalidBirthDateError, InvalidFullNameError, InvalidPhoneError, ValidationError
+from bot.exceptions.user_exceptions import (
+    InvalidBirthDateError,
+    InvalidFullNameError,
+    InvalidPhoneError,
+    ReplyMenuButtonInputError,
+    ValidationError,
+)
+from bot.utils.reply_menu_labels import REPLY_MENU_TEXT_MESSAGE, is_reply_menu_label
 from bot.utils.tools import normalize_phone
+
+
+def _reject_reply_menu_button_text(value: str) -> None:
+    if is_reply_menu_label(value):
+        raise ReplyMenuButtonInputError(REPLY_MENU_TEXT_MESSAGE)
+
 
 DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
 
@@ -97,6 +110,7 @@ _NEGATIVE_PRICE_MESSAGE = {
 
 
 def validate_full_name(full_name: str, pattern) -> str:
+    _reject_reply_menu_button_text(full_name)
     full_name = full_name.strip()
 
     if len(full_name) > 50 or not pattern.fullmatch(full_name):
@@ -107,6 +121,7 @@ def validate_full_name(full_name: str, pattern) -> str:
 
 
 def validate_phone(phone: str) -> str:
+    _reject_reply_menu_button_text(phone)
     phone = normalize_phone(phone)
 
     if not PHONE_PATTERN.fullmatch(phone):
@@ -116,6 +131,7 @@ def validate_phone(phone: str) -> str:
 
 
 def validate_birth_date(value: str) -> str:
+    _reject_reply_menu_button_text(value)
     value = value.strip()
 
     if not BIRTH_DATE_PATTERN.fullmatch(value):
@@ -138,6 +154,7 @@ def validate_fields_filled(data):
 
 
 def validate_datetime(value: str) -> str:
+    _reject_reply_menu_button_text(value)
     value = value.strip()
 
     if not DATETIME_PATTERN.fullmatch(value):
@@ -152,6 +169,7 @@ def validate_datetime(value: str) -> str:
 
 
 def validate_purpose(value: str) -> str:
+    _reject_reply_menu_button_text(value)
     value = value.strip()
 
     if not 2 <= len(value) <= 100:
@@ -161,6 +179,7 @@ def validate_purpose(value: str) -> str:
 
 
 def validate_price(value: str) -> float:
+    _reject_reply_menu_button_text(value)
     value = value.strip().replace(",", ".")
 
     try:
