@@ -3,6 +3,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import build_appointment_button_text
 from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    CALENDAR_BACK_TO_SEARCH_LABEL,
     WEEKDAY_LABELS,
     WEEKDAY_LABELS_RU,
     clamp_month_to_range,
@@ -23,7 +24,6 @@ from bot.models.user import User
 from bot.utils.appointment_enums import APPOINTMENT_TAB_ORDER, AppointmentStatus, tab_label
 from bot.utils.pagination import get_circular_page
 
-_TAB_LABELS = {status.value: tab_label(status) for status in APPOINTMENT_TAB_ORDER}
 _TAB_ORDER = [status.value for status in APPOINTMENT_TAB_ORDER]
 
 _STATUS_BUTTON_LABELS = {
@@ -71,6 +71,27 @@ _GET_MEDICAL_RECORD_LABEL = {"ru": "📄 Получить историю бол�
 _ADD_MEDICAL_RECORD_LABEL = {"ru": "➕ Добавить документ", "uz": "➕ Hujjat qo'shish"}
 _BACK_TO_LIST_LABEL = {"ru": "⬅️ Назад к списку", "uz": "⬅️ Ro'yxatga qaytish"}
 
+_CANCEL_EDIT_LABEL = {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"}
+_SEARCH_BY_NAME_LABEL = {"ru": "👤 Поиск по имени", "uz": "👤 Ism bo'yicha qidirish"}
+_SEARCH_BY_PHONE_LABEL = {"ru": "📞 Поиск по номеру", "uz": "📞 Raqam bo'yicha qidirish"}
+_SHOW_ALL_LABEL = {"ru": "📋 Показать все записи", "uz": "📋 Barcha yozuvlarni ko'rsatish"}
+_CALENDAR_LABEL = {"ru": "📅 Календарь", "uz": "📅 Kalendar"}
+_BACK_TO_MENU_LABEL = {"ru": "⬅️ К меню", "uz": "⬅️ Menyuga"}
+_CONFIRM_LABEL = {"ru": "✅ Подтвердить", "uz": "✅ Tasdiqlash"}
+_EDIT_NAME_LABEL = {"ru": "📝 Изменить ФИ", "uz": "📝 F.I.Sh.ni o'zgartirish"}
+_EDIT_PHONE_LABEL = {"ru": "📲 Изменить номер", "uz": "📲 Raqamni o'zgartirish"}
+_ALL_DOCTORS_LABEL = {"ru": "👥 Все врачи", "uz": "👥 Barcha shifokorlar"}
+_PAGE_INDICATOR_LABEL = {"ru": "{current} из {total}", "uz": "{current}/{total}-sahifa"}
+_SINGLE_PAGE_LABEL = {"ru": "Страница 1 из 1", "uz": "1/1-sahifa"}
+_BACK_LABEL = {"ru": "⬅️ Назад", "uz": "⬅️ Orqaga"}
+_DELETE_CONFIRM_YES_LABEL = {"ru": "✅ Да, удалить", "uz": "✅ Ha, o'chirish"}
+_DELETE_CONFIRM_NO_LABEL = {"ru": "❌ Отмена", "uz": "❌ Bekor qilish"}
+_DELETE_NOTIFY_YES_LABEL = {"ru": "✅ Да, уведомить", "uz": "✅ Ha, xabar berish"}
+_DELETE_NOTIFY_NO_LABEL = {"ru": "🔕 Нет, без уведомления", "uz": "🔕 Yo'q, xabarsiz"}
+_RETRY_DATETIME_LABEL = {"ru": "🔄 Ввести заново", "uz": "🔄 Qayta kiritish"}
+_RETRY_PURPOSE_LABEL = {"ru": "📝 Ввести заново", "uz": "📝 Qayta kiritish"}
+_RETRY_PRICE_LABEL = {"ru": "💰 Ввести заново", "uz": "💰 Qayta kiritish"}
+
 _STATUS_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}
 _SERVICE_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED, AppointmentStatus.COMPLETED}
 _PRICE_EDITABLE_STATUSES = {AppointmentStatus.COMPLETED}
@@ -78,20 +99,23 @@ _TIME_EDITABLE_STATUSES = {AppointmentStatus.PENDING, AppointmentStatus.CONFIRME
 _STATUS_CHANGE_MENU_STATUSES = {AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED}
 
 
-def appointment_browser_back_to_search_kb() -> InlineKeyboardMarkup:
+def appointment_browser_back_to_search_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     """Единственная кнопка "к меню поиска" - для экранов ввода (ФИ/телефон)."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    builder.button(
+        text=CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"]),
+        callback_data="browse_appointments",
+    )
     return builder.as_markup()
 
 
 def appointment_browser_cancel_edit_kb(
-    appointment_id: int, mode: str, page: int, post_appt: bool = False,
+    appointment_id: int, mode: str, page: int, post_appt: bool = False, lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     """Единственная кнопка "отменить" - возврат к карточке записи без изменений."""
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="❌ Отменить",
+        text=_CANCEL_EDIT_LABEL.get(lang, _CANCEL_EDIT_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
@@ -99,36 +123,42 @@ def appointment_browser_cancel_edit_kb(
     return builder.as_markup()
 
 
-def appointment_browser_search_kb() -> InlineKeyboardMarkup:
+def appointment_browser_search_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="👤 Поиск по имени", callback_data="appt_search_name")
-    builder.button(text="📞 Поиск по номеру", callback_data="appt_search_phone")
-    builder.button(text="📋 Показать все записи", callback_data="appt_search_all")
-    builder.button(text="📅 Календарь", callback_data="appt_search_calendar")
-    builder.button(text="⬅️ К меню", callback_data="back_to_main_records")
+    builder.button(text=_SEARCH_BY_NAME_LABEL.get(lang, _SEARCH_BY_NAME_LABEL["ru"]), callback_data="appt_search_name")
+    builder.button(text=_SEARCH_BY_PHONE_LABEL.get(lang, _SEARCH_BY_PHONE_LABEL["ru"]), callback_data="appt_search_phone")
+    builder.button(text=_SHOW_ALL_LABEL.get(lang, _SHOW_ALL_LABEL["ru"]), callback_data="appt_search_all")
+    builder.button(text=_CALENDAR_LABEL.get(lang, _CALENDAR_LABEL["ru"]), callback_data="appt_search_calendar")
+    builder.button(text=_BACK_TO_MENU_LABEL.get(lang, _BACK_TO_MENU_LABEL["ru"]), callback_data="back_to_main_records")
 
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
-def appointment_browser_confirm_name_kb() -> InlineKeyboardMarkup:
+def appointment_browser_confirm_name_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="✅ Подтвердить", callback_data="appt_approve_search")
-    builder.button(text="📝 Изменить ФИ", callback_data="appt_edit_search_name")
-    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    builder.button(text=_CONFIRM_LABEL.get(lang, _CONFIRM_LABEL["ru"]), callback_data="appt_approve_search")
+    builder.button(text=_EDIT_NAME_LABEL.get(lang, _EDIT_NAME_LABEL["ru"]), callback_data="appt_edit_search_name")
+    builder.button(
+        text=CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"]),
+        callback_data="browse_appointments",
+    )
 
     builder.adjust(1, 1, 1)
     return builder.as_markup()
 
 
-def appointment_browser_confirm_phone_kb() -> InlineKeyboardMarkup:
+def appointment_browser_confirm_phone_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="✅ Подтвердить", callback_data="appt_approve_search")
-    builder.button(text="📲 Изменить номер", callback_data="appt_edit_search_phone")
-    builder.button(text="⬅️ К меню поиска", callback_data="browse_appointments")
+    builder.button(text=_CONFIRM_LABEL.get(lang, _CONFIRM_LABEL["ru"]), callback_data="appt_approve_search")
+    builder.button(text=_EDIT_PHONE_LABEL.get(lang, _EDIT_PHONE_LABEL["ru"]), callback_data="appt_edit_search_phone")
+    builder.button(
+        text=CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"]),
+        callback_data="browse_appointments",
+    )
 
     builder.adjust(1, 1, 1)
     return builder.as_markup()
@@ -136,12 +166,13 @@ def appointment_browser_confirm_phone_kb() -> InlineKeyboardMarkup:
 
 def appointment_doctor_filter_kb(
     doctors: list[User], *, back_callback_data: str = "browse_appointments", back_label: str = "⬅️ К меню поиска",
+    lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for doctor in doctors:
         builder.button(text=doctor.full_name, callback_data=ApptDoctorFilterCB(doctor_id=doctor.ID).pack())
-    builder.button(text="👥 Все врачи", callback_data=ApptDoctorFilterCB(doctor_id=0).pack())
+    builder.button(text=_ALL_DOCTORS_LABEL.get(lang, _ALL_DOCTORS_LABEL["ru"]), callback_data=ApptDoctorFilterCB(doctor_id=0).pack())
     builder.button(text=back_label, callback_data=back_callback_data)
 
     builder.adjust(*([1] * len(doctors)), 1, 1)
@@ -156,12 +187,13 @@ def appointment_list_kb(
     tab: str = "",
     back_callback_data: str = "browse_appointments",
     back_label: str = "⬅️ К меню поиска",
+    lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for appointment in items:
         builder.button(
-            text=build_appointment_button_text(appointment),
+            text=build_appointment_button_text(appointment, lang),
             callback_data=ApptCardCB(
                 appointment_id=appointment.id, mode=mode, page=current_page, tab=tab,
             ).pack(),
@@ -170,7 +202,7 @@ def appointment_list_kb(
     rows = [1] * len(items)
 
     for tab_value in _TAB_ORDER:
-        label = _TAB_LABELS[tab_value]
+        label = tab_label(AppointmentStatus(tab_value), lang)
         text = f"• {label}" if tab_value == tab else label
         builder.button(text=text, callback_data=ApptPageCB(mode=mode, page=1, tab=tab_value).pack())
     rows += [3, 3]
@@ -179,7 +211,10 @@ def appointment_list_kb(
         prev_page = get_circular_page(current_page, total_pages, "prev")
         next_page = get_circular_page(current_page, total_pages, "next")
 
-        builder.button(text=f"{current_page} из {total_pages}", callback_data="noop")
+        page_text = _PAGE_INDICATOR_LABEL.get(lang, _PAGE_INDICATOR_LABEL["ru"]).format(
+            current=current_page, total=total_pages,
+        )
+        builder.button(text=page_text, callback_data="noop")
         builder.button(
             text="⬅️",
             callback_data=ApptPageCB(mode=mode, page=prev_page, tab=tab).pack(),
@@ -190,7 +225,7 @@ def appointment_list_kb(
         )
         rows += [1, 2]
     else:
-        builder.button(text="Страница 1 из 1", callback_data="noop")
+        builder.button(text=_SINGLE_PAGE_LABEL.get(lang, _SINGLE_PAGE_LABEL["ru"]), callback_data="noop")
         rows += [1]
 
     builder.button(text=back_label, callback_data=back_callback_data)
@@ -371,12 +406,12 @@ def appointment_card_kb(
 
 
 def appointment_status_menu_kb(
-    appointment_id: int, mode: str, page: int, tab: str, status: AppointmentStatus,
+    appointment_id: int, mode: str, page: int, tab: str, status: AppointmentStatus, lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     rows = []
 
-    for button_status, text in _status_change_menu_buttons("ru"):
+    for button_status, text in _status_change_menu_buttons(lang):
         if button_status == status:
             continue
 
@@ -389,7 +424,7 @@ def appointment_status_menu_kb(
     rows.append(2)
 
     builder.button(
-        text="⬅️ Назад",
+        text=_BACK_LABEL.get(lang, _BACK_LABEL["ru"]),
         callback_data=ApptCardCB(appointment_id=appointment_id, mode=mode, page=page, tab=tab).pack(),
     )
     rows.append(1)
@@ -398,15 +433,15 @@ def appointment_status_menu_kb(
     return builder.as_markup()
 
 
-def appointment_delete_confirm_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def appointment_delete_confirm_kb(appointment_id: int, mode: str, page: int, lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Да, удалить",
+        text=_DELETE_CONFIRM_YES_LABEL.get(lang, _DELETE_CONFIRM_YES_LABEL["ru"]),
         callback_data=ApptActionCB(action="confirm_delete", appointment_id=appointment_id, mode=mode, page=page).pack(),
     )
     builder.button(
-        text="❌ Отмена",
+        text=_DELETE_CONFIRM_NO_LABEL.get(lang, _DELETE_CONFIRM_NO_LABEL["ru"]),
         callback_data=ApptActionCB(action="cancel_delete", appointment_id=appointment_id, mode=mode, page=page).pack(),
     )
 
@@ -414,17 +449,17 @@ def appointment_delete_confirm_kb(appointment_id: int, mode: str, page: int) -> 
     return builder.as_markup()
 
 
-def appointment_delete_notify_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def appointment_delete_notify_kb(appointment_id: int, mode: str, page: int, lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Да, уведомить",
+        text=_DELETE_NOTIFY_YES_LABEL.get(lang, _DELETE_NOTIFY_YES_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="confirm_delete_notify", appointment_id=appointment_id, mode=mode, page=page,
         ).pack(),
     )
     builder.button(
-        text="🔕 Нет, без уведомления",
+        text=_DELETE_NOTIFY_NO_LABEL.get(lang, _DELETE_NOTIFY_NO_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="confirm_delete_silent", appointment_id=appointment_id, mode=mode, page=page,
         ).pack(),
@@ -434,19 +469,19 @@ def appointment_delete_notify_kb(appointment_id: int, mode: str, page: int) -> I
     return builder.as_markup()
 
 
-def appointment_confirm_new_datetime_kb(appointment_id: int, mode: str, page: int) -> InlineKeyboardMarkup:
+def appointment_confirm_new_datetime_kb(appointment_id: int, mode: str, page: int, lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Подтвердить",
+        text=_CONFIRM_LABEL.get(lang, _CONFIRM_LABEL["ru"]),
         callback_data=ApptActionCB(action="approve_new_datetime", appointment_id=appointment_id, mode=mode, page=page).pack(),
     )
     builder.button(
-        text="🔄 Ввести заново",
+        text=_RETRY_DATETIME_LABEL.get(lang, _RETRY_DATETIME_LABEL["ru"]),
         callback_data=ApptActionCB(action="retry_new_datetime", appointment_id=appointment_id, mode=mode, page=page).pack(),
     )
     builder.button(
-        text="❌ Отменить",
+        text=_CANCEL_EDIT_LABEL.get(lang, _CANCEL_EDIT_LABEL["ru"]),
         callback_data=ApptActionCB(action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page).pack(),
     )
 
@@ -455,24 +490,24 @@ def appointment_confirm_new_datetime_kb(appointment_id: int, mode: str, page: in
 
 
 def appointment_confirm_new_purpose_kb(
-    appointment_id: int, mode: str, page: int, post_appt: bool = False,
+    appointment_id: int, mode: str, page: int, post_appt: bool = False, lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Подтвердить",
+        text=_CONFIRM_LABEL.get(lang, _CONFIRM_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="approve_new_purpose", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
     )
     builder.button(
-        text="📝 Ввести заново",
+        text=_RETRY_PURPOSE_LABEL.get(lang, _RETRY_PURPOSE_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="retry_new_purpose", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
     )
     builder.button(
-        text="❌ Отменить",
+        text=_CANCEL_EDIT_LABEL.get(lang, _CANCEL_EDIT_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
@@ -483,24 +518,24 @@ def appointment_confirm_new_purpose_kb(
 
 
 def appointment_confirm_new_price_kb(
-    appointment_id: int, mode: str, page: int, post_appt: bool = False,
+    appointment_id: int, mode: str, page: int, post_appt: bool = False, lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     builder.button(
-        text="✅ Подтвердить",
+        text=_CONFIRM_LABEL.get(lang, _CONFIRM_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="approve_new_price", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
     )
     builder.button(
-        text="💰 Ввести заново",
+        text=_RETRY_PRICE_LABEL.get(lang, _RETRY_PRICE_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="retry_new_price", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),
     )
     builder.button(
-        text="❌ Отменить",
+        text=_CANCEL_EDIT_LABEL.get(lang, _CANCEL_EDIT_LABEL["ru"]),
         callback_data=ApptActionCB(
             action="cancel_edit", appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
         ).pack(),

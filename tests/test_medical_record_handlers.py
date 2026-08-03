@@ -153,7 +153,7 @@ async def test_admin_get_medical_record_ready_sends_document(tmp_path):
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _admin())
 
     callback_query.message.answer_document.assert_awaited_once()
     sent_document = callback_query.message.answer_document.call_args.args[0]
@@ -168,7 +168,7 @@ async def test_admin_get_medical_record_pending_shows_alert_without_document():
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _admin())
 
     callback_query.message.answer_document.assert_not_awaited()
     callback_query.message.answer.assert_awaited_once_with(
@@ -184,7 +184,7 @@ async def test_admin_get_medical_record_no_prior_record_triggers_fallback_genera
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _admin())
 
     service.generate.assert_awaited_once_with(1)
     callback_query.message.answer_document.assert_not_awaited()
@@ -201,7 +201,7 @@ async def test_admin_get_medical_record_denies_access_to_other_clinic_appointmen
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="get_medical_record", appointment_id=1, mode="list", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _admin())
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()
@@ -224,7 +224,7 @@ async def test_admin_add_medical_record_generates_for_the_appointments_current_p
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="add_medical_record", appointment_id=1, mode="list", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _admin())
 
     service.generate.assert_awaited_once_with(1, "Консультация")
     callback_query.message.answer_document.assert_awaited_once()
@@ -240,7 +240,7 @@ async def test_admin_add_medical_record_denies_access_to_other_clinic_appointmen
     callback_query = _callback_query(ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="add_medical_record", appointment_id=1, mode="list", page=1)
 
-    await handler(callback_query, callback_data, AsyncMock())
+    await handler(callback_query, callback_data, AsyncMock(), _admin())
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.answer_document.assert_not_awaited()

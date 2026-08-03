@@ -124,6 +124,18 @@ class FakeClinicRepo:
         return Clinic(clinic_id=1, name="Зуб Мудрости", token="t")
 
 
+def _admin_user():
+    return User(
+        full_name="Петров Петр",
+        phone="+998907654321",
+        role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID,
+        ID=1,
+        clinic_id=1,
+        clinic_name="Зуб Мудрости",
+    )
+
+
 def _confirmed_appointment():
     return Appointment(
         clinic_id=1,
@@ -184,7 +196,7 @@ async def test_approve_new_datetime_commits_and_demotes_to_pending_then_resyncs_
 
     await approve_new_datetime(
         callback_query, ApptActionCB(action="approve_new_datetime", appointment_id=1, mode="all", page=1),
-        _make_state(),
+        _make_state(), _admin_user(),
     )
 
     # propose_new_datetime commits the new datetime directly and demotes the
@@ -251,7 +263,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
 
     await approve_new_datetime(
         callback_query, ApptActionCB(action="approve_new_datetime", appointment_id=1, mode="all", page=1),
-        state,
+        state, _admin_user(),
     )
 
     resynced = appointment_scheduler.resync_appointment_jobs.await_args.args[0]

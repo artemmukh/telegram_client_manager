@@ -74,6 +74,18 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
+def _admin_user():
+    return User(
+        full_name="Петров Петр",
+        phone="+998907654321",
+        role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID,
+        ID=1,
+        clinic_id=1,
+        clinic_name="Зуб Мудрости",
+    )
+
+
 def _appointment(status=AppointmentStatus.CONFIRMED):
     return Appointment(
         clinic_id=1,
@@ -114,7 +126,7 @@ async def test_select_status_rerenders_card_with_selected_status_marked():
         action="select_status", appointment_id=1, mode="list", page=1, value="no_show", post_appt=True,
     )
 
-    await select_status(callback_query, callback_data, AsyncMock())
+    await select_status(callback_query, callback_data, AsyncMock(), _admin_user())
 
     reply_markup = callback_query.message.edit_text.call_args.kwargs["reply_markup"]
     buttons = [button for row in reply_markup.inline_keyboard for button in row]
@@ -136,7 +148,7 @@ async def test_select_status_does_not_write_to_repository_or_scheduler():
         action="select_status", appointment_id=1, mode="list", page=1, value="cancelled", post_appt=True,
     )
 
-    await select_status(callback_query, callback_data, AsyncMock())
+    await select_status(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.status_updates == []
     assert appointment_repo.appointment.status is AppointmentStatus.CONFIRMED
@@ -154,7 +166,7 @@ async def test_select_status_with_invalid_value_shows_alert_and_does_not_rerende
         action="select_status", appointment_id=1, mode="list", page=1, value="not-a-real-status", post_appt=True,
     )
 
-    await select_status(callback_query, callback_data, AsyncMock())
+    await select_status(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with("Некорректный статус.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -172,7 +184,7 @@ async def test_select_status_denies_access_when_appointment_not_found():
         action="select_status", appointment_id=1, mode="list", page=1, value="cancelled", post_appt=True,
     )
 
-    await select_status(callback_query, callback_data, AsyncMock())
+    await select_status(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -189,7 +201,7 @@ async def test_open_status_menu_renders_menu_with_other_two_statuses():
     callback_query = _callback_query()
     callback_data = ApptActionCB(action="status_menu", appointment_id=1, mode="list", page=1)
 
-    await open_status_menu(callback_query, callback_data, AsyncMock())
+    await open_status_menu(callback_query, callback_data, AsyncMock(), _admin_user())
 
     reply_markup = callback_query.message.edit_text.call_args.kwargs["reply_markup"]
     callback_datas = [
@@ -212,7 +224,7 @@ async def test_open_status_menu_denies_access_when_appointment_not_found():
     callback_query = _callback_query()
     callback_data = ApptActionCB(action="status_menu", appointment_id=1, mode="list", page=1)
 
-    await open_status_menu(callback_query, callback_data, AsyncMock())
+    await open_status_menu(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -232,7 +244,7 @@ async def test_finish_appointment_commits_cancelled_when_value_is_cancelled():
         action="finish_appointment", appointment_id=1, mode="list", page=1, value="cancelled",
     )
 
-    await finish_appointment(callback_query, callback_data, AsyncMock())
+    await finish_appointment(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.status_updates == [(1, AppointmentStatus.CANCELLED)]
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
@@ -251,7 +263,7 @@ async def test_finish_appointment_commits_no_show_when_value_is_no_show():
         action="finish_appointment", appointment_id=1, mode="list", page=1, value="no_show",
     )
 
-    await finish_appointment(callback_query, callback_data, AsyncMock())
+    await finish_appointment(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.status_updates == [(1, AppointmentStatus.NO_SHOW)]
 
@@ -265,7 +277,7 @@ async def test_finish_appointment_falls_back_to_completed_when_value_missing():
     callback_query = _callback_query()
     callback_data = ApptActionCB(action="finish_appointment", appointment_id=1, mode="list", page=1, value="")
 
-    await finish_appointment(callback_query, callback_data, AsyncMock())
+    await finish_appointment(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
 
@@ -281,6 +293,6 @@ async def test_finish_appointment_falls_back_to_completed_when_value_invalid():
         action="finish_appointment", appointment_id=1, mode="list", page=1, value="not-a-real-status",
     )
 
-    await finish_appointment(callback_query, callback_data, AsyncMock())
+    await finish_appointment(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]

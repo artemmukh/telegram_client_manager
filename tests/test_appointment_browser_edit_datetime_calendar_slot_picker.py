@@ -136,6 +136,18 @@ class FakeClinicRepo:
         return Clinic(clinic_id=1, name="Зуб Мудрости", token="t")
 
 
+def _admin_user():
+    return User(
+        full_name="Петров Петр",
+        phone="+998907654321",
+        role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID,
+        ID=1,
+        clinic_id=1,
+        clinic_name="Зуб Мудрости",
+    )
+
+
 def _confirmed_appointment(day_iso="2026-08-15", slot="09:00", appointment_id=1):
     return Appointment(
         clinic_id=1,
@@ -193,8 +205,8 @@ async def test_start_edit_datetime_slots_mode_enters_calendar_and_stashes_staff_
 
     with patch(NOW_PATCH_TARGET, return_value=FIXED_NOW):
         await start_edit_datetime(
-            callback_query, ApptActionCB(action="edit_datetime", appointment_id=1, mode="list", page=1), state,
-        )
+            callback_query, ApptActionCB(action="edit_datetime", appointment_id=1, mode="list", page=1), state, _admin_user(),
+    )
 
     update_calls = [call.kwargs for call in state.update_data.await_args_list]
     assert {"appointment_id": 1, "mode": "list", "page": 1} in update_calls
@@ -215,7 +227,7 @@ async def test_start_edit_datetime_missing_appointment_shows_alert_and_does_not_
     state = _state()
 
     await start_edit_datetime(
-        callback_query, ApptActionCB(action="edit_datetime", appointment_id=404, mode="list", page=1), state,
+        callback_query, ApptActionCB(action="edit_datetime", appointment_id=404, mode="list", page=1), state, _admin_user(),
     )
 
     callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
@@ -232,7 +244,7 @@ async def test_start_edit_datetime_non_slots_mode_still_uses_free_text_prompt():
     state = _state()
 
     await start_edit_datetime(
-        callback_query, ApptActionCB(action="edit_datetime", appointment_id=1, mode="list", page=1), state,
+        callback_query, ApptActionCB(action="edit_datetime", appointment_id=1, mode="list", page=1), state, _admin_user(),
     )
 
     state.set_state.assert_awaited_once_with(AppointmentBrowserStates.new_datetime)
@@ -262,7 +274,7 @@ async def test_pick_edit_datetime_calendar_day_excludes_the_appointments_own_cur
 
     with patch(NOW_PATCH_TARGET, return_value=FIXED_NOW):
         await pick_edit_datetime_calendar_day(
-            callback_query, ApptCalendarDayCB(year=2026, month=8, day=15), state,
+            callback_query, ApptCalendarDayCB(year=2026, month=8, day=15), state, _admin_user(),
         )
 
     state.update_data.assert_awaited_once_with(day_iso=day_iso)
@@ -292,7 +304,7 @@ async def test_back_to_edit_datetime_day_selection_returns_to_month_grid_not_ful
     state = _state(appointment_id=1, mode="list", page=1, calendar_year=2026, calendar_month=8)
 
     with patch(NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await back_to_edit_datetime_day_selection(callback_query, state)
+        await back_to_edit_datetime_day_selection(callback_query, state, _admin_user())
 
     state.update_data.assert_awaited_once_with(calendar_year=2026, calendar_month=8)
     state.set_state.assert_awaited_once_with(AppointmentBrowserStates.edit_choose_day)
@@ -316,7 +328,7 @@ async def test_view_edit_datetime_occupied_slot_then_back_returns_to_slot_grid_n
     callback_query = _callback_query()
     state = _state(appointment_id=1, mode="list", page=1, staff_user_id=DOCTOR_ID, day_iso=day_iso)
 
-    await view_edit_datetime_occupied_slot(callback_query, AdminOccupiedSlotCB(appointment_id=2), state)
+    await view_edit_datetime_occupied_slot(callback_query, AdminOccupiedSlotCB(appointment_id=2), state, _admin_user())
 
     callback_query.message.edit_text.assert_awaited_once_with(
         build_appointment_card(occupant),
@@ -327,7 +339,7 @@ async def test_view_edit_datetime_occupied_slot_then_back_returns_to_slot_grid_n
 
     callback_query2 = _callback_query()
     with patch(NOW_PATCH_TARGET, return_value=FIXED_NOW):
-        await back_to_edit_datetime_slot_grid(callback_query2, state)
+        await back_to_edit_datetime_slot_grid(callback_query2, state, _admin_user())
 
     state.set_state.assert_awaited_once_with(AppointmentBrowserStates.edit_choose_slot)
     args, kwargs = callback_query2.message.edit_text.await_args
@@ -346,7 +358,7 @@ async def test_pick_edit_datetime_slot_writes_parsed_datetime_and_display_then_m
     callback_query = _callback_query()
     state = _state(appointment_id=1, mode="list", page=1, day_iso=day_iso, old_datetime=f"{day_iso} 09:00")
 
-    await pick_edit_datetime_slot(callback_query, ClientBookSlotCB(slot="11:00"), state)
+    await pick_edit_datetime_slot(callback_query, ClientBookSlotCB(slot="11:00"), state, _admin_user())
 
     expected_display = format_datetime_for_confirmation(datetime(2026, 8, 15, 11, 0))
     state.update_data.assert_awaited_once_with(
@@ -373,7 +385,7 @@ async def test_pick_edit_datetime_slot_with_malformed_slot_shows_alert_and_does_
     callback_query = _callback_query()
     state = _state(appointment_id=1, mode="list", page=1, day_iso="2026-08-15", old_datetime="2026-08-15 09:00")
 
-    await pick_edit_datetime_slot(callback_query, ClientBookSlotCB(slot="not-a-time"), state)
+    await pick_edit_datetime_slot(callback_query, ClientBookSlotCB(slot="not-a-time"), state, _admin_user())
 
     callback_query.answer.assert_awaited_once_with("Некорректное время, попробуйте ещё раз.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -408,12 +420,12 @@ async def test_pick_edit_datetime_slot_then_approve_new_datetime_commits_the_pic
     )
 
     callback_query = _callback_query()
-    await pick_edit_datetime_slot(callback_query, ClientBookSlotCB(slot="11:00"), state)
+    await pick_edit_datetime_slot(callback_query, ClientBookSlotCB(slot="11:00"), state, _admin_user())
 
     approve_callback_query = _callback_query()
     await approve_new_datetime(
         approve_callback_query, ApptActionCB(action="approve_new_datetime", appointment_id=1, mode="list", page=1),
-        state,
+        state, _admin_user(),
     )
 
     resynced = appointment_scheduler.resync_appointment_jobs.await_args.args[0]

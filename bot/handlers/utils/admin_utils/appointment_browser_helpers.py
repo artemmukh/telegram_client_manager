@@ -15,6 +15,8 @@ __all__ = [
     "remember_tracked_message",
 ]
 
+_NAMELESS_CLIENT_LABEL = {"ru": "Безымянный", "uz": "Ismsiz"}
+
 
 def format_appointment_button(full_name: str, phone: str, appointment_time: str) -> str:
     name_parts = full_name.split()
@@ -32,8 +34,8 @@ def format_appointment_button(full_name: str, phone: str, appointment_time: str)
     return f"{datetime_display} • {given_name} • {phone_display}"
 
 
-def build_appointment_button_text(appointment: Appointment) -> str:
-    client_name = appointment.client_full_name or "Безымянный"
+def build_appointment_button_text(appointment: Appointment, lang: str = "ru") -> str:
+    client_name = appointment.client_full_name or _NAMELESS_CLIENT_LABEL.get(lang, _NAMELESS_CLIENT_LABEL["ru"])
     phone = appointment.client_phone or "—"
     text = format_appointment_button(client_name, phone, appointment.datetime)
 

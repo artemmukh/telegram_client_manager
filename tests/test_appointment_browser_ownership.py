@@ -215,7 +215,7 @@ async def test_open_card_denies_own_scope_admin_for_other_doctor_appointment():
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     callback_data = ApptCardCB(appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1)
 
-    await open_card(callback_query, callback_data, _state())
+    await open_card(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -229,12 +229,12 @@ async def test_open_card_foreign_and_nonexistent_ids_give_identical_response():
 
     foreign_cb = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     await open_card(
-        foreign_cb, ApptCardCB(appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1), _state(),
+        foreign_cb, ApptCardCB(appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1), _state(), _own_admin(),
     )
 
     missing_cb = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     await open_card(
-        missing_cb, ApptCardCB(appointment_id=NONEXISTENT_APPOINTMENT_ID, mode="list", page=1), _state(),
+        missing_cb, ApptCardCB(appointment_id=NONEXISTENT_APPOINTMENT_ID, mode="list", page=1), _state(), _own_admin(),
     )
 
     assert foreign_cb.answer.call_args == missing_cb.answer.call_args
@@ -251,7 +251,7 @@ async def test_open_card_denies_when_admin_user_missing():
     callback_query = _callback_query(MISSING_ADMIN_TELEGRAM_ID)
     callback_data = ApptCardCB(appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1)
 
-    await open_card(callback_query, callback_data, _state())
+    await open_card(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -270,7 +270,7 @@ async def test_set_status_denies_own_scope_admin_for_other_doctor_appointment():
         action="set_status", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1, value="cancelled",
     )
 
-    await set_status(callback_query, callback_data, _state())
+    await set_status(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.status_updates == []
@@ -287,7 +287,7 @@ async def test_set_status_denies_clinic_scope_admin_for_other_clinic_appointment
         action="set_status", appointment_id=OTHER_CLINIC_APPOINTMENT_ID, mode="list", page=1, value="cancelled",
     )
 
-    await set_status(callback_query, callback_data, _state())
+    await set_status(callback_query, callback_data, _state(), _clinic_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.status_updates == []
@@ -304,7 +304,7 @@ async def test_start_delete_denies_own_scope_admin_for_other_doctor_appointment(
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     callback_data = ApptActionCB(action="delete", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1)
 
-    await start_delete(callback_query, callback_data, _state())
+    await start_delete(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
@@ -321,7 +321,7 @@ async def test_finish_delete_denies_own_scope_admin_for_other_doctor_appointment
         action="confirm_delete_silent", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
     )
 
-    await confirm_delete_silent(callback_query, callback_data, _state())
+    await confirm_delete_silent(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.deleted == []
@@ -347,7 +347,7 @@ async def test_approve_new_datetime_denies_own_scope_admin_for_other_doctor_appo
         appointment_datetime_display="05.08.2026 12:00",
     )
 
-    await approve_new_datetime(callback_query, callback_data, state)
+    await approve_new_datetime(callback_query, callback_data, state, _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.proposed_datetime_updates == []
@@ -367,7 +367,7 @@ async def test_approve_new_purpose_denies_own_scope_admin_for_other_doctor_appoi
         action="approve_new_purpose", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
     )
 
-    await approve_new_purpose(callback_query, callback_data, _state(purpose="Osmotr"))
+    await approve_new_purpose(callback_query, callback_data, _state(purpose="Osmotr"), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.updated == []
@@ -386,7 +386,7 @@ async def test_approve_new_price_denies_own_scope_admin_for_other_doctor_appoint
         action="approve_new_price", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
     )
 
-    await approve_new_price(callback_query, callback_data, _state(price=150000.0))
+    await approve_new_price(callback_query, callback_data, _state(price=150000.0), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.price_updates == []
@@ -405,7 +405,7 @@ async def test_finish_appointment_denies_own_scope_admin_for_other_doctor_appoin
         action="finish_appointment", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
     )
 
-    await finish_appointment(callback_query, callback_data, _state())
+    await finish_appointment(callback_query, callback_data, _state(), _own_admin())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appt_repo.status_updates == []
@@ -428,7 +428,7 @@ async def test_search_all_renders_list_directly_for_doctor_without_picker():
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     state = _state()
 
-    await search_all(callback_query, state)
+    await search_all(callback_query, state, _own_admin())
 
     state.set_state.assert_not_called()
     callback_query.message.edit_text.assert_called_once()
@@ -454,7 +454,7 @@ async def test_finish_delete_cancels_all_jobs_and_nothing_else():
         action="confirm_delete_silent", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
     )
 
-    await confirm_delete_silent(callback_query, callback_data, _state())
+    await confirm_delete_silent(callback_query, callback_data, _state(), _clinic_admin())
 
     assert appt_repo.deleted == [FOREIGN_APPOINTMENT_ID]
     appointment_scheduler.cancel_all_jobs.assert_awaited_once_with(FOREIGN_APPOINTMENT_ID)
@@ -477,7 +477,7 @@ async def test_finish_appointment_resyncs_jobs_and_nothing_else():
         action="finish_appointment", appointment_id=FOREIGN_APPOINTMENT_ID, mode="list", page=1,
     )
 
-    await finish_appointment(callback_query, callback_data, _state())
+    await finish_appointment(callback_query, callback_data, _state(), _clinic_admin())
 
     assert appt_repo.status_updates == [(FOREIGN_APPOINTMENT_ID, AppointmentStatus.COMPLETED)]
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()

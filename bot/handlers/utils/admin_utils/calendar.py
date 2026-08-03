@@ -19,6 +19,7 @@ from bot.states.admin.record_management.appointment_browser_states import Appoin
 async def show_calendar(
     event: CallbackQuery | Message,
     state: FSMContext,
+    lang: str = "ru",
 ):
     if isinstance(event, CallbackQuery):
         await event.answer()
@@ -35,24 +36,24 @@ async def show_calendar(
     )
     await state.set_state(AppointmentBrowserStates.calendar_month)
 
-    back_callback_data, back_label = calendar_grid_back_target(data)
+    back_callback_data, back_label = calendar_grid_back_target(data, lang)
 
     if isinstance(event, CallbackQuery):
         await event.answer('')
         message = event.message
         await message.edit_text(
-            f"📅 {format_month_label(year, month)}",
+            f"📅 {format_month_label(year, month, lang)}",
             reply_markup=appointment_calendar_kb(
-                year, month, back_callback_data=back_callback_data, back_label=back_label,
+                year, month, back_callback_data=back_callback_data, back_label=back_label, lang=lang,
             ),
         )
         await remember_tracked_message(state, message)
     else:
         message = event
         sent = await message.answer(
-            f"📅 {format_month_label(year, month)}",
+            f"📅 {format_month_label(year, month, lang)}",
             reply_markup=appointment_calendar_kb(
-                year, month, back_callback_data=back_callback_data, back_label=back_label,
+                year, month, back_callback_data=back_callback_data, back_label=back_label, lang=lang,
             ),
         )
         await remember_tracked_message(state, sent)

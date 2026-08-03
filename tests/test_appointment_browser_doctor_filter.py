@@ -269,7 +269,7 @@ async def test_search_all_skips_picker_for_doctor_caller():
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     state = FakeState()
 
-    await search_all(callback_query, state)
+    await search_all(callback_query, state, _own_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -289,7 +289,7 @@ async def test_search_all_skips_picker_when_clinic_has_fewer_than_two_doctors():
     callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
     state = FakeState()
 
-    await search_all(callback_query, state)
+    await search_all(callback_query, state, _clinic_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -307,7 +307,7 @@ async def test_search_all_shows_picker_for_clinic_admin_with_two_or_more_doctors
     callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
     state = FakeState()
 
-    await search_all(callback_query, state)
+    await search_all(callback_query, state, _clinic_admin())
 
     assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
     assert state.data["pending_render"] == {"mode": "list", "page": 1, "tab": "confirmed"}
@@ -330,7 +330,7 @@ async def test_paginate_applies_doctor_filter_override_in_list_mode():
     state = FakeState(doctor_filter_id=DOCTOR_COLLEAGUE_ID)
     callback_data = ApptPageCB(mode="list", page=2, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     assert appt_repo.status_page_calls
     _, _, _, doctor_id, _, _ = appt_repo.status_page_calls[-1]
@@ -357,7 +357,7 @@ async def test_paginate_calendar_mode_never_leaks_doctor_filter():
     )
     callback_data = ApptPageCB(mode="calendar", page=1, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     assert appt_repo.date_page_calls
     _, _, _, _, doctor_id, _, _ = appt_repo.date_page_calls[-1]
@@ -376,7 +376,7 @@ async def test_apply_doctor_filter_stores_specific_doctor_and_renders_filtered_l
     state = FakeState(pending_render={"mode": "list", "page": 1, "tab": "confirmed"})
     callback_data = ApptDoctorFilterCB(doctor_id=DOCTOR_COLLEAGUE_ID)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert state.data["doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
     assert state.states[-1] is None
@@ -395,7 +395,7 @@ async def test_apply_doctor_filter_all_sentinel_clears_filter():
     state = FakeState(pending_render={"mode": "list", "page": 1, "tab": "confirmed"})
     callback_data = ApptDoctorFilterCB(doctor_id=0)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert "doctor_filter_id" in state.data
     assert state.data["doctor_filter_id"] is None
@@ -417,7 +417,7 @@ async def test_apply_doctor_filter_restores_confirm_search_state_for_search_mode
     )
     callback_data = ApptDoctorFilterCB(doctor_id=DOCTOR_COLLEAGUE_ID)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert state.states[-1] == AppointmentBrowserStates.confirm_search
     assert state.data["doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
@@ -438,7 +438,7 @@ async def test_pick_calendar_day_shows_picker_for_clinic_admin_with_two_or_more_
     state = FakeState()
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _clinic_admin())
 
     assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
     assert state.data["pending_render"] == {"mode": "calendar", "page": 1, "tab": "confirmed"}
@@ -470,7 +470,7 @@ async def test_pick_calendar_day_skips_picker_for_doctor_caller():
     state = FakeState()
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _own_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -491,7 +491,7 @@ async def test_pick_calendar_day_skips_picker_when_clinic_has_fewer_than_two_doc
     state = FakeState()
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _clinic_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -513,7 +513,7 @@ async def test_pick_calendar_day_honors_existing_specific_doctor_filter_in_state
     state = FakeState(calendar_doctor_filter_id=DOCTOR_COLLEAGUE_ID)
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _clinic_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -536,7 +536,7 @@ async def test_pick_calendar_day_honors_existing_all_doctors_sentinel_in_state()
     state = FakeState(calendar_doctor_filter_id=None)
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _own_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert appt_repo.date_page_calls
@@ -559,7 +559,7 @@ async def test_apply_doctor_filter_stores_calendar_filter_and_restores_calendar_
     )
     callback_data = ApptDoctorFilterCB(doctor_id=DOCTOR_COLLEAGUE_ID)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert state.data["calendar_doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
     assert "doctor_filter_id" not in state.data
@@ -582,7 +582,7 @@ async def test_apply_doctor_filter_calendar_all_sentinel_clears_filter_and_resto
     )
     callback_data = ApptDoctorFilterCB(doctor_id=0)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert "calendar_doctor_filter_id" in state.data
     assert state.data["calendar_doctor_filter_id"] is None
@@ -620,7 +620,7 @@ async def test_calendar_doctor_filter_never_leaks_into_list_search_phone_paginat
     state = FakeState(**state_kwargs)
     callback_data = ApptPageCB(mode=mode, page=1, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     if mode == "list":
         assert appt_repo.status_page_calls
@@ -653,7 +653,7 @@ async def test_open_calendar_shows_picker_for_clinic_admin_with_two_or_more_doct
     callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
     state = FakeState(stale_key="stale_value")
 
-    await open_calendar_callback(callback_query, state)
+    await open_calendar_callback(callback_query, state, _clinic_admin())
 
     assert state.cleared == 1
     assert "stale_key" not in state.data
@@ -680,7 +680,7 @@ async def test_open_calendar_skips_picker_for_doctor_caller():
     callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
     state = FakeState()
 
-    await open_calendar_callback(callback_query, state)
+    await open_calendar_callback(callback_query, state, _own_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -698,7 +698,7 @@ async def test_open_calendar_skips_picker_when_clinic_has_fewer_than_two_doctors
     callback_query = _callback_query(CLINIC_ADMIN_TELEGRAM_ID)
     state = FakeState()
 
-    await open_calendar_callback(callback_query, state)
+    await open_calendar_callback(callback_query, state, _clinic_admin())
 
     assert AppointmentBrowserStates.pick_doctor_filter not in state.states
     assert "pending_render" not in state.data
@@ -721,7 +721,7 @@ async def test_open_calendar_message_shows_picker_for_clinic_admin_with_two_or_m
     message.answer = AsyncMock()
     state = FakeState()
 
-    await open_calendar_message(message, state)
+    await open_calendar_message(message, state, _clinic_admin())
 
     assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
     assert state.data["pending_render"] == {"mode": "calendar_entry", "page": 1, "tab": "confirmed"}
@@ -747,7 +747,7 @@ async def test_apply_doctor_filter_calendar_entry_renders_grid_with_back_to_doct
     state = FakeState(pending_render={"mode": "calendar_entry", "page": 1, "tab": "confirmed"})
     callback_data = ApptDoctorFilterCB(doctor_id=DOCTOR_COLLEAGUE_ID)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert state.data["calendar_doctor_filter_id"] == DOCTOR_COLLEAGUE_ID
     assert state.states[-1] == AppointmentBrowserStates.calendar_month
@@ -773,7 +773,7 @@ async def test_apply_doctor_filter_calendar_entry_all_sentinel_still_renders_gri
     state = FakeState(pending_render={"mode": "calendar_entry", "page": 1, "tab": "confirmed"})
     callback_data = ApptDoctorFilterCB(doctor_id=0)
 
-    await apply_doctor_filter(callback_query, callback_data, state)
+    await apply_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert "calendar_doctor_filter_id" in state.data
     assert state.data["calendar_doctor_filter_id"] is None
@@ -800,7 +800,7 @@ async def test_change_calendar_month_targets_doctor_picker_on_back_when_filter_a
     state = FakeState(calendar_doctor_filter_id=DOCTOR_COLLEAGUE_ID)
     callback_data = ApptCalendarMonthCB(year=2026, month=8)
 
-    await change_calendar_month(callback_query, callback_data, state)
+    await change_calendar_month(callback_query, callback_data, state, _clinic_admin())
 
     args, kwargs = callback_query.message.edit_text.await_args
     expected_markup = appointment_calendar_kb(
@@ -819,7 +819,7 @@ async def test_change_calendar_month_targets_search_menu_on_back_when_no_filter_
     state = FakeState()
     callback_data = ApptCalendarMonthCB(year=2026, month=8)
 
-    await change_calendar_month(callback_query, callback_data, state)
+    await change_calendar_month(callback_query, callback_data, state, _clinic_admin())
 
     args, kwargs = callback_query.message.edit_text.await_args
     expected_markup = appointment_calendar_kb(
@@ -847,7 +847,7 @@ async def test_paginate_list_mode_back_target_points_to_doctor_reentry_when_filt
     state = FakeState(doctor_filter_id=DOCTOR_COLLEAGUE_ID)
     callback_data = ApptPageCB(mode="list", page=1, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     args, kwargs = callback_query.message.edit_text.await_args
     expected_markup = appointment_list_kb(
@@ -870,7 +870,7 @@ async def test_paginate_search_mode_back_target_points_to_doctor_reentry_when_fi
     )
     callback_data = ApptPageCB(mode="search", page=1, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     args, kwargs = callback_query.message.edit_text.await_args
     expected_markup = appointment_list_kb(
@@ -893,7 +893,7 @@ async def test_paginate_phone_mode_back_target_points_to_doctor_reentry_when_fil
     )
     callback_data = ApptPageCB(mode="phone", page=1, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     args, kwargs = callback_query.message.edit_text.await_args
     expected_markup = appointment_list_kb(
@@ -917,7 +917,7 @@ async def test_paginate_list_mode_back_target_stays_default_when_no_filter_in_st
     state = FakeState()
     callback_data = ApptPageCB(mode="list", page=1, tab="confirmed")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _clinic_admin())
 
     args, kwargs = callback_query.message.edit_text.await_args
     expected_markup = appointment_list_kb(
@@ -939,7 +939,7 @@ async def test_reenter_doctor_filter_reprompts_picker_for_requested_mode():
     state = FakeState()
     callback_data = ApptDoctorFilterEntryCB(mode="search")
 
-    await reenter_doctor_filter(callback_query, callback_data, state)
+    await reenter_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert state.states[-1] == AppointmentBrowserStates.pick_doctor_filter
     assert state.data["pending_render"] == {"mode": "search", "page": 1, "tab": "confirmed"}
@@ -961,7 +961,7 @@ async def test_reenter_doctor_filter_does_not_clear_state():
     state = FakeState(search_data={"full_name": "Ivanov Ivan"}, doctor_filter_id=DOCTOR_COLLEAGUE_ID)
     callback_data = ApptDoctorFilterEntryCB(mode="search")
 
-    await reenter_doctor_filter(callback_query, callback_data, state)
+    await reenter_doctor_filter(callback_query, callback_data, state, _clinic_admin())
 
     assert state.cleared == 0
     assert state.data["search_data"] == {"full_name": "Ivanov Ivan"}

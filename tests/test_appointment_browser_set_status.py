@@ -69,6 +69,18 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
+def _admin_user():
+    return User(
+        full_name="Петров Петр",
+        phone="+998907654321",
+        role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID,
+        ID=1,
+        clinic_id=1,
+        clinic_name="Зуб Мудрости",
+    )
+
+
 def _appointment():
     return Appointment(
         clinic_id=1,
@@ -101,7 +113,7 @@ async def _run_set_status(post_appt: bool, notification_service, appointment_sch
         action="set_status", appointment_id=1, mode="list", page=1, value=value, post_appt=post_appt,
     )
 
-    await set_status(_callback_query(), callback_data, AsyncMock())
+    await set_status(_callback_query(), callback_data, AsyncMock(), _admin_user())
 
 
 @pytest.mark.asyncio
@@ -123,7 +135,7 @@ async def test_set_status_with_invalid_value_shows_alert_and_does_not_update_sta
     )
     callback_query = _callback_query()
 
-    await set_status(callback_query, callback_data, AsyncMock())
+    await set_status(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with("Некорректный статус.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()

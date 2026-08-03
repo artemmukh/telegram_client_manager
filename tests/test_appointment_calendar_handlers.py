@@ -234,7 +234,7 @@ async def test_open_calendar_clears_state_and_opens_grid_at_clamped_current_mont
     callback_query.__class__ = CallbackQuery
     state = FakeState(stale_key="stale_value")
 
-    await open_calendar(callback_query, state)
+    await open_calendar(callback_query, state, _own_admin())
 
     today = get_current_tashkent_datetime().date()
     expected_year, expected_month = clamp_month_to_range(today.year, today.month)
@@ -292,7 +292,7 @@ async def test_open_calendar_message_opens_grid_at_clamped_current_month(trigger
     message.answer = AsyncMock(return_value=sent_message)
     state = FakeState(stale_key="stale_value")
 
-    await open_calendar_message(message, state)
+    await open_calendar_message(message, state, _own_admin())
 
     today = get_current_tashkent_datetime().date()
     expected_year, expected_month = clamp_month_to_range(today.year, today.month)
@@ -326,7 +326,7 @@ async def test_change_calendar_month_updates_fsm_and_rerenders_grid():
     state = FakeState()
     callback_data = ApptCalendarMonthCB(year=2026, month=1)
 
-    await change_calendar_month(callback_query, callback_data, state)
+    await change_calendar_month(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_year"] == 2026
     assert state.data["calendar_month"] == 1
@@ -353,7 +353,7 @@ async def test_change_calendar_month_clamps_forged_month_above_twelve():
     state = FakeState()
     callback_data = ApptCalendarMonthCB(year=2026, month=13)
 
-    await change_calendar_month(callback_query, callback_data, state)
+    await change_calendar_month(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_year"] == 2026
     assert state.data["calendar_month"] == 12
@@ -374,7 +374,7 @@ async def test_change_calendar_month_clamps_forged_month_below_one():
     state = FakeState()
     callback_data = ApptCalendarMonthCB(year=2026, month=0)
 
-    await change_calendar_month(callback_query, callback_data, state)
+    await change_calendar_month(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_year"] == 2026
     assert state.data["calendar_month"] == 1
@@ -395,7 +395,7 @@ async def test_change_calendar_month_clamps_forged_year_outside_range():
     state = FakeState()
     callback_data = ApptCalendarMonthCB(year=2030, month=13)
 
-    await change_calendar_month(callback_query, callback_data, state)
+    await change_calendar_month(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_year"] == CALENDAR_MAX_YEAR
     assert state.data["calendar_month"] == 12
@@ -419,7 +419,7 @@ async def test_pick_calendar_day_sets_calendar_day_state_and_renders_tab_menu():
     state = FakeState()
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_date"] == "2026-07-17"
     assert state.data["calendar_year"] == 2026
@@ -452,7 +452,7 @@ async def test_pick_calendar_day_scopes_to_clinic_only_for_clinic_scope_admin():
     state = FakeState()
     callback_data = ApptCalendarDayCB(year=2026, month=7, day=17)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _clinic_admin())
 
     # clinic-scope admin -> doctor_id is not restricted (None)
     assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, None, True)]
@@ -476,7 +476,7 @@ async def test_pick_calendar_day_back_button_targets_the_days_own_month_not_stal
     state = FakeState(calendar_year=2026, calendar_month=3)
     callback_data = ApptCalendarDayCB(year=2026, month=8, day=5)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_year"] == 2026
     assert state.data["calendar_month"] == 8
@@ -502,7 +502,7 @@ async def test_pick_calendar_day_clamps_forged_day_above_month_length():
     state = FakeState()
     callback_data = ApptCalendarDayCB(year=2026, month=2, day=31)
 
-    await pick_calendar_day(callback_query, callback_data, state)
+    await pick_calendar_day(callback_query, callback_data, state, _own_admin())
 
     assert state.data["calendar_date"] == "2026-02-28"
     assert state.data["calendar_year"] == 2026
@@ -529,7 +529,7 @@ async def test_paginate_handler_calendar_mode_reads_calendar_date_from_fsm():
     state = FakeState(calendar_date="2026-07-17", calendar_year=2026, calendar_month=7)
     callback_data = ApptPageCB(mode="calendar", page=1, tab="pending")
 
-    await paginate(callback_query, callback_data, state)
+    await paginate(callback_query, callback_data, state, _own_admin())
 
     assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.PENDING, 1, 1, True)]
     assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.PENDING, 1, 1, 1, True)]
@@ -552,7 +552,7 @@ async def test_open_card_with_calendar_mode_targets_calendar_list_on_back():
     state = FakeState(calendar_date="2026-07-17", calendar_year=2026, calendar_month=7)
     callback_data = ApptCardCB(appointment_id=1, mode="calendar", page=1, tab="confirmed")
 
-    await open_card(callback_query, callback_data, state)
+    await open_card(callback_query, callback_data, state, _own_admin())
 
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
@@ -576,7 +576,7 @@ async def test_set_status_with_calendar_mode_rerenders_card_targeting_calendar_l
         action="set_status", appointment_id=1, mode="calendar", page=1, value="confirmed",
     )
 
-    await set_status(callback_query, callback_data, state)
+    await set_status(callback_query, callback_data, state, _own_admin())
 
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
 
