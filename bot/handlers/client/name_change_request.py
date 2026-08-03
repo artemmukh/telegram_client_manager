@@ -4,7 +4,6 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.admin_utils.input_helpers import full_name_processing
-from bot.keyboards.admin.name_change_kb import name_change_approval_kb
 from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_notifications import ClientNotificationService
@@ -82,7 +81,7 @@ def create_name_change_request_router(
             return
 
         await client_notification_service.notify_admins_name_change_request(
-            user, new_full_name, reply_markup=name_change_approval_kb(user.ID),
+            user, new_full_name, user_id=user.ID,
         )
 
         await message.answer(_REQUEST_SENT.get(lang, _REQUEST_SENT["ru"]))

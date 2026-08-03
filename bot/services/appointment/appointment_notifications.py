@@ -270,6 +270,11 @@ _NO_CLINIC_INFO = {
     "uz": "Ma'lumot mavjud emas",
 }
 
+_STATUS_LINE_LABEL = {
+    "ru": "Статус: {status}",
+    "uz": "Holat: {status}",
+}
+
 
 def reminder_text(lang: str = "ru") -> str:
     return _REMINDER_TEXT.get(lang, _REMINDER_TEXT["ru"])
@@ -1071,7 +1076,7 @@ class AppointmentNotificationService:
             )
         else:
             status_text = status_label(appointment.status, lang)
-            last_line = f"Статус: {status_text}"
+            last_line = _STATUS_LINE_LABEL.get(lang, _STATUS_LINE_LABEL["ru"]).format(status=status_text)
 
         message = _APPOINTMENT_MESSAGE_BODY.get(lang, _APPOINTMENT_MESSAGE_BODY["ru"]).format(
             header=_APPOINTMENT_MESSAGE_HEADER.get(lang, _APPOINTMENT_MESSAGE_HEADER["ru"]),

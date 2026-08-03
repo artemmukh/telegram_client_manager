@@ -4,13 +4,27 @@ from bot.models.medical_record import MedicalRecord
 from bot.services.medical_record.medical_record_management import READY_STATUSES, MedicalRecordService
 from bot.utils.medical_record_enums import MedicalRecordStatus
 
-FAILURE_MESSAGE = "Не удалось подготовить документ, обратитесь к администратору"
+FAILURE_MESSAGE = {
+    "ru": "Не удалось подготовить документ, обратитесь к администратору",
+    "uz": "Hujjatni tayyorlab bo'lmadi, administratorga murojaat qiling",
+}
+
+_PREPARING_DOCUMENT_MESSAGE = {
+    "ru": "Готовим документ, это может занять до минуты",
+    "uz": "Hujjat tayyorlanmoqda, bu bir daqiqagacha vaqt olishi mumkin",
+}
+
+_DOCUMENT_STILL_PREPARING_MESSAGE = {
+    "ru": "Документ ещё готовится, попробуйте через пару минут",
+    "uz": "Hujjat hali tayyorlanmoqda, bir necha daqiqadan so'ng urinib ko'ring",
+}
 
 
 async def deliver_medical_record(
     callback_query: CallbackQuery,
     medical_record_service: MedicalRecordService,
     appointment_id: int,
+    lang: str = "ru",
 ) -> None:
     """Handle the "Получить историю болезни" button, shared by admin and client.
 
@@ -40,19 +54,23 @@ async def deliver_medical_record(
         for record in documents:
             sent = await _send_document(callback_query, medical_record_service, record)
             if not sent:
-                await callback_query.message.answer(FAILURE_MESSAGE)
+                await callback_query.message.answer(FAILURE_MESSAGE.get(lang, FAILURE_MESSAGE["ru"]))
         return
 
-    await callback_query.answer("Готовим документ, это может занять до минуты", show_alert=True)
+    await callback_query.answer(
+        _PREPARING_DOCUMENT_MESSAGE.get(lang, _PREPARING_DOCUMENT_MESSAGE["ru"]), show_alert=True
+    )
 
     record = await medical_record_service.generate(appointment_id)
 
     if record is None or record.status is MedicalRecordStatus.FAILED:
-        await callback_query.message.answer(FAILURE_MESSAGE)
+        await callback_query.message.answer(FAILURE_MESSAGE.get(lang, FAILURE_MESSAGE["ru"]))
         return
 
     if record.status not in READY_STATUSES:
-        await callback_query.message.answer("Документ ещё готовится, попробуйте через пару минут")
+        await callback_query.message.answer(
+            _DOCUMENT_STILL_PREPARING_MESSAGE.get(lang, _DOCUMENT_STILL_PREPARING_MESSAGE["ru"])
+        )
         return
 
     await callback_query.message.answer_document(FSInputFile(record.file_path))
@@ -63,6 +81,7 @@ async def add_medical_record_document(
     medical_record_service: MedicalRecordService,
     appointment_id: int,
     diagnosis: str | None,
+    lang: str = "ru",
 ) -> None:
     """Handle the "Добавить документ" button, shared by admin and client.
 
@@ -81,20 +100,24 @@ async def add_medical_record_document(
     Callers are responsible for verifying the caller owns/may view this
     appointment before calling this helper.
     """
-    await callback_query.answer("Готовим документ, это может занять до минуты", show_alert=True)
+    await callback_query.answer(
+        _PREPARING_DOCUMENT_MESSAGE.get(lang, _PREPARING_DOCUMENT_MESSAGE["ru"]), show_alert=True
+    )
 
     record = await medical_record_service.generate(appointment_id, diagnosis)
 
     if record is None or record.status is MedicalRecordStatus.FAILED:
-        await callback_query.message.answer(FAILURE_MESSAGE)
+        await callback_query.message.answer(FAILURE_MESSAGE.get(lang, FAILURE_MESSAGE["ru"]))
         return
 
     if record.status not in READY_STATUSES:
-        await callback_query.message.answer("Документ ещё готовится, попробуйте через пару минут")
+        await callback_query.message.answer(
+            _DOCUMENT_STILL_PREPARING_MESSAGE.get(lang, _DOCUMENT_STILL_PREPARING_MESSAGE["ru"])
+        )
         return
 
     if not await _send_document(callback_query, medical_record_service, record):
-        await callback_query.message.answer(FAILURE_MESSAGE)
+        await callback_query.message.answer(FAILURE_MESSAGE.get(lang, FAILURE_MESSAGE["ru"]))
 
 
 async def _send_document(

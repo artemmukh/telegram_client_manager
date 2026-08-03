@@ -1091,7 +1091,7 @@ def create_admin_appointment_browser_router(
                 await callback_query.answer(_APPOINTMENT_NOT_FOUND_TEXT.get(lang, _APPOINTMENT_NOT_FOUND_TEXT["ru"]), show_alert=True)
                 return
 
-            await deliver_medical_record(callback_query, medical_record_service, callback_data.appointment_id)
+            await deliver_medical_record(callback_query, medical_record_service, callback_data.appointment_id, lang=lang)
 
         @router.callback_query(ApptActionCB.filter(F.action == "add_medical_record"))
         async def add_medical_record(callback_query: CallbackQuery, callback_data: ApptActionCB, state: FSMContext, current_user: User):
@@ -1104,7 +1104,7 @@ def create_admin_appointment_browser_router(
                 return
 
             await add_medical_record_document(
-                callback_query, medical_record_service, callback_data.appointment_id, appointment.purpose,
+                callback_query, medical_record_service, callback_data.appointment_id, appointment.purpose, lang=lang,
             )
 
     @router.callback_query(F.data == "noop")

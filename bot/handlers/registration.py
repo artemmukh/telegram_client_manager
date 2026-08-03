@@ -87,8 +87,8 @@ def create_reg_router(
         await state.update_data(language=lang)
         await state.set_state(RegisterStates.phone)
         await callback.answer('')
-        await callback.message.answer(msg.registration_intro(lang), reply_markup=reg_guide_kb())
-        await callback.message.answer(msg.send_contact_prompt(lang), reply_markup=contact_keyboard())
+        await callback.message.answer(msg.registration_intro(lang), reply_markup=reg_guide_kb(lang=lang))
+        await callback.message.answer(msg.send_contact_prompt(lang), reply_markup=contact_keyboard(lang=lang))
 
     @router.callback_query(F.data == "reg_guide")
     async def show_registration_guide(callback: CallbackQuery, state: FSMContext) -> None:
@@ -130,7 +130,7 @@ def create_reg_router(
             await state.set_state(RegisterStates.name_conflict)
             await message.answer(
                 msg.existing_user_found_prompt(result.existing_user.full_name, lang),
-                reply_markup=reg_name_conflict_kb(),
+                reply_markup=reg_name_conflict_kb(lang=lang),
             )
             return
 
@@ -180,7 +180,7 @@ def create_reg_router(
         lang = (await state.get_data()).get("language", "ru")
         if not await birth_date_processing(message, state, next_state=RegisterStates.gender, lang=lang):
             return
-        await message.answer(msg.gender_prompt(lang), reply_markup=gender_kb())
+        await message.answer(msg.gender_prompt(lang), reply_markup=gender_kb(lang=lang))
 
     @router.callback_query(RegisterStates.gender, GenderCB.filter())
     async def choose_gender(callback: CallbackQuery, callback_data: GenderCB, state: FSMContext):
@@ -188,7 +188,7 @@ def create_reg_router(
         await state.set_state(RegisterStates.confirm_register)
         await callback.answer('')
         lang = (await state.get_data()).get("language", "ru")
-        await show_confirmation(callback.message, state, reg_confirm_kb(), lang=lang)
+        await show_confirmation(callback.message, state, reg_confirm_kb(lang=lang), lang=lang)
 
     @router.callback_query(
         RegisterStates.confirm_register,
@@ -197,7 +197,7 @@ def create_reg_router(
     async def edit_name(callback: CallbackQuery, state: FSMContext):
         lang = (await state.get_data()).get("language", "ru")
         await edit_full_name(
-            callback, state, RegisterStates.edit_full_name, reply_markup=reg_edit_name_back_kb(), lang=lang,
+            callback, state, RegisterStates.edit_full_name, reply_markup=reg_edit_name_back_kb(lang=lang), lang=lang,
         )
 
     @router.message(
@@ -207,7 +207,7 @@ def create_reg_router(
         if not await full_name_processing(
                 message, state, next_state=RegisterStates.confirm_register, re_pattern=FULL_NAME_PATTERN, lang=lang):
             return
-        await show_confirmation(message, state, reg_confirm_kb(), lang=lang)
+        await show_confirmation(message, state, reg_confirm_kb(lang=lang), lang=lang)
 
     @router.callback_query(RegisterStates.edit_full_name, F.data == "reg_edit_name_back")
     async def back_from_full_name_edition(callback: CallbackQuery, state: FSMContext):
@@ -215,7 +215,7 @@ def create_reg_router(
         await callback.answer('')
         data = await state.get_data()
         lang = data.get("language", "ru")
-        await show_confirmation(callback.message, state, reg_confirm_kb(), lang=lang)
+        await show_confirmation(callback.message, state, reg_confirm_kb(lang=lang), lang=lang)
 
     @router.callback_query(RegisterStates.confirm_register, F.data == "reg_confirm")
     async def final_reg(callback: CallbackQuery, state: FSMContext):

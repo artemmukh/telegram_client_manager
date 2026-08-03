@@ -28,8 +28,8 @@ class FakeClientNotificationService:
     def __init__(self):
         self.name_change_requests = []
 
-    async def notify_admins_name_change_request(self, user, new_full_name, reply_markup):
-        self.name_change_requests.append((user, new_full_name, reply_markup))
+    async def notify_admins_name_change_request(self, user, new_full_name, user_id):
+        self.name_change_requests.append((user, new_full_name, user_id))
 
 
 def _get_handler(observer, name):
@@ -111,10 +111,10 @@ async def test_process_name_change_submits_request_and_notifies_admins(
     assert client_management.requested_changes == [(current_user.ID, "Петр Петров")]
     assert len(notification_service.name_change_requests) == 1
 
-    notified_user, new_full_name, reply_markup = notification_service.name_change_requests[0]
+    notified_user, new_full_name, user_id = notification_service.name_change_requests[0]
     assert notified_user is current_user
     assert new_full_name == "Петр Петров"
-    assert reply_markup is not None
+    assert user_id == current_user.ID
 
     assert await fsm_context.get_state() is None
     message.answer.assert_awaited_once()

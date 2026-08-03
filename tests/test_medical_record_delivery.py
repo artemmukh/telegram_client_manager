@@ -205,7 +205,7 @@ async def test_generation_returning_failed_shows_failure_message():
     await deliver_medical_record(callback_query, service, 10)
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE)
+    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE["ru"])
 
 
 @pytest.mark.asyncio
@@ -216,7 +216,7 @@ async def test_generation_returning_none_shows_failure_message():
     await deliver_medical_record(callback_query, service, 10)
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE)
+    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE["ru"])
 
 
 @pytest.mark.asyncio
@@ -273,7 +273,7 @@ async def test_one_record_failing_regeneration_does_not_block_the_rest_of_the_ba
     assert callback_query.message.answer_document.await_count == 1
     sent_document = callback_query.message.answer_document.call_args.args[0]
     assert sent_document.path == str(good_path)
-    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE)
+    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE["ru"])
 
 
 @pytest.mark.asyncio
@@ -287,7 +287,7 @@ async def test_ready_record_with_missing_file_and_failed_regeneration_reports_fa
     await deliver_medical_record(callback_query, service, 10)
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE)
+    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE["ru"])
 
 
 # --- add_medical_record_document ("➕ Добавить документ") ---
@@ -389,7 +389,7 @@ async def test_add_medical_record_document_generation_returning_failed_shows_fai
     await add_medical_record_document(callback_query, service, 10, "Кариес 37")
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE)
+    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE["ru"])
 
 
 @pytest.mark.asyncio
@@ -400,4 +400,4 @@ async def test_add_medical_record_document_generation_returning_none_shows_failu
     await add_medical_record_document(callback_query, service, 10, "Кариес 37")
 
     callback_query.message.answer_document.assert_not_awaited()
-    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE)
+    callback_query.message.answer.assert_awaited_once_with(FAILURE_MESSAGE["ru"])

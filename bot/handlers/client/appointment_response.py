@@ -74,6 +74,11 @@ _APPOINTMENT_CANCELLED = {
     "uz": "✅ Yozuvingiz bekor qilindi",
 }
 
+_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Неизвестный клиент",
+    "uz": "Noma'lum mijoz",
+}
+
 _PROPOSAL_ACCEPTED = {
     "ru": "✅ Вы согласились на новое время. Запись подтверждена.",
     "uz": "✅ Siz yangi vaqtga rozi bo'ldingiz. Yozuv tasdiqlandi.",
@@ -313,7 +318,7 @@ def create_client_appointment_router(
                                 await notification_service.notify_admin_cancellation(
                                     recipient.telegram_user_id,
                                     appointment,
-                                    client.full_name if client else "Неизвестный клиент",
+                                    client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
@@ -365,7 +370,7 @@ def create_client_appointment_router(
                                 await notification_service.notify_staff_proposal_accepted(
                                     recipient.telegram_user_id,
                                     appointment,
-                                    client.full_name if client else "Неизвестный клиент",
+                                    client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
@@ -413,7 +418,7 @@ def create_client_appointment_router(
                                 await notification_service.notify_staff_proposal_rejected(
                                     recipient.telegram_user_id,
                                     appointment,
-                                    client.full_name if client else "Неизвестный клиент",
+                                    client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
@@ -473,7 +478,7 @@ def create_client_appointment_router(
                                 await notification_service.notify_admin_cancellation(
                                     recipient.telegram_user_id,
                                     appointment,
-                                    client.full_name if client else "Неизвестный клиент",
+                                    client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
@@ -501,7 +506,7 @@ def create_client_appointment_router(
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND_DOT.get(lang, _APPOINTMENT_NOT_FOUND_DOT["ru"]), show_alert=True)
                     return
 
-                await deliver_medical_record(callback_query, medical_record_service, appointment_id)
+                await deliver_medical_record(callback_query, medical_record_service, appointment_id, lang=lang)
                 return
 
             if callback_data.action == "add_medical_record":
@@ -517,7 +522,7 @@ def create_client_appointment_router(
                     return
 
                 await add_medical_record_document(
-                    callback_query, medical_record_service, appointment_id, appointment.purpose,
+                    callback_query, medical_record_service, appointment_id, appointment.purpose, lang=lang,
                 )
                 return
 
@@ -634,7 +639,7 @@ def create_client_appointment_router(
                             await notification_service.notify_admin_cancellation(
                                 recipient.telegram_user_id,
                                 appointment,
-                                client.full_name if client else "Неизвестный клиент",
+                                client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                             )
                         except Exception:
                             pass  # Graceful fail если не получилось отправить

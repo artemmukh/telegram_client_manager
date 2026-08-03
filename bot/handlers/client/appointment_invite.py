@@ -42,6 +42,11 @@ _CANCEL_UNDONE = {
     "uz": "Bekor qilish bekor qilindi",
 }
 
+_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Неизвестный клиент",
+    "uz": "Noma'lum mijoz",
+}
+
 
 def create_client_appointment_invite_router(
     appointment_management_service: AppointmentManagement,
@@ -83,7 +88,7 @@ def create_client_appointment_invite_router(
                         await notification_service.notify_admin_confirmation(
                             recipient.telegram_user_id,
                             appointment,
-                            client.full_name if client else "Неизвестный клиент",
+                            client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                         )
                     except Exception:
                         pass  # Graceful fail если не получилось отправить
@@ -143,7 +148,7 @@ def create_client_appointment_invite_router(
                         await notification_service.notify_admin_cancellation(
                             recipient.telegram_user_id,
                             appointment,
-                            client.full_name if client else "Неизвестный клиент",
+                            client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                         )
                     except Exception:
                         pass  # Graceful fail если не получилось отправить

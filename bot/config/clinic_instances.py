@@ -70,8 +70,14 @@ LOCATION_BY_INSTANCE: dict[str, LocationContent] = {
         ),}
 }
 
-PRICE_LIST_STUB_MESSAGE = "Прайс-лист скоро появится здесь. Уточняйте у администратора клиники."
-LOCATION_STUB_MESSAGE = "Адрес клиники скоро появится здесь. Уточняйте у администратора клиники."
+PRICE_LIST_STUB_MESSAGE = {
+    "ru": "Прайс-лист скоро появится здесь. Уточняйте у администратора клиники.",
+    "uz": "Narxlar ro'yxati tez orada bu yerda paydo bo'ladi. Klinika administratoridan so'rang.",
+}
+LOCATION_STUB_MESSAGE = {
+    "ru": "Адрес клиники скоро появится здесь. Уточняйте у администратора клиники.",
+    "uz": "Klinika manzili tez orada bu yerda paydo bo'ladi. Klinika administratoridan so'rang.",
+}
 
 DATEPARSER_BY_INSTANCE: dict[str, str] = {
     "zb": "slots",

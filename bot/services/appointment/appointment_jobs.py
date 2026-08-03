@@ -26,6 +26,11 @@ from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, Noti
 
 logger = logging.getLogger(__name__)
 
+_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Неизвестный клиент",
+    "uz": "Noma'lum mijoz",
+}
+
 
 async def send_reminder_job(
     appointment_id: int,
@@ -88,7 +93,6 @@ async def send_reminder_job(
 
         # Get client info for potential admin notification
         client = await appointment_management.get_client_by_id(appointment.client_id)
-        client_name = client.full_name if client else "Неизвестный клиент"
 
         if hours_before not in (24, 2):
             logger.warning(f"Unknown reminder time: {hours_before}h")
@@ -148,6 +152,11 @@ async def send_reminder_job(
                 recipient_wants = recipient.reminder_24h if hours_before == 24 else recipient.reminder_2h
                 if not recipient_wants:
                     continue
+
+                client_name = (
+                    client.full_name if client
+                    else _UNKNOWN_CLIENT_LABEL.get(recipient.language, _UNKNOWN_CLIENT_LABEL["ru"])
+                )
 
                 try:
                     await notification_service.notify_admin_upcoming_appointment(

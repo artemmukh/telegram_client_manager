@@ -1,8 +1,8 @@
 ﻿import asyncio
 import logging
 
-from aiogram.types import InlineKeyboardMarkup
-
+from bot.keyboards.admin.name_change_kb import name_change_approval_kb
+from bot.keyboards.common.profile_kb import personal_data_broadcast_kb
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.telegram_notifier import TelegramNotifier
@@ -40,6 +40,22 @@ _NAME_CHANGE_REQUEST_TEXT = {
 }
 
 
+_PERSONAL_DATA_REQUEST_TEXT = {
+    "ru": (
+        "👋 Пожалуйста, заполните дату рождения и пол — это поможет нам вести ваш профиль точнее.\n\n"
+        "Нажмите кнопку ниже, чтобы указать данные.\n\n"
+        "Если кнопка не срабатывает, вы всегда можете сделать это через:\n"
+        "Профиль → Изменить личные данные → Добавить дату рождения и пол"
+    ),
+    "uz": (
+        "👋 Iltimos, tug'ilgan sanangiz va jinsingizni kiriting — bu profilingizni aniqroq yuritishimizga yordam beradi.\n\n"
+        "Ma'lumotlarni kiritish uchun quyidagi tugmani bosing.\n\n"
+        "Agar tugma ishlamasa, buni har doim quyidagi orqali qilishingiz mumkin:\n"
+        "Profil → Shaxsiy ma'lumotlarni o'zgartirish → Tug'ilgan sana va jinsni qo'shish"
+    ),
+}
+
+
 class ClientNotificationService:
     def __init__(self, notifier: TelegramNotifier, user_repository: UserRepository) -> None:
         self.notifier = notifier
@@ -72,7 +88,7 @@ class ClientNotificationService:
                 )
 
     async def notify_admins_name_change_request(
-        self, user: User, new_full_name: str, reply_markup: InlineKeyboardMarkup
+        self, user: User, new_full_name: str, user_id: int
     ) -> None:
         """Best-effort broadcast asking admins to approve/reject a client's
         name-change request. Never raises: a failed delivery to one admin must
@@ -86,6 +102,7 @@ class ClientNotificationService:
             message_text = _NAME_CHANGE_REQUEST_TEXT.get(admin.language, _NAME_CHANGE_REQUEST_TEXT["ru"]).format(
                 current_full_name=user.full_name, new_full_name=new_full_name, phone=user.phone
             )
+            reply_markup = name_change_approval_kb(user_id, lang=admin.language)
 
             try:
                 await self.notifier.send_message(
@@ -98,7 +115,7 @@ class ClientNotificationService:
                     f"Failed to notify admin {admin.telegram_user_id} about name change request: {e}"
                 )
 
-    async def broadcast_personal_data_request(self, reply_markup: InlineKeyboardMarkup) -> None:
+    async def broadcast_personal_data_request(self) -> None:
         """Best-effort broadcast asking clients missing birth date/gender to fill
         them in. Never raises: a failed delivery to one client must not block
         delivery to the others."""
@@ -108,18 +125,14 @@ class ClientNotificationService:
         #     "Приношу извинения за неудобства. Работа над исправлением уже ведётся."
         # )
 
-        message_text = (
-            "👋 Пожалуйста, заполните дату рождения и пол — это поможет нам вести ваш профиль точнее.\n\n"
-            "Нажмите кнопку ниже, чтобы указать данные.\n\n"
-            "Если кнопка не срабатывает, вы всегда можете сделать это через:\n"
-            "Профиль → Изменить личные данные → Добавить дату рождения и пол"
-        )
-
         clients = await self.user_repository.get_clients_missing_personal_data()
 
         for client in clients:
             if client.telegram_user_id is None:
                 continue
+
+            message_text = _PERSONAL_DATA_REQUEST_TEXT.get(client.language, _PERSONAL_DATA_REQUEST_TEXT["ru"])
+            reply_markup = personal_data_broadcast_kb(lang=client.language)
 
             try:
                 # await self.notifier.send_message(chat_id=client.telegram_user_id, text=text)

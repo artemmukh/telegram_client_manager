@@ -1,4 +1,5 @@
 import pytest
+from aiogram.types import InlineKeyboardMarkup
 
 from bot.models.user import User
 from bot.services.client.client_notifications import ClientNotificationService
@@ -92,13 +93,11 @@ async def test_notify_admins_name_change_request_sends_with_keyboard_and_survive
         telegram_user_id=1001,
         clinic_id=1,
     )
-    keyboard = object()
-
-    await service.notify_admins_name_change_request(user, "Петров Петр", reply_markup=keyboard)
+    await service.notify_admins_name_change_request(user, "Петров Петр", user_id=user.ID)
 
     assert len(notifier.sent_messages) == 1
     assert notifier.sent_messages[0]['chat_id'] == 200
-    assert notifier.sent_messages[0]['reply_markup'] is keyboard
+    assert isinstance(notifier.sent_messages[0]['reply_markup'], InlineKeyboardMarkup)
 
 
 @pytest.mark.asyncio
@@ -110,9 +109,8 @@ async def test_broadcast_personal_data_request_sends_to_every_client_with_telegr
     notifier = FakeTelegramNotifier()
     repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
     service = ClientNotificationService(notifier, repo)
-    keyboard = object()
 
-    await service.broadcast_personal_data_request(reply_markup=keyboard)
+    await service.broadcast_personal_data_request()
 
     assert {message['chat_id'] for message in notifier.sent_messages} == {100, 200}
 
@@ -130,7 +128,7 @@ async def test_broadcast_personal_data_request_skips_client_without_telegram_id(
     repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
     service = ClientNotificationService(notifier, repo)
 
-    await service.broadcast_personal_data_request(reply_markup=object())
+    await service.broadcast_personal_data_request()
 
     assert len(notifier.sent_messages) == 1
     assert notifier.sent_messages[0]['chat_id'] == 200
@@ -147,7 +145,7 @@ async def test_broadcast_personal_data_request_continues_past_per_recipient_fail
     repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
     service = ClientNotificationService(notifier, repo)
 
-    await service.broadcast_personal_data_request(reply_markup=object())
+    await service.broadcast_personal_data_request()
 
     assert {message['chat_id'] for message in notifier.sent_messages} == {100, 300}
 
@@ -158,11 +156,10 @@ async def test_broadcast_personal_data_request_sends_exact_reply_markup_and_fall
     notifier = FakeTelegramNotifier()
     repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
     service = ClientNotificationService(notifier, repo)
-    keyboard = object()
 
-    await service.broadcast_personal_data_request(reply_markup=keyboard)
+    await service.broadcast_personal_data_request()
 
     assert len(notifier.sent_messages) == 1
     sent = notifier.sent_messages[0]
-    assert sent['reply_markup'] is keyboard
+    assert isinstance(sent['reply_markup'], InlineKeyboardMarkup)
     assert "Профиль → Изменить личные данные → Добавить дату рождения и пол" in sent['text']

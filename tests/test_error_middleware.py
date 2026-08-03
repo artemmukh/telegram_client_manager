@@ -19,8 +19,16 @@ import pytest
 from bot.exceptions.exceptions import PaginationError
 from bot.exceptions.user_exceptions import ValidationError
 from bot.middlewares.error import ErrorMiddleware
+from bot.models.user import User
+from bot.utils.role import Role
 
 LOGGER_NAME = "bot.middlewares.error"
+
+
+def _client(language="uz"):
+    return User(
+        ID=1, full_name="Клиентов Клиент", phone="+998900000001", role=Role.CLIENT, language=language,
+    )
 
 
 def _make_message():
@@ -86,6 +94,40 @@ async def test_bot_exception_answers_with_generic_message_and_logs_unexpected(ca
     event.answer.assert_awaited_once_with("Произошла ошибка.")
     assert "Unexpected" in caplog.text
     assert "Unhandled exception" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_bot_exception_uses_current_user_language_populated_by_inner_middleware(caplog):
+    """current_user is only populated by UserContextMiddleware while running
+    handler(event, data) (i.e. *inside* the try block), never before it, so
+    the language resolution must read data after the handler ran, not at the
+    top of __call__."""
+    event = _make_message()
+
+    async def handler(event, data):
+        data["current_user"] = _client(language="uz")
+        raise PaginationError("stale page")
+
+    with caplog.at_level("ERROR", logger=LOGGER_NAME):
+        result = await _call_middleware(handler, event)
+
+    assert result is None
+    event.answer.assert_awaited_once_with("Xatolik yuz berdi.")
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_uses_current_user_language_populated_by_inner_middleware(caplog):
+    event = _make_message()
+
+    async def handler(event, data):
+        data["current_user"] = _client(language="uz")
+        raise TypeError("boom")
+
+    with caplog.at_level("ERROR", logger=LOGGER_NAME):
+        result = await _call_middleware(handler, event)
+
+    assert result is None
+    event.answer.assert_awaited_once_with("Xatolik yuz berdi, biz allaqachon buni hal qilmoqdamiz")
 
 
 @pytest.mark.asyncio

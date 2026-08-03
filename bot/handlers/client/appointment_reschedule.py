@@ -58,6 +58,11 @@ _DIRECT_EDIT_SUCCESS = {
     "uz": "✅ Ariza vaqti o'zgartirildi.",
 }
 
+_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Неизвестный клиент",
+    "uz": "Noma'lum mijoz",
+}
+
 _RESCHEDULE_REQUEST_SENT_TEMPLATE = {
     "ru": (
         "✅ Заявка на перенос отправлена. Ожидайте решения клиники.\n\n"
@@ -281,13 +286,13 @@ def create_client_reschedule_router(
                         await notification_service.notify_admin_client_changed_time(
                             recipient.telegram_user_id,
                             appointment,
-                            current_user.full_name if current_user else "Неизвестный клиент",
+                            current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                         )
                     else:
                         message_id = await notification_service.notify_staff_reschedule_requested(
                             recipient.telegram_user_id,
                             appointment,
-                            current_user.full_name if current_user else "Неизвестный клиент",
+                            current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                         )
                         if message_id is not None:
                             await appointment_management_service.record_notification(

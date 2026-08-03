@@ -116,23 +116,25 @@ async def test_open_personal_data_clears_state_and_shows_submenu(fsm_context):
 
 @pytest.mark.asyncio
 async def test_start_add_birth_date_sets_birth_date_state(fsm_context):
-    router = _router(FakeClientManagement(_client_user()))
+    current_user = _client_user()
+    router = _router(FakeClientManagement(current_user))
     start_add_birth_date = _get_handler(router.callback_query, "start_add_birth_date")
 
-    await start_add_birth_date(_callback(data="profile_add_birth_date"), fsm_context)
+    await start_add_birth_date(_callback(data="profile_add_birth_date"), fsm_context, current_user=current_user)
 
     assert await fsm_context.get_state() == ProfilePersonalDataStates.birth_date
 
 
 @pytest.mark.asyncio
 async def test_process_birth_date_invalid_format_stays_in_birth_date_state(fsm_context):
-    router = _router(FakeClientManagement(_client_user()))
+    current_user = _client_user()
+    router = _router(FakeClientManagement(current_user))
     process_birth_date = _get_handler(router.message, "process_birth_date")
 
     await fsm_context.set_state(ProfilePersonalDataStates.birth_date)
     message = _message("not-a-date")
 
-    await process_birth_date(message, fsm_context)
+    await process_birth_date(message, fsm_context, current_user=current_user)
 
     assert await fsm_context.get_state() == ProfilePersonalDataStates.birth_date
     message.answer.assert_awaited_once()
@@ -140,13 +142,14 @@ async def test_process_birth_date_invalid_format_stays_in_birth_date_state(fsm_c
 
 @pytest.mark.asyncio
 async def test_process_birth_date_valid_format_transitions_to_gender_state(fsm_context):
-    router = _router(FakeClientManagement(_client_user()))
+    current_user = _client_user()
+    router = _router(FakeClientManagement(current_user))
     process_birth_date = _get_handler(router.message, "process_birth_date")
 
     await fsm_context.set_state(ProfilePersonalDataStates.birth_date)
     message = _message("05.03.1990")
 
-    await process_birth_date(message, fsm_context)
+    await process_birth_date(message, fsm_context, current_user=current_user)
 
     assert await fsm_context.get_state() == ProfilePersonalDataStates.gender
     data = await fsm_context.get_data()

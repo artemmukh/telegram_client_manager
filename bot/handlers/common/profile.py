@@ -99,7 +99,7 @@ def create_profile_router(client_management_service: ClientManagement = None):
     )
     async def profile(message: Message, current_user: User | None = None):
 
-        reply_markup = profile_menu_kb() if client_management_service else None
+        reply_markup = profile_menu_kb(lang=current_user.language) if client_management_service else None
 
         await message.answer(build_profile_text(current_user, current_user.language), reply_markup=reply_markup)
 
@@ -107,9 +107,13 @@ def create_profile_router(client_management_service: ClientManagement = None):
         @router.callback_query(F.data == "profile_reminder_settings", RoleFilter("*"))
         async def open_reminder_settings(callback_query: CallbackQuery, current_user: User | None = None):
             if current_user.role == Role.ADMIN:
-                reply_markup = admin_reminder_settings_kb(current_user.reminder_24h, current_user.reminder_2h)
+                reply_markup = admin_reminder_settings_kb(
+                    current_user.reminder_24h, current_user.reminder_2h, lang=current_user.language,
+                )
             else:
-                reply_markup = reminder_settings_kb(current_user.reminder_24h, current_user.reminder_2h)
+                reply_markup = reminder_settings_kb(
+                    current_user.reminder_24h, current_user.reminder_2h, lang=current_user.language,
+                )
 
             await callback_query.message.edit_text(
                 build_profile_text(current_user, current_user.language),
@@ -164,7 +168,7 @@ def create_profile_router(client_management_service: ClientManagement = None):
         @router.callback_query(F.data == "profile_back", RoleFilter("*"))
         async def back_to_profile(callback_query: CallbackQuery, state: FSMContext, current_user: User | None = None):
             await state.clear()
-            reply_markup = profile_menu_kb()
+            reply_markup = profile_menu_kb(lang=current_user.language)
 
             try:
                 await callback_query.message.edit_text(
@@ -194,7 +198,9 @@ def create_profile_router(client_management_service: ClientManagement = None):
                 await callback_query.message.edit_text(
                     build_profile_text(updated_user, updated_user.language),
                     reply_markup=_with_back_button(
-                        reminder_settings_kb(updated_user.reminder_24h, updated_user.reminder_2h),
+                        reminder_settings_kb(
+                            updated_user.reminder_24h, updated_user.reminder_2h, lang=updated_user.language,
+                        ),
                         updated_user.language,
                     ),
                 )
@@ -222,7 +228,9 @@ def create_profile_router(client_management_service: ClientManagement = None):
                 await callback_query.message.edit_text(
                     build_profile_text(updated_user, updated_user.language),
                     reply_markup=_with_back_button(
-                        admin_reminder_settings_kb(updated_user.reminder_24h, updated_user.reminder_2h),
+                        admin_reminder_settings_kb(
+                            updated_user.reminder_24h, updated_user.reminder_2h, lang=updated_user.language,
+                        ),
                         updated_user.language,
                     ),
                 )
