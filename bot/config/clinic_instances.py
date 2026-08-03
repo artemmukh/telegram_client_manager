@@ -30,7 +30,7 @@ STAFF_SEED_BY_INSTANCE: dict[str, list[int]] = {
 
 
 class PriceListContent(TypedDict):
-    image_paths: list[str]
+    image_paths: dict[str, list[str]]
     caption: dict[str, str]
 
 
@@ -43,18 +43,24 @@ class DateParserContent(TypedDict):
 
 # None means "not set up yet" -- the handler sends a placeholder text message
 # instead of trying to load images that don't exist for that clinic.
-# image_paths/image_path are shared across languages (no separate Uzbek
-# images exist yet) -- only the caption is translated.
+# image_paths is per-language; clinics without a dedicated Uzbek scan (mm)
+# just point "uz" at the same files as "ru".
 PRICE_LIST_BY_INSTANCE: dict[str, PriceListContent] = {
     "zb": {
-        "image_paths": ["data/price_list/rus_1pg.png", "data/price_list/rus_2pg.png"],
+        "image_paths": {
+            "ru": ["data/price_list/rus_1pg.png", "data/price_list/rus_2pg.png"],
+            "uz": ["data/price_list/uzb_1pg.png", "data/price_list/uzb_2pg.png"],
+        },
         "caption": {
             "ru": "Прайс-лист оказываемых услуг.",
             "uz": "Ko'rsatiladigan xizmatlar narxlar ro'yxati.",
         },
     },
     "mm": {
-        "image_paths": ["data/price_list/price_mm.jpg", "data/price_list/schedule_mm.jpg"],
+        "image_paths": {
+            "ru": ["data/price_list/price_mm.jpg", "data/price_list/schedule_mm.jpg"],
+            "uz": ["data/price_list/price_mm.jpg", "data/price_list/schedule_mm.jpg"],
+        },
         "caption": {
             "ru": "График и Прайс-лист оказываемых услуг.",
             "uz": "Ko'rsatiladigan xizmatlar jadvali va narxlar ro'yxati.",

@@ -21,7 +21,7 @@ def create_price_list_router(instance: str):
             await message.answer(PRICE_LIST_STUB_MESSAGE.get(lang, PRICE_LIST_STUB_MESSAGE["ru"]))
             return
 
-        image_paths = price_list["image_paths"]
+        image_paths = price_list["image_paths"].get(lang, price_list["image_paths"]["ru"])
         caption = price_list["caption"].get(lang, price_list["caption"]["ru"])
         media = [
             InputMediaPhoto(media=FSInputFile(path)) if index < len(image_paths) - 1
