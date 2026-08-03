@@ -85,34 +85,55 @@ def parse_ru_datetime(text: str) -> Optional[datetime]:
     return parsed
 
 
-def format_datetime_for_display(dt: datetime) -> str:
+_MONTH_NAMES_GENITIVE_RU = {
+    1: 'января', 2: 'февраля', 3: 'марта', 4: 'апреля',
+    5: 'мая', 6: 'июня', 7: 'июля', 8: 'августа',
+    9: 'сентября', 10: 'октября', 11: 'ноября', 12: 'декабря'
+}
+
+# Uzbek month names don't inflect by grammatical case, so the same forms
+# used for calendar headers (appointment_calendar_helpers._MONTH_NAMES_UZ)
+# apply here too. Duplicated as a literal rather than imported, since this
+# is a Service module and appointment_calendar_helpers.py is a Handler-layer
+# module -- importing it would invert the Handler -> Service dependency
+# direction mandated by CLAUDE.md.
+_MONTH_NAMES_UZ = {
+    1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel",
+    5: "May", 6: "Iyun", 7: "Iyul", 8: "Avgust",
+    9: "Sentabr", 10: "Oktabr", 11: "Noyabr", 12: "Dekabr",
+}
+
+_MONTH_NAMES_GENITIVE = {"ru": _MONTH_NAMES_GENITIVE_RU, "uz": _MONTH_NAMES_UZ}
+
+_WEEKDAYS_FULL = {
+    "ru": {0: 'понедельник', 1: 'вторник', 2: 'среда', 3: 'четверг', 4: 'пятница', 5: 'суббота', 6: 'воскресенье'},
+    "uz": {0: 'Dushanba', 1: 'Seshanba', 2: 'Chorshanba', 3: 'Payshanba', 4: 'Juma', 5: 'Shanba', 6: 'Yakshanba'},
+}
+
+
+def format_datetime_for_display(dt: datetime, lang: str = "ru") -> str:
     """
     Format datetime for display to user.
 
-    Example: "15 сентября 2026, 15:00"
+    Example (ru): "15 сентября 2026, 15:00"
+    Example (uz): "15 Sentabr 2026, 15:00"
     """
-    months = {
-        1: 'января', 2: 'февраля', 3: 'марта', 4: 'апреля',
-        5: 'мая', 6: 'июня', 7: 'июля', 8: 'августа',
-        9: 'сентября', 10: 'октября', 11: 'ноября', 12: 'декабря'
-    }
+    months = _MONTH_NAMES_GENITIVE.get(lang, _MONTH_NAMES_GENITIVE["ru"])
     month_name = months.get(dt.month, '')
     return f"{dt.day} {month_name} {dt.year}, {dt.hour:02d}:{dt.minute:02d}"
 
 
-def format_datetime_for_confirmation(dt: datetime) -> str:
+def format_datetime_for_confirmation(dt: datetime, lang: str = "ru") -> str:
     """
     Format datetime for the "did you mean" confirmation screen, with the
     weekday name prefixed.
 
-    Example: "четверг, 30 июля 2026, 16:00"
+    Example (ru): "четверг, 30 июля 2026, 16:00"
+    Example (uz): "Payshanba, 30 iyul 2026, 16:00"
     """
-    weekdays = {
-        0: 'понедельник', 1: 'вторник', 2: 'среда', 3: 'четверг',
-        4: 'пятница', 5: 'суббота', 6: 'воскресенье'
-    }
+    weekdays = _WEEKDAYS_FULL.get(lang, _WEEKDAYS_FULL["ru"])
     weekday_name = weekdays[dt.weekday()]
-    return f"{weekday_name}, {format_datetime_for_display(dt)}"
+    return f"{weekday_name}, {format_datetime_for_display(dt, lang)}"
 
 
 def format_appointment_card_datetime(appointment_time: str) -> str:
@@ -199,7 +220,7 @@ def build_reschedule_proposal_line(appointment: Appointment, viewer: CreatedBy, 
         return None
 
     try:
-        proposed_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
+        proposed_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime), lang)
     except ValueError:
         proposed_display = appointment.proposed_datetime
 

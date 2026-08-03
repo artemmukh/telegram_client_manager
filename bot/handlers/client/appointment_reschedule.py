@@ -226,7 +226,7 @@ def create_client_reschedule_router(
         await state.update_data(slot=callback_data.slot, new_datetime=new_datetime)
         await state.set_state(ClientRescheduleStates.confirm)
 
-        display_datetime = format_datetime_for_display(parsed_datetime)
+        display_datetime = format_datetime_for_display(parsed_datetime, lang)
         template = _RESCHEDULE_CONFIRM_PROMPT_TEMPLATE.get(lang, _RESCHEDULE_CONFIRM_PROMPT_TEMPLATE["ru"])
         text = template.format(display=display_datetime)
 
@@ -268,8 +268,8 @@ def create_client_reschedule_router(
         if is_direct_edit:
             message_text = _DIRECT_EDIT_SUCCESS.get(lang, _DIRECT_EDIT_SUCCESS["ru"])
         else:
-            old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime))
-            new_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime))
+            old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime), lang)
+            new_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime), lang)
             template = _RESCHEDULE_REQUEST_SENT_TEMPLATE.get(lang, _RESCHEDULE_REQUEST_SENT_TEMPLATE["ru"])
             message_text = template.format(old=old_display, new=new_display)
         await callback_query.message.edit_text(message_text, reply_markup=success_kb)

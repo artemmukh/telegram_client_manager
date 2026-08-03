@@ -452,7 +452,7 @@ def create_admin_appointment_creation_router(instance:str,
             slot=callback_data.slot,
             appointment_datetime=appointment_datetime,
             appointment_datetime_display=format_datetime_for_display(
-                datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
+                datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M"), lang
             ),
         )
         await state.set_state(AppointmentCreationStates.purpose)

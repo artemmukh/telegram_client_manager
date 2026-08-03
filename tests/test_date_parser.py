@@ -171,6 +171,21 @@ def test_format_datetime_for_confirmation_matches_display_for_another_weekday():
     assert result == "суббота, " + format_datetime_for_display(dt)
 
 
+def test_format_datetime_for_display_uz():
+    dt = datetime(2026, 9, 15, 15, 0)
+
+    assert format_datetime_for_display(dt, "uz") == "15 Sentabr 2026, 15:00"
+
+
+def test_format_datetime_for_confirmation_uz():
+    dt = datetime(2026, 7, 30, 16, 0)
+    assert dt.weekday() == 3  # Thursday
+
+    result = format_datetime_for_confirmation(dt, "uz")
+
+    assert result == "Payshanba, 30 Iyul 2026, 16:00"
+
+
 def _appointment(**overrides):
     fields = dict(
         clinic_id=1,

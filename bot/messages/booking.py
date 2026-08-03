@@ -154,7 +154,7 @@ def build_booking_confirmation_text(
     doctor_name: str, day: date, slot: str, complaint: str, clinic_name: str | None, lang: str = "ru"
 ) -> str:
     slot_time = datetime.strptime(slot, "%H:%M").time()
-    display_datetime = format_datetime_for_display(datetime.combine(day, slot_time))
+    display_datetime = format_datetime_for_display(datetime.combine(day, slot_time), lang)
     clinic_display = clinic_name or _NO_CLINIC_INFO.get(lang, _NO_CLINIC_INFO["ru"])
 
     if lang == "uz":

@@ -284,7 +284,7 @@ async def datetime_processing(message: Message, state: FSMContext, next_state: S
 
     await state.update_data(
         appointment_datetime_parsed=parsed_dt,
-        appointment_datetime_display=format_datetime_for_confirmation(parsed_dt)
+        appointment_datetime_display=format_datetime_for_confirmation(parsed_dt, lang)
     )
     await state.set_state(next_state)
     return True
@@ -523,12 +523,12 @@ async def apply_picked_propose_slot(
     data = await state.get_data()
     appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
     parsed_dt = datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
-    new_display = format_datetime_for_confirmation(parsed_dt)
+    new_display = format_datetime_for_confirmation(parsed_dt, lang)
 
     await state.update_data(appointment_datetime_parsed=parsed_dt, appointment_datetime_display=new_display)
     await state.set_state(confirm_state)
 
-    old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]))
+    old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]), lang)
     await callback_query.message.edit_text(
         _PROPOSE_DATETIME_TO_CLIENT.get(lang, _PROPOSE_DATETIME_TO_CLIENT["ru"]).format(
             old=old_display, new=new_display,

@@ -79,7 +79,7 @@ def appointment_manage_list_kb(
 
     for appointment in items:
         builder.button(
-            text=build_history_button_text(appointment),
+            text=build_history_button_text(appointment, lang),
             callback_data=ClientManageCardCB(appointment_id=appointment.id, page=current_page).pack(),
         )
 

@@ -49,7 +49,7 @@ def appointment_history_list_kb(
 
     for appointment in items:
         builder.button(
-            text=build_history_button_text(appointment),
+            text=build_history_button_text(appointment, lang),
             callback_data=ClientHistoryCardCB(appointment_id=appointment.id, tab=tab, page=current_page).pack(),
         )
 

@@ -779,12 +779,12 @@ def create_admin_appointment_browser_router(
         data = await state.get_data()
         appointment_datetime = f"{data['day_iso']} {callback_data.slot}"
         parsed_dt = datetime.strptime(appointment_datetime, "%Y-%m-%d %H:%M")
-        new_display = format_datetime_for_confirmation(parsed_dt)
+        new_display = format_datetime_for_confirmation(parsed_dt, lang)
 
         await state.update_data(appointment_datetime_parsed=parsed_dt, appointment_datetime_display=new_display)
         await state.set_state(AppointmentBrowserStates.confirm_new_datetime)
 
-        old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]))
+        old_display = format_datetime_for_confirmation(datetime.fromisoformat(data["old_datetime"]), lang)
         await callback_query.message.edit_text(
             _NEW_DATETIME_CHANGE_TEXT.get(lang, _NEW_DATETIME_CHANGE_TEXT["ru"]).format(old=old_display, new=new_display),
             reply_markup=appointment_confirm_new_datetime_kb(data["appointment_id"], data["mode"], data["page"], lang=lang),
@@ -845,7 +845,7 @@ def create_admin_appointment_browser_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
-        old_display = format_datetime_for_confirmation(datetime.fromisoformat(owned_appointment.datetime))
+        old_display = format_datetime_for_confirmation(datetime.fromisoformat(owned_appointment.datetime), lang)
         new_display = data.get('appointment_datetime_display')
 
         if appointment.status == AppointmentStatus.CONFIRMED:

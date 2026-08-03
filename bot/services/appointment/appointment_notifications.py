@@ -406,9 +406,9 @@ def client_reschedule_request_expired_text(datetime_value: str, lang: str = "ru"
     )
 
 
-def _format_datetime_value(value: str) -> str:
+def _format_datetime_value(value: str, lang: str = "ru") -> str:
     try:
-        return format_datetime_for_display(datetime.fromisoformat(value))
+        return format_datetime_for_display(datetime.fromisoformat(value), lang)
     except ValueError:
         return value
 
@@ -655,7 +655,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=admin_client_changed_time_text(
-                client_name, _format_datetime_value(appointment.datetime), lang,
+                client_name, _format_datetime_value(appointment.datetime, lang), lang,
             ),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
@@ -782,7 +782,7 @@ class AppointmentNotificationService:
             return None
 
         message_text = reschedule_proposed_text(
-            _format_datetime_value(appointment.proposed_datetime), client.language,
+            _format_datetime_value(appointment.proposed_datetime, client.language), client.language,
         )
 
         return await self.notifier.send_message(
@@ -804,8 +804,8 @@ class AppointmentNotificationService:
             return None
 
         message_text = appointment_reschedule_proposed_text(
-            _format_datetime_value(appointment.datetime),
-            _format_datetime_value(appointment.proposed_datetime),
+            _format_datetime_value(appointment.datetime, client.language),
+            _format_datetime_value(appointment.proposed_datetime, client.language),
             client.language,
         )
 
@@ -830,7 +830,7 @@ class AppointmentNotificationService:
             return False
 
         message_text = proposal_reminder_text(
-            _format_datetime_value(appointment.proposed_datetime), client.language,
+            _format_datetime_value(appointment.proposed_datetime, client.language), client.language,
         )
 
         await self.notifier.send_message(
@@ -856,8 +856,8 @@ class AppointmentNotificationService:
             return False
 
         message_text = appointment_reschedule_reminder_text(
-            _format_datetime_value(appointment.datetime),
-            _format_datetime_value(appointment.proposed_datetime),
+            _format_datetime_value(appointment.datetime, client.language),
+            _format_datetime_value(appointment.proposed_datetime, client.language),
             client.language,
         )
 
@@ -963,8 +963,8 @@ class AppointmentNotificationService:
         message_text = staff_reschedule_requested_text(
             client_name,
             appointment.client_phone or '—',
-            _format_datetime_value(appointment.datetime),
-            _format_datetime_value(appointment.proposed_datetime),
+            _format_datetime_value(appointment.datetime, lang),
+            _format_datetime_value(appointment.proposed_datetime, lang),
             appointment.purpose,
             lang,
         )
@@ -993,7 +993,7 @@ class AppointmentNotificationService:
             return False
 
         message_text = client_reschedule_accepted_text(
-            _format_datetime_value(appointment.datetime), client.language,
+            _format_datetime_value(appointment.datetime, client.language), client.language,
         )
 
         await self.notifier.send_message(
@@ -1043,7 +1043,7 @@ class AppointmentNotificationService:
             return False
 
         message_text = client_reschedule_request_expired_text(
-            _format_datetime_value(appointment.datetime), client.language,
+            _format_datetime_value(appointment.datetime, client.language), client.language,
         )
 
         await self.notifier.send_message(

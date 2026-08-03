@@ -111,9 +111,9 @@ _NEW_TIME_ASSIGNED = {
 }
 
 
-def _format_datetime_value(value: str) -> str:
+def _format_datetime_value(value: str, lang: str = "ru") -> str:
     try:
-        return format_datetime_for_display(datetime.fromisoformat(value))
+        return format_datetime_for_display(datetime.fromisoformat(value), lang)
     except ValueError:
         return value
 
@@ -449,7 +449,7 @@ def create_admin_booking_requests_router(
             await callback_query.answer(_TIME_CHANGED.get(lang, _TIME_CHANGED["ru"]))
             await callback_query.message.edit_text(
                 _TIME_CHANGED_TO.get(lang, _TIME_CHANGED_TO["ru"]).format(
-                    value=_format_datetime_value(appointment.datetime),
+                    value=_format_datetime_value(appointment.datetime, lang),
                 )
             )
             await invalidate_booking_siblings(callback_query, appointment)
@@ -471,7 +471,7 @@ def create_admin_booking_requests_router(
         await callback_query.answer(_TIME_CHANGED_AND_NOTIFIED.get(lang, _TIME_CHANGED_AND_NOTIFIED["ru"]))
         await callback_query.message.edit_text(
             _NEW_TIME_ASSIGNED.get(lang, _NEW_TIME_ASSIGNED["ru"]).format(
-                value=_format_datetime_value(appointment.datetime),
+                value=_format_datetime_value(appointment.datetime, lang),
             )
         )
         await invalidate_booking_siblings(callback_query, appointment)
