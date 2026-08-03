@@ -31,43 +31,65 @@ STAFF_SEED_BY_INSTANCE: dict[str, list[int]] = {
 
 class PriceListContent(TypedDict):
     image_paths: list[str]
-    caption: str
+    caption: dict[str, str]
 
 
 class LocationContent(TypedDict):
     image_path: str
-    caption: str
+    caption: dict[str, str]
 
 class DateParserContent(TypedDict):
     clinic_mode: str
 
 # None means "not set up yet" -- the handler sends a placeholder text message
 # instead of trying to load images that don't exist for that clinic.
+# image_paths/image_path are shared across languages (no separate Uzbek
+# images exist yet) -- only the caption is translated.
 PRICE_LIST_BY_INSTANCE: dict[str, PriceListContent] = {
     "zb": {
         "image_paths": ["data/price_list/rus_1pg.png", "data/price_list/rus_2pg.png"],
-        "caption": "Прайс-лист оказываемых услуг.",
+        "caption": {
+            "ru": "Прайс-лист оказываемых услуг.",
+            "uz": "Ko'rsatiladigan xizmatlar narxlar ro'yxati.",
+        },
     },
     "mm": {
         "image_paths": ["data/price_list/price_mm.jpg", "data/price_list/schedule_mm.jpg"],
-        "caption": "График и Прайс-лист оказываемых услуг.",
+        "caption": {
+            "ru": "График и Прайс-лист оказываемых услуг.",
+            "uz": "Ko'rsatiladigan xizmatlar jadvali va narxlar ro'yxati.",
+        },
     },
 }
 
 LOCATION_BY_INSTANCE: dict[str, LocationContent] = {
     "zb": {
         "image_path": "data/location/location.png",
-        "caption": (
-            "https://yandex.uz/maps/-/CTBl4J6V\n"
-            "ул. Мирзо Улугбека 105/3 (вход со стороны дороги).\n"
-            'Ориентир: магазин "Чимган".'
-        ),
+        "caption": {
+            "ru": (
+                "https://yandex.uz/maps/-/CTBl4J6V\n"
+                "ул. Мирзо Улугбека 105/3 (вход со стороны дороги).\n"
+                'Ориентир: магазин "Чимган".'
+            ),
+            "uz": (
+                "https://yandex.uz/maps/-/CTBl4J6V\n"
+                "Mirzo Ulug'bek ko'chasi 105/3 (yo'l tomonidan kirish).\n"
+                "Mo'ljal: \"Chimgan\" do'koni."
+            ),
+        },
     },
     "mm": {"image_path": "data/location/location_mm.png",
-        "caption": (
-            "https://yandex.uz/maps/-/CTfUePor\n"
-            "Мануал мед, ул. Шота Руставели, 91"
-        ),}
+        "caption": {
+            "ru": (
+                "https://yandex.uz/maps/-/CTfUePor\n"
+                "Мануал мед, ул. Шота Руставели, 91"
+            ),
+            "uz": (
+                "https://yandex.uz/maps/-/CTfUePor\n"
+                "Manual Med, Shota Rustaveli ko'chasi, 91"
+            ),
+        },
+    }
 }
 
 PRICE_LIST_STUB_MESSAGE = {

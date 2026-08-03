@@ -21,7 +21,8 @@ def create_price_geo_router(instance: str):
             await message.answer(LOCATION_STUB_MESSAGE.get(lang, LOCATION_STUB_MESSAGE["ru"]))
             return
 
-        media = [InputMediaPhoto(media=FSInputFile(location["image_path"]), caption=location["caption"])]
+        caption = location["caption"].get(lang, location["caption"]["ru"])
+        media = [InputMediaPhoto(media=FSInputFile(location["image_path"]), caption=caption)]
         await message.answer_media_group(media)
 
 
