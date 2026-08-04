@@ -67,7 +67,6 @@ The project is designed to grow into an AI-assisted assistant:
 | Document generation | `docxtpl` + `python-docx` |
 | Testing | pytest 9 + pytest-asyncio 1.2 |
 
-**Planned:** PostgreSQL (multi-clinic scale), Whisper, local LLMs (Ollama).
 
 ---
 
