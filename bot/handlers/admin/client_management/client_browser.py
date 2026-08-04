@@ -171,17 +171,28 @@ def create_admin_client_browser_router(
 
     # --- Entry ---
 
-    @router.callback_query(F.data == "browse_clients")
-    async def browse_clients(callback_query: CallbackQuery, state: FSMContext, current_user: User):
-        lang = current_user.language
+    async def _begin_client_browsing(event: CallbackQuery | Message, state: FSMContext, lang: str) -> None:
         await state.clear()
         await state.set_state(ClientBrowserStates.search_variant)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            _CHOOSE_SEARCH_METHOD.get(lang, _CHOOSE_SEARCH_METHOD["ru"]),
-            reply_markup=client_browser_search_kb(lang),
-        )
-        await remember_tracked_message(state, callback_query.message)
+        text = _CHOOSE_SEARCH_METHOD.get(lang, _CHOOSE_SEARCH_METHOD["ru"])
+        markup = client_browser_search_kb(lang)
+
+        if isinstance(event, CallbackQuery):
+            await event.answer('')
+            await event.message.edit_text(text, reply_markup=markup)
+            sent_message = event.message
+        else:
+            sent_message = await event.answer(text, reply_markup=markup)
+
+        await remember_tracked_message(state, sent_message)
+
+    @router.callback_query(F.data == "browse_clients")
+    async def browse_clients(callback_query: CallbackQuery, state: FSMContext, current_user: User):
+        await _begin_client_browsing(callback_query, state, current_user.language)
+
+    @router.message(F.text == "/clients")
+    async def browse_clients_message(message: Message, state: FSMContext, current_user: User):
+        await _begin_client_browsing(message, state, current_user.language)
 
     # --- Search by full name ---
 

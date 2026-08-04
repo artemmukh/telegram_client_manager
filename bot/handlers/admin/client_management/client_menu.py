@@ -19,7 +19,7 @@ def create_admin_client_menu_router():
     router.callback_query.filter(RoleFilter("admin"))
 
     @router.message(F.text.in_({
-        "/client_managing", "/clients", "/create_client",
+        "/client_managing",
         "👤 Управление клиентами", "👤 Mijozlarni boshqarish",
     }))
     async def client_managing(message: Message, current_user: User):

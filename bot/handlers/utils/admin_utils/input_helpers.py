@@ -19,13 +19,17 @@ ASK_PHONE_PROMPT = {
 }
 
 
-async def ask_full_name(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup, lang: str = "ru"):
+async def ask_full_name(
+    event: CallbackQuery | Message, state: FSMContext, next_state: State, reply_markup, lang: str = "ru",
+):
     await state.set_state(next_state)
-    await callback.answer('')
-    await callback.message.edit_text(
-        ASK_FULL_NAME_PROMPT.get(lang, ASK_FULL_NAME_PROMPT["ru"]),
-        reply_markup=reply_markup
-    )
+    text = ASK_FULL_NAME_PROMPT.get(lang, ASK_FULL_NAME_PROMPT["ru"])
+
+    if isinstance(event, CallbackQuery):
+        await event.answer('')
+        await event.message.edit_text(text, reply_markup=reply_markup)
+    else:
+        await event.answer(text, reply_markup=reply_markup)
 
 
 async def ask_phone(callback: CallbackQuery, state: FSMContext, next_state: State, reply_markup, lang: str = "ru"):
