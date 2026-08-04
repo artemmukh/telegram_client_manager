@@ -10,8 +10,8 @@ from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 logger = logging.getLogger(__name__)
 
 SLOT_UNAVAILABLE_MESSAGE = {
-    "ru": "Это время уже занято другой подтверждённой записью, выберите другое.",
-    "uz": "Bu vaqt boshqa tasdiqlangan yozuv tomonidan band qilingan, boshqasini tanlang.",
+    "ru": "Это время уже занято другой записью, выберите другое.",
+    "uz": "Bu vaqt boshqa yozuv tomonidan band qilingan, boshqasini tanlang.",
 }
 
 APPOINTMENT_SELECT = """
@@ -183,11 +183,17 @@ class AppointmentRepository:
             ON appointment_notifications(appointment_id, kind)
         """)
 
-        if max_bookings_per_slot is None:
+        if max_bookings_per_slot is None or max_bookings_per_slot == 1:
+            # Drop the old (pre-widening) index name unconditionally, before the
+            # duplicate check below, so it doesn't linger on an upgraded DB even
+            # when duplicates are found and creation of the new index is skipped.
+            await self.connection.execute(
+                "DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed"
+            )
             cursor = await self.connection.execute("""
                 SELECT admin_id, datetime, COUNT(*)
                 FROM appointments
-                WHERE status = 'confirmed'
+                WHERE status IN ('pending', 'confirmed')
                 GROUP BY admin_id, datetime
                 HAVING COUNT(*) > 1
             """)
@@ -195,16 +201,16 @@ class AppointmentRepository:
             if duplicates:
                 pairs = ", ".join(f"(admin_id={row[0]}, datetime={row[1]})" for row in duplicates)
                 logger.error(
-                    "Found duplicate confirmed appointments for the same doctor/datetime, "
-                    "skipping creation of idx_appointments_doctor_datetime_confirmed "
+                    "Found duplicate pending/confirmed appointments for the same doctor/datetime, "
+                    "skipping creation of idx_appointments_doctor_datetime_active "
                     "(double-booking protection is NOT active until this is resolved): %s",
                     pairs,
                 )
             else:
                 await self.connection.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_doctor_datetime_confirmed
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_doctor_datetime_active
                     ON appointments(admin_id, datetime)
-                    WHERE status = 'confirmed'
+                    WHERE status IN ('pending', 'confirmed')
                 """)
         else:
             # A prior init() call (old code, or a zb-style boot on this same
@@ -214,6 +220,9 @@ class AppointmentRepository:
             # keep hard-blocking additional confirmed bookings.
             await self.connection.execute(
                 "DROP INDEX IF EXISTS idx_appointments_doctor_datetime_confirmed"
+            )
+            await self.connection.execute(
+                "DROP INDEX IF EXISTS idx_appointments_doctor_datetime_active"
             )
 
         await self.connection.commit()
@@ -551,6 +560,30 @@ class AppointmentRepository:
                 AND status = ?
         """
         params = (new_datetime, decided_by_user_id, status_updated_at, appointment_id, expected_status)
+        try:
+            cursor = await self.connection.execute(sql, params)
+            await self.connection.commit()
+        except aiosqlite.IntegrityError as error:
+            if self._is_slot_unique_violation(error):
+                raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE) from error
+            raise
+
+        return cursor.rowcount > 0
+
+    async def try_update_own_pending_datetime(self, appointment_id: int, new_datetime: str) -> bool:
+        # CAS for a client editing their own still-undecided self-booking request:
+        # only applies while it's still pending, still client-created, and hasn't
+        # picked up an admin proposal in the meantime, so a racing admin decision
+        # (confirm/reject/propose) can't be silently overwritten by a stale client edit.
+        sql = """
+            UPDATE appointments
+            SET datetime = ?
+            WHERE id = ?
+                AND status = 'pending'
+                AND created_by = 'client'
+                AND proposed_datetime IS NULL
+        """
+        params = (new_datetime, appointment_id)
         try:
             cursor = await self.connection.execute(sql, params)
             await self.connection.commit()
@@ -983,7 +1016,7 @@ class AppointmentRepository:
         # reports "UNIQUE constraint failed: appointments.admin_id, appointments.datetime"
         # instead - the name check below is forward-defensive in case a future SQLite
         # version includes it.
-        if "idx_appointments_doctor_datetime_confirmed" in message:
+        if "idx_appointments_doctor_datetime_active" in message:
             return True
         return (
             "UNIQUE constraint failed" in message

@@ -65,6 +65,8 @@ class FakeAppointmentRepository:
         self.notifications: list[AppointmentNotification] = []
         self.apply_immediately_calls = []
         self.apply_immediately_lost_races = set()
+        self.own_pending_datetime_calls = []
+        self.own_pending_datetime_lost_races = set()
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -170,6 +172,27 @@ class FakeAppointmentRepository:
         self.status_updates.append((appointment_id, AppointmentStatus.CONFIRMED))
         self.proposed_datetime_updates.append((appointment_id, None))
         self.proposed_by_updates.append((appointment_id, None))
+        return True
+
+    async def try_update_own_pending_datetime(self, appointment_id, new_datetime):
+        # Mirrors the real CAS: WHERE status='pending' AND created_by='client' AND
+        # proposed_datetime IS NULL. Deliberately does not mutate the shared
+        # Appointment object -- AppointmentManagement applies the equivalent
+        # in-memory datetime update itself afterward, same convention as the
+        # other try_* fakes above.
+        self.own_pending_datetime_calls.append((appointment_id, new_datetime))
+        appointment = self._find(appointment_id)
+        if appointment is None:
+            return False
+        if appointment.status != AppointmentStatus.PENDING:
+            return False
+        if appointment.created_by != CreatedBy.CLIENT:
+            return False
+        if appointment.proposed_datetime is not None:
+            return False
+        if appointment_id in self.own_pending_datetime_lost_races:
+            return False
+
         return True
 
     async def try_resolve_client_reschedule(
@@ -2549,9 +2572,33 @@ async def test_request_reschedule_by_client_succeeds_when_pending_edits_datetime
     assert appointment.datetime == new_dt
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.proposed_datetime is None
-    assert appt_repo.updated == [(1, appointment)]
+    assert appt_repo.own_pending_datetime_calls == [(1, new_dt)]
+    assert appt_repo.updated == []
     assert appt_repo.proposed_datetime_updates == []
     assert appt_repo.proposed_by_updates == []
+
+
+@pytest.mark.asyncio
+async def test_request_reschedule_by_client_raises_already_decided_when_own_pending_edit_loses_race():
+    """Own-pending direct-edit branch: if staff concurrently confirms/rejects/
+    proposes on the appointment before the client's own-datetime CAS lands,
+    try_update_own_pending_datetime's precondition no longer matches and
+    returns False -- the service must surface this as
+    AppointmentAlreadyDecidedError, not silently proceed as if the edit had
+    landed."""
+    now = get_current_tashkent_datetime()
+    appt_repo = FakeAppointmentRepository(
+        [_appointment_at(1, now + timedelta(days=1), status=AppointmentStatus.PENDING)]
+    )
+    appt_repo.own_pending_datetime_lost_races.add(1)
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    new_dt = (now + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    with pytest.raises(AppointmentAlreadyDecidedError):
+        await service.request_reschedule_by_client(1, client.telegram_user_id, new_dt)
+
+    assert appt_repo.own_pending_datetime_calls == [(1, new_dt)]
 
 
 @pytest.mark.asyncio

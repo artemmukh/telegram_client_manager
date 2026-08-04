@@ -287,3 +287,138 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
     assert "05.08.2026 12:00" in toast_text
     callback_query.answer.assert_awaited_once_with("Время записи изменено")
     state.clear.assert_awaited_once()
+
+
+# --- appointment_browser.py: approve_new_datetime CONFIRMED branch staff
+# notification fan-out (previously missing entirely -- this branch used to
+# send no staff notification at all). Mirrors the fakes/pattern in
+# tests/test_staff_decision_notifications.py, duplicated here per this
+# project's convention rather than importing across test files.
+
+DOCTOR_ID = 10
+DOCTOR_TELEGRAM_ID = 3000
+OTHER_ADMIN_ID = 2
+OTHER_ADMIN_TELEGRAM_ID = 2000
+
+
+class _RecipientAwareUserRepo:
+    def __init__(self, client, admin, doctor, other_admin):
+        self.client = client
+        self.by_telegram_id = {
+            admin.telegram_user_id: admin,
+            doctor.telegram_user_id: doctor,
+            other_admin.telegram_user_id: other_admin,
+        }
+        self.by_id = {
+            admin.ID: admin,
+            doctor.ID: doctor,
+            other_admin.ID: other_admin,
+        }
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        return self.by_telegram_id.get(telegram_user_id)
+
+    async def get_user_by_id(self, user_id):
+        return self.by_id.get(user_id)
+
+    async def get_client_by_id(self, user_id):
+        return self.client if self.client and self.client.ID == user_id else None
+
+
+class _RecipientAwareStaffRepo:
+    def __init__(self, admin_staff, doctor_staff, other_admin_staff):
+        self.by_telegram_id = {
+            admin_staff.telegram_user_id: admin_staff,
+            doctor_staff.telegram_user_id: doctor_staff,
+            other_admin_staff.telegram_user_id: other_admin_staff,
+        }
+
+    async def get_staff(self, telegram_user_id):
+        return self.by_telegram_id.get(telegram_user_id)
+
+    async def get_staff_by_clinic_id(self, clinic_id):
+        return [s for s in self.by_telegram_id.values() if s.clinic_id == clinic_id]
+
+
+class _RecipientAwareClinicRepo:
+    async def get_clinic_by_id(self, clinic_id):
+        return Clinic(clinic_id=clinic_id, name="Зуб Мудрости", token="t")
+
+
+class _StaffDecisionNotificationService:
+    def __init__(self):
+        self.reschedule_accepted_calls = []
+        self.reschedule_rejected_calls = []
+
+    async def notify_staff_reschedule_decision_accepted(self, staff_telegram_id, appointment, actor_label, client_name):
+        self.reschedule_accepted_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+
+    async def notify_staff_reschedule_decision_rejected(self, staff_telegram_id, appointment, actor_label, client_name):
+        self.reschedule_rejected_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+
+    async def notify_client_appointment_with_buttons(self, appointment, use_invite_kb=True, rescheduled=False):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_approve_new_datetime_confirmed_branch_notifies_other_staff_and_excludes_actor():
+    """The CONFIRMED branch (admin editing a walk-in/no-telegram-account
+    client's datetime, applied immediately) previously sent no staff
+    notification at all. It must now notify the treating doctor and every
+    other clinic-scope admin, but never the acting admin themselves."""
+    appointment = Appointment(
+        clinic_id=1, client_id=7, doctor_id=DOCTOR_ID, datetime="2026-08-01 10:00",
+        purpose="Консультация", created_by=CreatedBy.CLIENT, status=AppointmentStatus.CONFIRMED, id=1,
+    )
+    appt_repo = FakeAppointmentRepository(appointment, copy_on_read=True)
+
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=None)
+    admin = _admin_user()
+    doctor = User(
+        full_name="Sidorov Sidor", phone="+998901112200", role=Role.ADMIN,
+        telegram_user_id=DOCTOR_TELEGRAM_ID, ID=DOCTOR_ID, clinic_id=1, clinic_name="Зуб Мудрости",
+    )
+    other_admin = User(
+        full_name="Ivanova Irina", phone="+998901112201", role=Role.ADMIN,
+        telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, ID=OTHER_ADMIN_ID, clinic_id=1, clinic_name="Зуб Мудрости",
+    )
+
+    user_repo = _RecipientAwareUserRepo(client, admin, doctor, other_admin)
+    staff_repo = _RecipientAwareStaffRepo(
+        admin_staff=Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+        doctor_staff=Staff(telegram_user_id=DOCTOR_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
+        other_admin_staff=Staff(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+    )
+    clinic_repo = _RecipientAwareClinicRepo()
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+
+    notification_service = _StaffDecisionNotificationService()
+
+    router = create_admin_appointment_browser_router(
+        "zb", appt_repo, user_repo, staff_repo, clinic_repo,
+        appointment_scheduler=appointment_scheduler, notification_service=notification_service,
+    )
+    approve_new_datetime = _get_approve_new_datetime_handler(router)
+    callback_query = _make_callback_query()
+    state = _make_state()
+
+    await approve_new_datetime(
+        callback_query, ApptActionCB(action="approve_new_datetime", appointment_id=1, mode="all", page=1),
+        state, admin,
+    )
+
+    resynced = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
+    assert resynced.status is AppointmentStatus.CONFIRMED
+
+    actor_label = {"ru": "Администратор Петров Петр", "uz": "Administrator Петров Петр"}
+    assert notification_service.reschedule_accepted_calls == [
+        (DOCTOR_TELEGRAM_ID, 1, actor_label, client.full_name),
+        (OTHER_ADMIN_TELEGRAM_ID, 1, actor_label, client.full_name),
+    ]
+    assert notification_service.reschedule_rejected_calls == []
+    actor_notified = any(
+        call[0] == ADMIN_TELEGRAM_ID for call in notification_service.reschedule_accepted_calls
+    )
+    assert actor_notified is False

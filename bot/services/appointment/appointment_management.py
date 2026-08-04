@@ -46,8 +46,8 @@ from bot.validators.validators import validate_datetime, validate_price, validat
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
 SLOT_UNAVAILABLE_MESSAGE = {
-    "ru": "Это время уже занято другой подтверждённой записью, выберите другое.",
-    "uz": "Bu vaqt boshqa tasdiqlangan yozuv tomonidan band qilingan, boshqasini tanlang.",
+    "ru": "Это время уже занято другой записью, выберите другое.",
+    "uz": "Bu vaqt boshqa yozuv tomonidan band qilingan, boshqasini tanlang.",
 }
 DUPLICATE_CLIENT_SLOT_MESSAGE = {
     "ru": "У этого клиента уже есть запись на это время.",
@@ -749,8 +749,10 @@ class AppointmentManagement:
             # Собственная ещё не решённая клиникой заявка клиента — правим datetime
             # напрямую, без согласования (клиника и так ещё ничего не подтверждала).
             await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id, appointment.client_id)
+            accepted = await self.appointment_repository.try_update_own_pending_datetime(appointment_id, validated)
+            if not accepted:
+                await self._raise_already_decided(appointment_id, _RESCHEDULE_ALREADY_DECIDED_MESSAGE, kind="reschedule")
             appointment.datetime = validated
-            await self.appointment_repository.update_appointment(appointment_id, appointment)
             return appointment
 
         await self.appointment_repository.update_proposed_datetime(appointment_id, validated)

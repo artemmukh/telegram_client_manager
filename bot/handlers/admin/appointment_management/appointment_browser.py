@@ -24,6 +24,7 @@ from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
     format_calendar_date_display,
     format_month_label,
 )
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import notify_staff_reschedule_decision
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
     datetime_processing,
@@ -945,6 +946,9 @@ def create_admin_appointment_browser_router(
             await callback_query.answer(_DATETIME_CHANGED_ANSWER_TEXT.get(lang, _DATETIME_CHANGED_ANSWER_TEXT["ru"]))
             await callback_query.message.edit_text(
                 _DATETIME_CHANGED_TEXT.get(lang, _DATETIME_CHANGED_TEXT["ru"]).format(old=old_display, new=new_display)
+            )
+            await notify_staff_reschedule_decision(
+                notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
             )
             await state.clear()
             return

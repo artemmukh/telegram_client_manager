@@ -18,6 +18,7 @@ from bot.handlers.utils.admin_utils.appointment_calendar_helpers import clamp_ca
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     invalidate_actor_stale_message,
     invalidate_sibling_notifications,
+    notify_staff_reschedule_decision,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, datetime_processing
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarDayCB, ApptCalendarMonthCB
@@ -106,11 +107,6 @@ _NEW_TIME_ASSIGNED = {
     "uz": "🔁 Mijozga yangi vaqt tayinlandi: {value}\nMijoz tasdiqlashini kutmoqdamiz.",
 }
 
-_UNKNOWN_CLIENT_LABEL = {
-    "ru": "Клиент",
-    "uz": "Mijoz",
-}
-
 
 def create_admin_reschedule_requests_router(
     instance: str,
@@ -154,41 +150,6 @@ def create_admin_reschedule_requests_router(
                 f"Failed to invalidate own stale reschedule message: {e}"
             )
 
-    async def notify_staff_reschedule_decision(
-        callback_query: CallbackQuery, appointment, accepted: bool, lang: str,
-    ) -> None:
-        if not notification_service:
-            return
-        try:
-            actor = await appt_mng.get_user_by_telegram_id(callback_query.from_user.id)
-            actor_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
-            client = await appt_mng.get_client_by_id(appointment.client_id)
-            client_name = client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"])
-            recipients = await appt_mng.resolve_notification_recipients(appointment)
-        except Exception as e:
-            logger.warning(
-                f"Failed to resolve staff recipients for reschedule decision on appointment {appointment.id}: {e}"
-            )
-            return
-
-        for recipient in recipients:
-            if recipient.telegram_user_id == callback_query.from_user.id:
-                continue
-            try:
-                if accepted:
-                    await notification_service.notify_staff_reschedule_decision_accepted(
-                        recipient.telegram_user_id, appointment, actor_label, client_name,
-                    )
-                else:
-                    await notification_service.notify_staff_reschedule_decision_rejected(
-                        recipient.telegram_user_id, appointment, actor_label, client_name,
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to notify staff {recipient.telegram_user_id} about reschedule decision "
-                    f"for appointment {appointment.id}: {e}"
-                )
-
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "accept"))
     async def accept_reschedule(
         callback_query: CallbackQuery, callback_data: RescheduleRequestActionCB, current_user: User,
@@ -231,7 +192,9 @@ def create_admin_reschedule_requests_router(
         await callback_query.answer(_RESCHEDULE_ACCEPTED.get(lang, _RESCHEDULE_ACCEPTED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
         await invalidate_reschedule_siblings(callback_query, appointment)
-        await notify_staff_reschedule_decision(callback_query, appointment, accepted=True, lang=lang)
+        await notify_staff_reschedule_decision(
+            notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
+        )
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "reject"))
     async def reject_reschedule(
@@ -275,7 +238,9 @@ def create_admin_reschedule_requests_router(
         await callback_query.answer(_RESCHEDULE_REJECTED.get(lang, _RESCHEDULE_REJECTED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
         await invalidate_reschedule_siblings(callback_query, appointment)
-        await notify_staff_reschedule_decision(callback_query, appointment, accepted=False, lang=lang)
+        await notify_staff_reschedule_decision(
+            notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=False, lang=lang,
+        )
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "propose"))
     async def start_propose_datetime(
@@ -500,7 +465,9 @@ def create_admin_reschedule_requests_router(
                 )
             )
             await invalidate_reschedule_siblings(callback_query, appointment)
-            await notify_staff_reschedule_decision(callback_query, appointment, accepted=True, lang=lang)
+            await notify_staff_reschedule_decision(
+                notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
+            )
             await state.clear()
             return
 

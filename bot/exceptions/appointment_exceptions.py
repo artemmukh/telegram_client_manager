@@ -75,7 +75,7 @@ class NoPendingProposalError(ValidationError):
 
 
 class SlotUnavailableError(ValidationError):
-    """Выбранное время уже занято другой подтверждённой записью."""
+    """Выбранное время уже занято другой записью."""
     pass
 
 

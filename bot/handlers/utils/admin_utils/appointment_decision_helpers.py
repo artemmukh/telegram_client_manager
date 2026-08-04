@@ -1,7 +1,11 @@
+import logging
+
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DECIDED_BY_LABEL = {
     "ru": "Другой сотрудник",
@@ -11,6 +15,11 @@ DEFAULT_DECIDED_BY_LABEL = {
 DEFAULT_OUTCOME_TEXT = {
     "ru": "решение принято",
     "uz": "qaror qabul qilindi",
+}
+
+DEFAULT_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Клиент",
+    "uz": "Mijoz",
 }
 
 
@@ -64,3 +73,49 @@ async def invalidate_actor_stale_message(
         chat_id, message_id, decided_by_label, outcome_text,
         appointment_summary=appointment_summary,
     )
+
+
+async def notify_staff_reschedule_decision(
+    notification_service: AppointmentNotificationService,
+    appt_mng: AppointmentManagement,
+    actor_telegram_id: int,
+    appointment,
+    accepted: bool,
+    lang: str,
+) -> None:
+    """Уведомить остальных сотрудников о решении по заявке на перенос.
+
+    Действующий сотрудник (actor_telegram_id) не получает уведомление о
+    собственном решении.
+    """
+    if not notification_service:
+        return
+    try:
+        actor = await appt_mng.get_user_by_telegram_id(actor_telegram_id)
+        actor_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+        client = await appt_mng.get_client_by_id(appointment.client_id)
+        client_name = client.full_name if client else DEFAULT_UNKNOWN_CLIENT_LABEL.get(lang, DEFAULT_UNKNOWN_CLIENT_LABEL["ru"])
+        recipients = await appt_mng.resolve_notification_recipients(appointment)
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve staff recipients for reschedule decision on appointment {appointment.id}: {e}"
+        )
+        return
+
+    for recipient in recipients:
+        if recipient.telegram_user_id == actor_telegram_id:
+            continue
+        try:
+            if accepted:
+                await notification_service.notify_staff_reschedule_decision_accepted(
+                    recipient.telegram_user_id, appointment, actor_label, client_name,
+                )
+            else:
+                await notification_service.notify_staff_reschedule_decision_rejected(
+                    recipient.telegram_user_id, appointment, actor_label, client_name,
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to notify staff {recipient.telegram_user_id} about reschedule decision "
+                f"for appointment {appointment.id}: {e}"
+            )
