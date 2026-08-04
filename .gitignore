@@ -52,3 +52,13 @@ CLAUDE.md
 
 # scripts
 scripts
+
+# MCP servers (local clones/builds)
+mcp-servers/
+
+# MCP local config (may contain secrets; see .mcp.json.example)
+.mcp.json
+
+# Local data assets / backups (not part of the app, machine-specific)
+data$f
+data/*.bak*
