@@ -157,6 +157,99 @@ _UNEXPECTED_ERROR_TEXT = {"ru": "Произошла непредвиденная
 _BACK_TO_CALENDAR_LABEL = {"ru": "⬅️ К календарю", "uz": "⬅️ Kalendarga"}
 _CANCEL_EDIT_BACK_LABEL = {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"}
 
+DOCTOR_FILTER_STATE_KEYS = {
+    "list": "doctor_filter_id",
+    "search": "doctor_filter_id",
+    "phone": "doctor_filter_id",
+    "calendar": "calendar_doctor_filter_id",
+    "calendar_entry": "calendar_doctor_filter_id",
+}
+
+
+def list_doctor_filter_back_target(state_data: dict, mode: str, lang: str = "ru") -> tuple[str, str]:
+    if DOCTOR_FILTER_STATE_KEYS.get(mode, "doctor_filter_id") in state_data:
+        return (
+            ApptDoctorFilterEntryCB(mode=mode).pack(),
+            CALENDAR_BACK_TO_DOCTOR_LABEL.get(lang, CALENDAR_BACK_TO_DOCTOR_LABEL["ru"]),
+        )
+    return "browse_appointments", CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"])
+
+
+async def render_appointment_list(
+    callback_query: CallbackQuery, state: FSMContext, *, pagination_service: AppointmentPaginationService,
+    mode: str, page: int, clinic_id: int, doctor_id: int | None = None, tab: str = "", prefix: str = "",
+    lang: str = "ru", back_override: tuple[str, str] | None = None,
+) -> None:
+    try:
+        tab = tab or "confirmed"
+        back_callback_data = "browse_appointments"
+        back_label = CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"])
+
+        if mode == "list":
+            data = await state.get_data()
+            result = await pagination_service.paginate_all_appointments_by_tab(
+                tab, page, clinic_id, doctor_id
+            )
+            title = _ALL_APPOINTMENTS_TITLE.get(lang, _ALL_APPOINTMENTS_TITLE["ru"])
+            back_callback_data, back_label = list_doctor_filter_back_target(data, mode, lang)
+        elif mode == "calendar":
+            data = await state.get_data()
+            calendar_date = data.get("calendar_date")
+            calendar_year = data.get("calendar_year")
+            calendar_month = data.get("calendar_month")
+
+            result = await pagination_service.paginate_appointments_by_date_and_tab(
+                calendar_date, tab, page, clinic_id, doctor_id
+            )
+            title = _CALENDAR_DAY_APPOINTMENTS_TITLE.get(lang, _CALENDAR_DAY_APPOINTMENTS_TITLE["ru"]).format(
+                date=format_calendar_date_display(calendar_date),
+            )
+            back_callback_data = ApptCalendarMonthCB(year=calendar_year, month=calendar_month).pack()
+            back_label = _BACK_TO_CALENDAR_LABEL.get(lang, _BACK_TO_CALENDAR_LABEL["ru"])
+        else:
+            data = await state.get_data()
+            search_data = None
+            if mode in ("search", "phone"):
+                search_data = data.get("search_data") or {}
+
+            result = await pagination_service.paginate_appointments(
+                mode, page, clinic_id, doctor_id, search_data, tab
+            )
+            titles = _LIST_MODE_TITLES.get(lang, _LIST_MODE_TITLES["ru"])
+            title = titles.get(mode, _DEFAULT_LIST_TITLE.get(lang, _DEFAULT_LIST_TITLE["ru"]))
+            back_callback_data, back_label = list_doctor_filter_back_target(data, mode, lang)
+
+        if back_override is not None:
+            back_callback_data, back_label = back_override
+
+        text = _LIST_HEADER_TEXT.get(lang, _LIST_HEADER_TEXT["ru"]).format(
+            prefix=prefix, title=title, current=result.current_page, total=result.total_pages,
+            count=result.total_count,
+        )
+
+        await callback_query.message.edit_text(
+            text,
+            reply_markup=appointment_list_kb(
+                result.items, mode, result.current_page, result.total_pages, tab,
+                back_callback_data=back_callback_data, back_label=back_label, lang=lang,
+            ),
+        )
+        await callback_query.answer()
+        await remember_tracked_message(state, callback_query.message)
+
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            await callback_query.answer()
+        else:
+            logger.warning(f"TelegramBadRequest in render_list: {e}")
+            await callback_query.answer(_EDIT_MESSAGE_ERROR_TEXT.get(lang, _EDIT_MESSAGE_ERROR_TEXT["ru"]), show_alert=False)
+    except PaginationError as e:
+        logger.warning(f"Pagination error in render_list: {e}")
+        await callback_query.answer(e.localized(lang), show_alert=True)
+    except Exception as e:
+        logger.exception(f"Unexpected error in render_list: {e}")
+        await callback_query.answer(_UNEXPECTED_ERROR_TEXT.get(lang, _UNEXPECTED_ERROR_TEXT["ru"]), show_alert=True)
+
 
 def create_admin_appointment_browser_router(
     instance: str,
@@ -1113,23 +1206,11 @@ def create_admin_appointment_browser_router(
 
     # --- Shared renderers ---
 
-    DOCTOR_FILTER_STATE_KEYS = {
-        "list": "doctor_filter_id",
-        "search": "doctor_filter_id",
-        "phone": "doctor_filter_id",
-        "calendar": "calendar_doctor_filter_id",
-        "calendar_entry": "calendar_doctor_filter_id",
-    }
-
-    def list_doctor_filter_back_target(state_data: dict, mode: str, lang: str = "ru") -> tuple[str, str]:
-        if DOCTOR_FILTER_STATE_KEYS.get(mode, "doctor_filter_id") in state_data:
-            return (
-                ApptDoctorFilterEntryCB(mode=mode).pack(),
-                CALENDAR_BACK_TO_DOCTOR_LABEL.get(lang, CALENDAR_BACK_TO_DOCTOR_LABEL["ru"]),
-            )
-        return "browse_appointments", CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"])
-
     async def notify_appointment_changed(appointment, appointment_id: int) -> None:
+        # notification_service.notify_client_appointment_changed is DISABLED INTENTIONALLY
+        # (2026-08-04, explicit user request) — do NOT re-enable it. It's commented out in
+        # appointment_notifications.py; the AttributeError below is caught and logged as a
+        # no-op on purpose, so this call site does not need to be removed.
         if not notification_service:
             return
 
@@ -1222,72 +1303,10 @@ def create_admin_appointment_browser_router(
         callback_query: CallbackQuery, state: FSMContext, *, mode: str, page: int, clinic_id: int,
         doctor_id: int | None = None, tab: str = "", prefix: str = "", lang: str = "ru",
     ) -> None:
-        try:
-            tab = tab or "confirmed"
-            back_callback_data = "browse_appointments"
-            back_label = CALENDAR_BACK_TO_SEARCH_LABEL.get(lang, CALENDAR_BACK_TO_SEARCH_LABEL["ru"])
-
-            if mode == "list":
-                data = await state.get_data()
-                result = await pagination_service.paginate_all_appointments_by_tab(
-                    tab, page, clinic_id, doctor_id
-                )
-                title = _ALL_APPOINTMENTS_TITLE.get(lang, _ALL_APPOINTMENTS_TITLE["ru"])
-                back_callback_data, back_label = list_doctor_filter_back_target(data, mode, lang)
-            elif mode == "calendar":
-                data = await state.get_data()
-                calendar_date = data.get("calendar_date")
-                calendar_year = data.get("calendar_year")
-                calendar_month = data.get("calendar_month")
-
-                result = await pagination_service.paginate_appointments_by_date_and_tab(
-                    calendar_date, tab, page, clinic_id, doctor_id
-                )
-                title = _CALENDAR_DAY_APPOINTMENTS_TITLE.get(lang, _CALENDAR_DAY_APPOINTMENTS_TITLE["ru"]).format(
-                    date=format_calendar_date_display(calendar_date),
-                )
-                back_callback_data = ApptCalendarMonthCB(year=calendar_year, month=calendar_month).pack()
-                back_label = _BACK_TO_CALENDAR_LABEL.get(lang, _BACK_TO_CALENDAR_LABEL["ru"])
-            else:
-                data = await state.get_data()
-                search_data = None
-                if mode in ("search", "phone"):
-                    search_data = data.get("search_data") or {}
-
-                result = await pagination_service.paginate_appointments(
-                    mode, page, clinic_id, doctor_id, search_data, tab
-                )
-                titles = _LIST_MODE_TITLES.get(lang, _LIST_MODE_TITLES["ru"])
-                title = titles.get(mode, _DEFAULT_LIST_TITLE.get(lang, _DEFAULT_LIST_TITLE["ru"]))
-                back_callback_data, back_label = list_doctor_filter_back_target(data, mode, lang)
-
-            text = _LIST_HEADER_TEXT.get(lang, _LIST_HEADER_TEXT["ru"]).format(
-                prefix=prefix, title=title, current=result.current_page, total=result.total_pages,
-                count=result.total_count,
-            )
-
-            await callback_query.message.edit_text(
-                text,
-                reply_markup=appointment_list_kb(
-                    result.items, mode, result.current_page, result.total_pages, tab,
-                    back_callback_data=back_callback_data, back_label=back_label, lang=lang,
-                ),
-            )
-            await callback_query.answer()
-            await remember_tracked_message(state, callback_query.message)
-
-        except TelegramBadRequest as e:
-            if "message is not modified" in str(e):
-                await callback_query.answer()
-            else:
-                logger.warning(f"TelegramBadRequest in render_list: {e}")
-                await callback_query.answer(_EDIT_MESSAGE_ERROR_TEXT.get(lang, _EDIT_MESSAGE_ERROR_TEXT["ru"]), show_alert=False)
-        except PaginationError as e:
-            logger.warning(f"Pagination error in render_list: {e}")
-            await callback_query.answer(e.localized(lang), show_alert=True)
-        except Exception as e:
-            logger.exception(f"Unexpected error in render_list: {e}")
-            await callback_query.answer(_UNEXPECTED_ERROR_TEXT.get(lang, _UNEXPECTED_ERROR_TEXT["ru"]), show_alert=True)
+        await render_appointment_list(
+            callback_query, state, pagination_service=pagination_service,
+            mode=mode, page=page, clinic_id=clinic_id, doctor_id=doctor_id, tab=tab, prefix=prefix, lang=lang,
+        )
 
     async def render_card(
         callback_query: CallbackQuery, state: FSMContext, *, appointment_id: int, mode: str, page: int, tab: str = "",

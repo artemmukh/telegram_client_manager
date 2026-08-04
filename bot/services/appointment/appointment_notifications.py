@@ -26,8 +26,18 @@ from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_lab
 logger = logging.getLogger(__name__)
 
 _REMINDER_TEXT = {
-    "ru": "Напоминаем вам о записи.",
-    "uz": "Sizga qabul haqida eslatib o'tamiz.",
+    "ru": (
+        "Напоминаем вам о записи.\n\n"
+        "📱 Номер: {phone}\n"
+        "🏥 Услуга: {purpose}\n"
+        "📅 Дата и время: {datetime}"
+    ),
+    "uz": (
+        "Sizga qabul haqida eslatib o'tamiz.\n\n"
+        "📱 Raqam: {phone}\n"
+        "🏥 Xizmat: {purpose}\n"
+        "📅 Sana va vaqt: {datetime}"
+    ),
 }
 
 _APPOINTMENT_CANCELLED_BY_ADMIN = {
@@ -192,6 +202,26 @@ _ADMIN_PROPOSAL_REMINDER = {
     "uz": "⏰ Mijoz boshqa vaqt taklif qildi, javob hali olinmadi.",
 }
 
+_STAFF_BOOKING_CONFIRMED = {
+    "ru": "✅ Заявка клиента {client_name} подтверждена ({actor}).",
+    "uz": "✅ Mijoz {client_name} arizasi tasdiqlandi ({actor}).",
+}
+
+_STAFF_BOOKING_REJECTED = {
+    "ru": "❌ Заявка клиента {client_name} отклонена ({actor}).",
+    "uz": "❌ Mijoz {client_name} arizasi rad etildi ({actor}).",
+}
+
+_STAFF_RESCHEDULE_DECISION_ACCEPTED = {
+    "ru": "✅ Перенос записи клиента {client_name} принят ({actor}).",
+    "uz": "✅ Mijoz {client_name} yozuvini ko'chirish so'rovi qabul qilindi ({actor}).",
+}
+
+_STAFF_RESCHEDULE_DECISION_REJECTED = {
+    "ru": "❌ Перенос записи клиента {client_name} отклонён ({actor}).",
+    "uz": "❌ Mijoz {client_name} yozuvini ko'chirish so'rovi rad etildi ({actor}).",
+}
+
 _STAFF_RESCHEDULE_REQUESTED = {
     "ru": (
         "🔁 Клиент просит перенести запись\n\n"
@@ -276,8 +306,10 @@ _STATUS_LINE_LABEL = {
 }
 
 
-def reminder_text(lang: str = "ru") -> str:
-    return _REMINDER_TEXT.get(lang, _REMINDER_TEXT["ru"])
+def reminder_text(phone: str, purpose: str, datetime_value: str, lang: str = "ru") -> str:
+    return _REMINDER_TEXT.get(lang, _REMINDER_TEXT["ru"]).format(
+        phone=phone, purpose=purpose, datetime=datetime_value,
+    )
 
 
 def appointment_cancelled_by_admin_text(lang: str = "ru") -> str:
@@ -366,10 +398,16 @@ def stale_proposal_default_text(lang: str = "ru") -> str:
     return _STALE_PROPOSAL_DEFAULT_TEXT.get(lang, _STALE_PROPOSAL_DEFAULT_TEXT["ru"])
 
 
-def stale_decision_text(decided_by_label: str, outcome_text: str, lang: str = "ru") -> str:
-    return _STALE_DECISION_TEXT.get(lang, _STALE_DECISION_TEXT["ru"]).format(
+def stale_decision_text(
+    decided_by_label: str, outcome_text: str, lang: str = "ru", appointment_summary: str | None = None,
+) -> str:
+    text = _STALE_DECISION_TEXT.get(lang, _STALE_DECISION_TEXT["ru"]).format(
         label=decided_by_label, outcome=outcome_text,
     )
+    if appointment_summary:
+        text = f"{text}\n\n{appointment_summary}"
+
+    return text
 
 
 def staff_proposal_accepted_text(client_name: str, lang: str = "ru") -> str:
@@ -382,6 +420,30 @@ def staff_proposal_rejected_text(client_name: str, lang: str = "ru") -> str:
 
 def admin_proposal_reminder_text(lang: str = "ru") -> str:
     return _ADMIN_PROPOSAL_REMINDER.get(lang, _ADMIN_PROPOSAL_REMINDER["ru"])
+
+
+def staff_booking_confirmed_text(client_name: str, actor: str, lang: str = "ru") -> str:
+    return _STAFF_BOOKING_CONFIRMED.get(lang, _STAFF_BOOKING_CONFIRMED["ru"]).format(
+        client_name=client_name, actor=actor,
+    )
+
+
+def staff_booking_rejected_text(client_name: str, actor: str, lang: str = "ru") -> str:
+    return _STAFF_BOOKING_REJECTED.get(lang, _STAFF_BOOKING_REJECTED["ru"]).format(
+        client_name=client_name, actor=actor,
+    )
+
+
+def staff_reschedule_decision_accepted_text(client_name: str, actor: str, lang: str = "ru") -> str:
+    return _STAFF_RESCHEDULE_DECISION_ACCEPTED.get(lang, _STAFF_RESCHEDULE_DECISION_ACCEPTED["ru"]).format(
+        client_name=client_name, actor=actor,
+    )
+
+
+def staff_reschedule_decision_rejected_text(client_name: str, actor: str, lang: str = "ru") -> str:
+    return _STAFF_RESCHEDULE_DECISION_REJECTED.get(lang, _STAFF_RESCHEDULE_DECISION_REJECTED["ru"]).format(
+        client_name=client_name, actor=actor,
+    )
 
 
 def staff_reschedule_requested_text(
@@ -480,7 +542,12 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text=reminder_text(client.language),
+            text=reminder_text(
+                client.phone or '—',
+                appointment.purpose,
+                _format_datetime_value(appointment.datetime, client.language),
+                client.language,
+            ),
             reply_markup=appointment_reminder_details_kb(appointment.id),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
@@ -499,7 +566,12 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text=reminder_text(client.language),
+            text=reminder_text(
+                client.phone or '—',
+                appointment.purpose,
+                _format_datetime_value(appointment.datetime, client.language),
+                client.language,
+            ),
             reply_markup=appointment_reminder_with_buttons_kb(appointment.id),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
@@ -578,23 +650,27 @@ class AppointmentNotificationService:
 
         return True
 
-    async def notify_client_appointment_changed(self, appointment: Appointment) -> bool:
-        """Notify client that details of their appointment (datetime or purpose) were changed.
-
-        Returns True if message sent, False if user not found or no telegram_id.
-        """
-        client = await self.user_repo.get_client_by_id(appointment.client_id)
-
-        if client is None or client.telegram_user_id is None:
-            return False
-
-        await self.notifier.send_message(
-            chat_id=client.telegram_user_id,
-            text=appointment_changed_text(appointment.datetime, appointment.purpose, client.language),
-            reply_to_message_id=self._reply_to_message_id(appointment),
-        )
-
-        return True
+    # DISABLED INTENTIONALLY (2026-08-04, by explicit user request) — do NOT restore.
+    # A prior session (commit 1b1322c) treated this as a bug and re-enabled it; that was wrong.
+    # The call site (appointment_browser.py's notify_appointment_changed) already no-ops safely
+    # via AttributeError caught by its own try/except, so no other change is needed to keep it off.
+    # async def notify_client_appointment_changed(self, appointment: Appointment) -> bool:
+    #     """Notify client that details of their appointment (datetime or purpose) were changed.
+    #
+    #     Returns True if message sent, False if user not found or no telegram_id.
+    #     """
+    #     client = await self.user_repo.get_client_by_id(appointment.client_id)
+    #
+    #     if client is None or client.telegram_user_id is None:
+    #         return False
+    #
+    #     await self.notifier.send_message(
+    #         chat_id=client.telegram_user_id,
+    #         text=appointment_changed_text(appointment.datetime, appointment.purpose, client.language),
+    #         reply_to_message_id=self._reply_to_message_id(appointment),
+    #     )
+    #
+    #     return True
 
     def _reply_to_message_id(self, appointment: Appointment) -> int | None:
         return appointment.notification_message_id
@@ -879,13 +955,23 @@ class AppointmentNotificationService:
         await self.notifier.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
 
     async def invalidate_stale_decision_message(
-        self, chat_id: int, message_id: int, decided_by_label: dict[str, str], outcome_text: dict[str, str]
+        self,
+        chat_id: int,
+        message_id: int,
+        decided_by_label: dict[str, str],
+        outcome_text: dict[str, str],
+        appointment_summary: str | None = None,
     ) -> None:
         """Edit a stale staff notification once another recipient has already decided.
 
         decided_by_label/outcome_text are resolved to this recipient's own language
         (independent of the acting user's language), since siblings receiving this
         invalidation may use a different language than the staff member who decided.
+
+        appointment_summary, if provided, is an already-formatted (Handler-layer)
+        appointment card appended below the decision text. It has no length limit
+        (unlike the 200-character show_alert popup), so it's the place to surface
+        client/phone/time/status details to the staff member who lost the race.
 
         Strips the inline keyboard and replaces the text so the message no longer
         looks actionable. Never raises — a failed edit (message deleted, bot blocked,
@@ -898,7 +984,7 @@ class AppointmentNotificationService:
         if not await self.notifier.try_edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=stale_decision_text(label, outcome, lang),
+            text=stale_decision_text(label, outcome, lang, appointment_summary),
             reply_markup=None,
         ):
             logger.warning(
@@ -930,6 +1016,70 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_proposal_rejected_text(client_name, lang),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+        )
+
+    async def notify_staff_booking_confirmed(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str,
+    ) -> None:
+        """Notify other staff that a colleague confirmed a client's booking request."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=staff_booking_confirmed_text(client_name, actor, lang),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+        )
+
+    async def notify_staff_booking_rejected(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str,
+    ) -> None:
+        """Notify other staff that a colleague rejected a client's booking request."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=staff_booking_rejected_text(client_name, actor, lang),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+        )
+
+    async def notify_staff_reschedule_decision_accepted(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str,
+    ) -> None:
+        """Notify other staff that a colleague accepted a client's reschedule request."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=staff_reschedule_decision_accepted_text(client_name, actor, lang),
+            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+        )
+
+    async def notify_staff_reschedule_decision_rejected(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str,
+    ) -> None:
+        """Notify other staff that a colleague rejected a client's reschedule request."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=staff_reschedule_decision_rejected_text(client_name, actor, lang),
             reply_to_message_id=self._admin_reply_to_message_id(appointment),
         )
 

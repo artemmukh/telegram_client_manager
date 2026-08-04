@@ -146,6 +146,7 @@ async def test_confirm_request_shows_alert_and_invalidates_own_message_on_lost_r
     assert kwargs == {"show_alert": True}
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
         555, 777, DECIDED_LABEL, {"ru": "подтверждена", "uz": "tasdiqlandi"},
+        appointment_summary="Запись №1\nВремя: 01.08.2026 10:00\nУслуга: Konsultatsiya\nСтатус: ✅ подтверждена",
     )
 
 
@@ -203,6 +204,7 @@ async def test_accept_reschedule_shows_alert_and_invalidates_own_message_on_lost
     assert kwargs == {"show_alert": True}
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
         555, 777, DECIDED_LABEL, {"ru": "перенос принят", "uz": "ko'chirish qabul qilindi"},
+        appointment_summary="Запись №1\nВремя: 05.08.2026 09:00\nУслуга: Konsultatsiya\nСтатус: ✅ подтверждена",
     )
 
 
@@ -240,7 +242,57 @@ async def test_skip_edit_shows_alert_and_invalidates_own_message_on_lost_race():
     )
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
         555, 777, DECIDED_LABEL, {"ru": "приём завершён", "uz": "qabul yakunlandi"},
+        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Konsultatsiya\nСтатус: ✔️ завершена",
     )
+
+
+@pytest.mark.asyncio
+async def test_confirm_request_stale_decision_summary_includes_client_name_and_phone():
+    """appointment_summary is built from build_appointment_card(error.appointment, lang),
+    which surfaces client_full_name/client_phone whenever they're set on the
+    appointment (as the real repository's JOIN would populate them) -- not just
+    the date/purpose/status already covered by
+    test_confirm_request_shows_alert_and_invalidates_own_message_on_lost_race above."""
+    class FakeAppointmentRepository:
+        def __init__(self, appointment):
+            self.appointment = appointment
+
+        async def get_appointment_by_id(self, appointment_id):
+            return self.appointment
+
+        async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses=None):
+            return []
+
+        async def try_confirm_or_reject_pending(self, appointment_id, new_status, decided_by_user_id, status_updated_at):
+            return False
+
+    appointment = Appointment(
+        clinic_id=1, client_id=7, doctor_id=5, datetime="2026-08-01 10:00", purpose="Konsultatsiya",
+        created_by=CreatedBy.CLIENT, status=AppointmentStatus.CONFIRMED, id=1, decided_by_user_id=WINNER_ID,
+        client_full_name="Client Clientov", client_phone="+998900001122",
+    )
+    appt_repo = FakeAppointmentRepository(appointment)
+    notification_service = _notification_service()
+    router = create_admin_booking_requests_router(
+        "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(), notification_service=notification_service,
+    )
+    confirm_request = _find_handler(router, "confirm_request")
+    callback_query = _callback_query()
+
+    await confirm_request(callback_query, BookingRequestActionCB(action="confirm", appointment_id=1), _admin_user())
+
+    kwargs = notification_service.invalidate_stale_decision_message.call_args.kwargs
+    summary = kwargs["appointment_summary"]
+    assert "Client Clientov" in summary
+    assert "+998900001122" in summary
+    assert "01.08.2026 10:00" in summary
+    assert "подтверждена" in summary
+
+    # The 200-char show_alert popup must stay untouched by the richer summary --
+    # it never carries client name/phone, only the label/outcome sentence.
+    args, _ = callback_query.answer.call_args
+    assert "Client Clientov" not in args[0]
+    assert "+998900001122" not in args[0]
 
 
 @pytest.mark.asyncio
@@ -306,5 +358,10 @@ async def test_approve_propose_datetime_shows_alert_and_invalidates_own_message_
     assert kwargs == {"show_alert": True}
     notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
         555, 777, DECIDED_LABEL, {"ru": "предложено другое время", "uz": "boshqa vaqt taklif qilindi"},
+        appointment_summary=(
+            "Запись №1\nВремя: 01.08.2026 10:00\nУслуга: Konsultatsiya\nСтатус: 🕐 ожидает\n"
+            "Вы предложили перенос на: 6 августа 2026, 11:00\n"
+            "ℹ️ Ответить на предложение можно в уведомлении о переносе."
+        ),
     )
     state.clear.assert_awaited_once()

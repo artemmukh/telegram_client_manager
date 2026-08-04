@@ -1,4 +1,5 @@
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
+from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import AppointmentNotificationService
 
@@ -43,17 +44,23 @@ async def invalidate_actor_stale_message(
     error: AppointmentAlreadyDecidedError,
     chat_id: int,
     message_id: int,
+    lang: str,
 ) -> None:
     """Стереть клавиатуру у собственного сообщения действующего сотрудника.
 
     Вызывается при AppointmentAlreadyDecidedError: пока текущий сотрудник
     принимал решение, коллега уже обработал ту же заявку. Метка и текст исхода
     берутся из самого исключения (уже вычислены сервисом при попытке действия),
-    чтобы не повторять запрос к БД.
+    чтобы не повторять запрос к БД. Если исключение несёт свежепрочитанную
+    заявку, под текстом решения дополнительно показывается её карточка
+    (клиент, телефон, время, статус) — этого не умещается в 200-символьный
+    show_alert-попап, поэтому переносится в редактируемое сообщение.
     """
     decided_by_label = error.decided_by_label or DEFAULT_DECIDED_BY_LABEL
     outcome_text = error.outcome_text or DEFAULT_OUTCOME_TEXT
+    appointment_summary = build_appointment_card(error.appointment, lang) if error.appointment else None
 
     await notification_service.invalidate_stale_decision_message(
         chat_id, message_id, decided_by_label, outcome_text,
+        appointment_summary=appointment_summary,
     )

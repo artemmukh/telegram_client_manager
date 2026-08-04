@@ -234,6 +234,7 @@ async def test_open_edit_shows_alert_and_does_not_render_card_when_already_decid
         111, 222,
         {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
         {"ru": "приём завершён", "uz": "qabul yakunlandi"},
+        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
     )
 
 
@@ -327,4 +328,5 @@ async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided(
         111, 222,
         {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
         {"ru": "приём завершён", "uz": "qabul yakunlandi"},
+        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
     )

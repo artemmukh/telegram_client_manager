@@ -301,6 +301,7 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
         555, 777,
         {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
         {"ru": "перенос отклонён", "uz": "ko'chirish rad etildi"},
+        appointment_summary="Запись №1\nВремя: 01.08.2026 10:00\nУслуга: Консультация\nСтатус: ❌ отменена",
     )
     outcome_text = notification_service.invalidate_stale_decision_message.call_args.args[3]
     assert outcome_text["ru"] != "отклонена"

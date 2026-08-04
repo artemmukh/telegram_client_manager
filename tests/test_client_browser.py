@@ -17,7 +17,9 @@ from bot.keyboards.admin.client_management_kb.client_browser_cb import (
     ClientPageCB,
 )
 from bot.keyboards.admin.client_management_kb.client_browser_kb import client_card_kb
+from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_list_kb
 from bot.keyboards.client.booking_kb import booking_doctor_kb
+from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -28,6 +30,7 @@ from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import format_phone_short
 
@@ -278,7 +281,7 @@ def test_client_card_kb_adjust_layout_has_three_rows_of_buttons():
     markup = client_card_kb(client_id=1, mode="list", page=1)
 
     row_lengths = [len(row) for row in markup.inline_keyboard]
-    assert row_lengths == [2, 1, 1]
+    assert row_lengths == [2, 2, 1]
 
 
 # --- start_delete: appointment-count warning ---
@@ -619,3 +622,130 @@ async def test_new_appointment_with_mm_instance_enters_calendar_with_admin_fallb
     callback_query.message.edit_text.assert_awaited_once()
     args, kwargs = callback_query.message.edit_text.await_args
     assert args[0] == f"📅 {format_month_label(NEW_APPOINTMENT_FIXED_NOW.year, NEW_APPOINTMENT_FIXED_NOW.month)}"
+
+
+# --- view_client_appointments: "Посмотреть записи" button on the client card ---
+
+class FakeAppointmentRepoForViewAppointments:
+    def __init__(self, appointments):
+        self.appointments = list(appointments)
+        self.client_id_calls = []
+
+    async def get_appointments_by_client_id(self, client_id, clinic_id, doctor_id=None):
+        self.client_id_calls.append((client_id, clinic_id, doctor_id))
+        return [a for a in self.appointments if a.client_id == client_id]
+
+
+class FakeUserRepoForViewAppointments:
+    def __init__(self, admin):
+        self.admin = admin
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        return self.admin if self.admin.telegram_user_id == telegram_user_id else None
+
+
+class FakeStaffRepoForViewAppointments:
+    def __init__(self, staff):
+        self.staff = staff
+
+    async def get_staff(self, telegram_user_id):
+        return self.staff
+
+
+class FakeClinicRepoForViewAppointments:
+    def __init__(self, clinic):
+        self.clinic = clinic
+
+    async def get_clinic_by_id(self, clinic_id):
+        return self.clinic
+
+
+def _build_view_appointments_router(admin, staff, appointments):
+    user_repo = FakeUserRepoForViewAppointments(admin)
+    staff_repo = FakeStaffRepoForViewAppointments(staff)
+    clinic_repo = FakeClinicRepoForViewAppointments(Clinic(clinic_id=1, name="Клиника Тест", token="t"))
+    appointment_repo = FakeAppointmentRepoForViewAppointments(appointments)
+    router = create_admin_client_browser_router(user_repo, staff_repo, clinic_repo, appointment_repo)
+    return router, appointment_repo
+
+
+@pytest.mark.asyncio
+async def test_view_client_appointments_renders_confirmed_tab_scoped_to_client_for_clinic_admin():
+    confirmed = Appointment(
+        id=1, clinic_id=1, client_id=5, doctor_id=2, datetime="2026-08-10 10:00",
+        purpose="Konsultatsiya", created_by=CreatedBy.CLIENT, status=AppointmentStatus.CONFIRMED,
+    )
+    cancelled = Appointment(
+        id=2, clinic_id=1, client_id=5, doctor_id=2, datetime="2026-08-11 10:00",
+        purpose="Konsultatsiya", created_by=CreatedBy.CLIENT, status=AppointmentStatus.CANCELLED,
+    )
+    other_client = Appointment(
+        id=3, clinic_id=1, client_id=6, doctor_id=2, datetime="2026-08-12 10:00",
+        purpose="Konsultatsiya", created_by=CreatedBy.CLIENT, status=AppointmentStatus.CONFIRMED,
+    )
+    staff = Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic")
+    router, appt_repo = _build_view_appointments_router(
+        _admin_current_user(), staff, [confirmed, cancelled, other_client],
+    )
+    view_client_appointments = _find_handler(router, "view_client_appointments")
+
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+    callback_data = ClientActionCB(action="view_appointments", client_id=5, mode="list", page=2)
+
+    await view_client_appointments(callback_query, callback_data, state, _admin_current_user())
+
+    assert appt_repo.client_id_calls == [(5, 1, None)]
+    assert (await state.get_data())["search_data"] == {"client_id": 5}
+
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_list_kb(
+        [confirmed], "phone", 1, 1, "confirmed",
+        back_callback_data=ClientCardCB(client_id=5, mode="list", page=2).pack(),
+        back_label="⬅️ К карточке клиента",
+    )
+    assert kwargs["reply_markup"] == expected_markup
+
+
+@pytest.mark.asyncio
+async def test_view_client_appointments_scopes_by_doctor_id_for_own_scope_admin():
+    admin = _admin_current_user()
+    staff = Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="own")
+    router, appt_repo = _build_view_appointments_router(admin, staff, [])
+    view_client_appointments = _find_handler(router, "view_client_appointments")
+
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+    callback_data = ClientActionCB(action="view_appointments", client_id=5, mode="search", page=1)
+
+    await view_client_appointments(callback_query, callback_data, state, admin)
+
+    assert appt_repo.client_id_calls == [(5, 1, admin.ID)]
+    assert (await state.get_data())["search_data"] == {"client_id": 5}
+
+
+@pytest.mark.asyncio
+async def test_view_client_appointments_back_button_targets_client_card_in_uz():
+    admin = User(
+        ID=99, full_name="Админ Админов", phone="+998900000000", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, language="uz",
+    )
+    staff = Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic")
+    router, appt_repo = _build_view_appointments_router(admin, staff, [])
+    view_client_appointments = _find_handler(router, "view_client_appointments")
+
+    callback_query = _callback_query()
+    state = _new_appointment_fsm_context()
+    callback_data = ClientActionCB(action="view_appointments", client_id=8, mode="list", page=3)
+
+    await view_client_appointments(callback_query, callback_data, state, admin)
+
+    args, kwargs = callback_query.message.edit_text.await_args
+    expected_markup = appointment_list_kb(
+        [], "phone", 1, 1, "confirmed",
+        back_callback_data=ClientCardCB(client_id=8, mode="list", page=3).pack(),
+        back_label="⬅️ Mijoz kartasiga",
+        lang="uz",
+    )
+    assert kwargs["reply_markup"] == expected_markup

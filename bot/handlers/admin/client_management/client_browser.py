@@ -15,6 +15,7 @@ from bot.exceptions.user_exceptions import (
     UserNotFoundError,
     ValidationError,
 )
+from bot.handlers.admin.appointment_management.appointment_browser import render_appointment_list
 from bot.handlers.utils.admin_utils import appointment_helpers as ah
 from bot.handlers.utils.admin_utils.client_browser_helpers import (
     CLIENT_NOT_FOUND_TEXT,
@@ -49,6 +50,7 @@ from bot.keyboards.admin.client_management_kb.client_browser_kb import (
 )
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
+from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.states.admin.client_management.client_browser_states import ClientBrowserStates
@@ -142,6 +144,11 @@ _SAME_PHONE_MESSAGE = {
     "uz": "Xuddi shu telefon raqami kiritildi. Iltimos, boshqasini kiriting:",
 }
 
+_BACK_TO_CLIENT_CARD_LABEL = {
+    "ru": "⬅️ К карточке клиента",
+    "uz": "⬅️ Mijoz kartasiga",
+}
+
 
 def create_admin_client_browser_router(
     user_repo, staff_repo, clinic_repo, appointment_repo=None, client_clinic_repo=None, *, instance: str = "zb",
@@ -155,7 +162,8 @@ def create_admin_client_browser_router(
         appointment_repository=appointment_repo,
         client_clinic_repository=client_clinic_repo,
     )
-    pagination_service = ClientPaginationService(user_repo)
+    client_pagination_service = ClientPaginationService(user_repo)
+    appt_pagination_service = AppointmentPaginationService(appointment_repo)
     appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
 
     router.message.filter(RoleFilter("admin"))
@@ -353,6 +361,27 @@ def create_admin_client_browser_router(
             origin_client_id=callback_data.client_id, origin_mode=callback_data.mode, origin_page=callback_data.page,
             origin_search_data=data.get("search_data"),
             lang=lang,
+        )
+
+    @router.callback_query(ClientActionCB.filter(F.action == "view_appointments"))
+    async def view_client_appointments(
+        callback_query: CallbackQuery, callback_data: ClientActionCB, state: FSMContext, current_user: User,
+    ):
+        lang = current_user.language
+        try:
+            clinic_id, doctor_id = await appt_mng.resolve_admin_appointment_filter(callback_query.from_user.id)
+        except BotException as e:
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            return
+
+        await state.update_data(search_data={"client_id": callback_data.client_id})
+        await render_appointment_list(
+            callback_query, state, pagination_service=appt_pagination_service,
+            mode="phone", page=1, tab="confirmed", clinic_id=clinic_id, doctor_id=doctor_id, lang=lang,
+            back_override=(
+                ClientCardCB(client_id=callback_data.client_id, mode=callback_data.mode, page=callback_data.page).pack(),
+                _BACK_TO_CLIENT_CARD_LABEL.get(lang, _BACK_TO_CLIENT_CARD_LABEL["ru"]),
+            ),
         )
 
     @router.callback_query(ClientActionCB.filter(F.action == "edit_name"))
@@ -641,7 +670,7 @@ def create_admin_client_browser_router(
                 data = await state.get_data()
                 search_data = data.get("search_data") or {"full_name": data.get("full_name", "")}
 
-            result = await pagination_service.paginate_clients(mode, page, clinic_id, search_data)
+            result = await client_pagination_service.paginate_clients(mode, page, clinic_id, search_data)
 
             title = _LIST_TITLE_ALL.get(lang, _LIST_TITLE_ALL["ru"]) if mode == "list" \
                 else _LIST_TITLE_SEARCH.get(lang, _LIST_TITLE_SEARCH["ru"])

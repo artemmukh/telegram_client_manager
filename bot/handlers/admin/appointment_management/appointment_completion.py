@@ -66,7 +66,7 @@ def create_admin_completion_router(
                 try:
                     await invalidate_actor_stale_message(
                         notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id,
+                        callback_query.message.chat.id, callback_query.message.message_id, lang,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -125,7 +125,7 @@ def create_admin_completion_router(
                 try:
                     await invalidate_actor_stale_message(
                         notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id,
+                        callback_query.message.chat.id, callback_query.message.message_id, lang,
                     )
                 except Exception as invalidation_error:
                     logger.warning(

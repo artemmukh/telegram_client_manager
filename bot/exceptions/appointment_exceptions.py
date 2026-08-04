@@ -1,5 +1,6 @@
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
+from bot.models.appointment import Appointment
 
 
 class AppointmentNotFoundError(ValidationError):
@@ -20,10 +21,12 @@ class AppointmentAlreadyDecidedError(ValidationError):
         message: str | dict[str, str],
         decided_by_label: dict[str, str] | None = None,
         outcome_text: dict[str, str] | None = None,
+        appointment: Appointment | None = None,
     ) -> None:
         super().__init__(message)
         self.decided_by_label = decided_by_label
         self.outcome_text = outcome_text
+        self.appointment = appointment
 
 
 class AwaitingClinicDecisionError(ValidationError):

@@ -110,6 +110,11 @@ _NEW_TIME_ASSIGNED = {
     "uz": "🔁 Mijozga yangi vaqt tayinlandi: {value}\nMijoz tasdiqlashini kutmoqdamiz.",
 }
 
+_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Клиент",
+    "uz": "Mijoz",
+}
+
 
 def _format_datetime_value(value: str, lang: str = "ru") -> str:
     try:
@@ -146,19 +151,54 @@ def create_admin_booking_requests_router(
             )
 
     async def invalidate_own_stale_booking_message(
-        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError,
+        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError, lang: str,
     ) -> None:
         if not notification_service:
             return
         try:
             await invalidate_actor_stale_message(
                 notification_service, error,
-                callback_query.message.chat.id, callback_query.message.message_id,
+                callback_query.message.chat.id, callback_query.message.message_id, lang,
             )
         except Exception as e:
             logger.warning(
                 f"Failed to invalidate own stale booking message: {e}"
             )
+
+    async def notify_staff_booking_decision(
+        callback_query: CallbackQuery, appointment, confirmed: bool, lang: str,
+    ) -> None:
+        if not notification_service:
+            return
+        try:
+            actor = await appt_mng.get_user_by_telegram_id(callback_query.from_user.id)
+            actor_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+            client = await appt_mng.get_client_by_id(appointment.client_id)
+            client_name = client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"])
+            recipients = await appt_mng.resolve_notification_recipients(appointment)
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve staff recipients for booking decision on appointment {appointment.id}: {e}"
+            )
+            return
+
+        for recipient in recipients:
+            if recipient.telegram_user_id == callback_query.from_user.id:
+                continue
+            try:
+                if confirmed:
+                    await notification_service.notify_staff_booking_confirmed(
+                        recipient.telegram_user_id, appointment, actor_label, client_name,
+                    )
+                else:
+                    await notification_service.notify_staff_booking_rejected(
+                        recipient.telegram_user_id, appointment, actor_label, client_name,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to notify staff {recipient.telegram_user_id} about booking decision "
+                    f"for appointment {appointment.id}: {e}"
+                )
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "confirm"))
     async def confirm_request(callback_query: CallbackQuery, callback_data: BookingRequestActionCB, current_user: User):
@@ -179,7 +219,7 @@ def create_admin_booking_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_booking_message(callback_query, e)
+            await invalidate_own_stale_booking_message(callback_query, e, lang)
             return
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -193,6 +233,7 @@ def create_admin_booking_requests_router(
         await callback_query.answer(_REQUEST_CONFIRMED.get(lang, _REQUEST_CONFIRMED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
         await invalidate_booking_siblings(callback_query, appointment)
+        await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "reject"))
     async def reject_request(callback_query: CallbackQuery, callback_data: BookingRequestActionCB, current_user: User):
@@ -213,7 +254,7 @@ def create_admin_booking_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_booking_message(callback_query, e)
+            await invalidate_own_stale_booking_message(callback_query, e, lang)
             return
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -233,6 +274,7 @@ def create_admin_booking_requests_router(
         await callback_query.answer(_REQUEST_REJECTED.get(lang, _REQUEST_REJECTED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
         await invalidate_booking_siblings(callback_query, appointment)
+        await notify_staff_booking_decision(callback_query, appointment, confirmed=False, lang=lang)
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "propose"))
     async def start_propose_datetime(
@@ -432,7 +474,7 @@ def create_admin_booking_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_booking_message(callback_query, e)
+            await invalidate_own_stale_booking_message(callback_query, e, lang)
             await state.clear()
             return
         except ValidationError as e:
@@ -453,6 +495,7 @@ def create_admin_booking_requests_router(
                 )
             )
             await invalidate_booking_siblings(callback_query, appointment)
+            await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
             await state.clear()
             return
 

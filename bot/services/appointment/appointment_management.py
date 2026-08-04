@@ -996,6 +996,7 @@ class AppointmentManagement:
             message,
             decided_by_label=label,
             outcome_text=outcome_text,
+            appointment=current,
         )
 
     def _ensure_not_finalized(self, appointment: Appointment, message: str | dict[str, str]) -> None:
