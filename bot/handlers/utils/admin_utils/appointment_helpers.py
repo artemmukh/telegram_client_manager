@@ -545,7 +545,7 @@ async def apply_picked_propose_slot(
 
 
 async def begin_appointment_creation(
-    appt_mng, callback_query: CallbackQuery, state: FSMContext, *,
+    appt_mng, event: CallbackQuery | Message, state: FSMContext, *,
     instance: str,
     full_name: str | None = None, phone: str | None = None,
     origin_client_id: int | None = None, origin_mode: str | None = None,
@@ -555,9 +555,12 @@ async def begin_appointment_creation(
     await state.clear()
 
     try:
-        clinic = await appt_mng.get_admin_clinic(callback_query.from_user.id)
+        clinic = await appt_mng.get_admin_clinic(event.from_user.id)
     except BotException as e:
-        await callback_query.answer(e.localized(lang), show_alert=True)
+        if isinstance(event, CallbackQuery):
+            await event.answer(e.localized(lang), show_alert=True)
+        else:
+            await event.answer(e.localized(lang))
         return
 
     await state.update_data(clinic_name=clinic.name)
@@ -578,32 +581,43 @@ async def begin_appointment_creation(
             preselect_data["origin_search_data"] = origin_search_data
         await state.update_data(**preselect_data)
 
-    doctors = await appt_mng.list_clinic_doctors_for_creation(callback_query.from_user.id)
+    doctors = await appt_mng.list_clinic_doctors_for_creation(event.from_user.id)
     if doctors:
         await state.update_data(staff_options={str(d.ID): d.full_name for d in doctors})
         await state.set_state(AppointmentCreationStates.choose_doctor)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            _CHOOSE_DOCTOR_PROMPT.get(lang, _CHOOSE_DOCTOR_PROMPT["ru"]),
-            reply_markup=booking_doctor_kb(doctors, cancel_callback_data="back_to_main_records", lang=lang),
-        )
+        doctor_prompt = _CHOOSE_DOCTOR_PROMPT.get(lang, _CHOOSE_DOCTOR_PROMPT["ru"])
+        doctor_markup = booking_doctor_kb(doctors, cancel_callback_data="back_to_main_records", lang=lang)
+        if isinstance(event, CallbackQuery):
+            await event.answer('')
+            await event.message.edit_text(doctor_prompt, reply_markup=doctor_markup)
+        else:
+            await event.answer(doctor_prompt, reply_markup=doctor_markup)
         return
 
     if full_name is not None and phone is not None:
         if DATA_PARSE_MODE.get(instance) == "slots":
-            await callback_query.answer('')
-            await render_calendar_start(appt_mng, callback_query, state, lang=lang)
+            if isinstance(event, CallbackQuery):
+                await event.answer('')
+                await render_calendar_start(appt_mng, event, state, lang=lang)
+            else:
+                await render_calendar_start_from_message(appt_mng, event, state, lang=lang)
             return
 
         await state.set_state(AppointmentCreationStates.appointment_datetime)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            datetime_input_prompt(lang),
-            reply_markup=back_to_records_kb(lang=lang),
-        )
+        if isinstance(event, CallbackQuery):
+            await event.answer('')
+            await event.message.edit_text(
+                datetime_input_prompt(lang),
+                reply_markup=back_to_records_kb(lang=lang),
+            )
+        else:
+            await event.answer(
+                datetime_input_prompt(lang),
+                reply_markup=back_to_records_kb(lang=lang),
+            )
         return
 
     await ask_full_name(
-        callback_query, state, AppointmentCreationStates.client_full_name,
+        event, state, AppointmentCreationStates.client_full_name,
         reply_markup=back_to_records_kb(lang=lang), lang=lang,
     )

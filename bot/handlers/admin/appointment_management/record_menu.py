@@ -30,7 +30,7 @@ def create_admin_record_router(user_repo, staff_repo, clinic_repo, client_clinic
     router.callback_query.filter(RoleFilter("admin"))
 
     @router.message(F.text.in_({
-        "/record_managing", "/appointments", "/create_appointment", "📒 Управление записями", "📅 Календарь",
+        "/record_managing", "📒 Управление записями", "📅 Календарь",
         "📒 Yozuvlarni boshqarish", "📅 Kalendar",
     }))
     async def record_managing(message: Message, current_user: User):

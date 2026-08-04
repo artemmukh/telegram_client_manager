@@ -267,17 +267,28 @@ def create_admin_appointment_browser_router(
 
     # --- Entry ---
 
-    @router.callback_query(F.data == "browse_appointments")
-    async def browse_appointments(callback_query: CallbackQuery, state: FSMContext, current_user: User):
-        lang = current_user.language
+    async def _begin_appointment_browsing(event: CallbackQuery | Message, state: FSMContext, lang: str) -> None:
         await state.clear()
         await state.set_state(AppointmentBrowserStates.search_variant)
-        await callback_query.answer('')
-        await callback_query.message.edit_text(
-            _CHOOSE_SEARCH_METHOD_TEXT.get(lang, _CHOOSE_SEARCH_METHOD_TEXT["ru"]),
-            reply_markup=appointment_browser_search_kb(lang=lang),
-        )
-        await remember_tracked_message(state, callback_query.message)
+        text = _CHOOSE_SEARCH_METHOD_TEXT.get(lang, _CHOOSE_SEARCH_METHOD_TEXT["ru"])
+        markup = appointment_browser_search_kb(lang=lang)
+
+        if isinstance(event, CallbackQuery):
+            await event.answer('')
+            await event.message.edit_text(text, reply_markup=markup)
+            sent_message = event.message
+        else:
+            sent_message = await event.answer(text, reply_markup=markup)
+
+        await remember_tracked_message(state, sent_message)
+
+    @router.callback_query(F.data == "browse_appointments")
+    async def browse_appointments(callback_query: CallbackQuery, state: FSMContext, current_user: User):
+        await _begin_appointment_browsing(callback_query, state, current_user.language)
+
+    @router.message(F.text == "/appointments")
+    async def browse_appointments_message(message: Message, state: FSMContext, current_user: User):
+        await _begin_appointment_browsing(message, state, current_user.language)
 
     # --- Search by full name ---
 

@@ -70,22 +70,31 @@ def create_admin_client_creation_router(user_repo, staff_repo, clinic_repo, clie
     router.callback_query.filter(RoleFilter("admin"))
 
 
-    @router.callback_query(F.data == "create_client")
-    async def create_client_name(callback_query: CallbackQuery, state: FSMContext, current_user: User):
-        lang = current_user.language
+    async def _begin_client_creation(event: CallbackQuery | Message, state: FSMContext, lang: str) -> None:
         try:
-            clinic = await cl_mng.get_admin_clinic(callback_query.from_user.id)
+            clinic = await cl_mng.get_admin_clinic(event.from_user.id)
         except BotException as e:
-            await callback_query.answer(e.localized(lang), show_alert=True)
+            if isinstance(event, CallbackQuery):
+                await event.answer(e.localized(lang), show_alert=True)
+            else:
+                await event.answer(e.localized(lang))
             return
 
         await state.update_data(clinic_id=clinic.clinic_id, clinic_name=clinic.name)
         await ask_full_name(
-            callback_query, state,
+            event, state,
             next_state=ClientCreationStates.client_full_name,
             reply_markup=client_creation_back_kb(lang),
             lang=lang,
         )
+
+    @router.callback_query(F.data == "create_client")
+    async def create_client_name(callback_query: CallbackQuery, state: FSMContext, current_user: User):
+        await _begin_client_creation(callback_query, state, current_user.language)
+
+    @router.message(F.text == "/create_client")
+    async def create_client_name_message(message: Message, state: FSMContext, current_user: User):
+        await _begin_client_creation(message, state, current_user.language)
 
     @router.message(ClientCreationStates.client_full_name, F.text)
     async def create_client_phone(message: Message, state: FSMContext, current_user: User):

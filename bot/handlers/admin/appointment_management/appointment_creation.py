@@ -146,12 +146,16 @@ def create_admin_appointment_creation_router(instance:str,
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
-    async def begin_appointment_creation(callback_query: CallbackQuery, state: FSMContext, lang: str = "ru"):
-        await ah.begin_appointment_creation(appt_mng, callback_query, state, instance=instance, lang=lang)
+    async def begin_appointment_creation(event: CallbackQuery | Message, state: FSMContext, lang: str = "ru"):
+        await ah.begin_appointment_creation(appt_mng, event, state, instance=instance, lang=lang)
 
     @router.callback_query(F.data == "create_record")
     async def start_create(callback_query: CallbackQuery, state: FSMContext, current_user: User):
         await begin_appointment_creation(callback_query, state, current_user.language)
+
+    @router.message(F.text == "/create_appointment")
+    async def start_create_message(message: Message, state: FSMContext, current_user: User):
+        await begin_appointment_creation(message, state, current_user.language)
 
     @router.callback_query(AppointmentCreationStates.choose_doctor, ClientBookDoctorCB.filter())
     async def pick_doctor(

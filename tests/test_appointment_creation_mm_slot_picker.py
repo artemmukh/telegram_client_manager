@@ -21,6 +21,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiogram.types import CallbackQuery
+
 from bot.config.booking_config import BOOKING_SLOTS
 from bot.handlers.admin.appointment_management.appointment_creation import (
     create_admin_appointment_creation_router,
@@ -138,6 +140,10 @@ def _find_callback_handler(router, name):
 
 def _callback_query(telegram_user_id=ADMIN_TELEGRAM_ID):
     callback_query = MagicMock()
+    # ask_full_name/begin_appointment_creation now isinstance-branch on
+    # CallbackQuery | Message; make this mock identify as a CallbackQuery so
+    # it takes the edit_text branch instead of the Message/answer() one.
+    callback_query.__class__ = CallbackQuery
     callback_query.from_user.id = telegram_user_id
     callback_query.answer = AsyncMock()
     callback_query.message.edit_text = AsyncMock()
