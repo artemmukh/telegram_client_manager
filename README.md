@@ -2,7 +2,7 @@
 
 A Telegram bot for managing patients and appointments in a private clinic — built with **aiogram 3**, **SQLite**, and a strict layered architecture.
 
-Two roles share one bot: **administrators**, who run the clinic's day-to-day schedule, and **clients**, who register, book, and manage their own appointments straight from Telegram.
+Two roles share one bot: **administrators** (doctors and clinic admins), who run the clinic's day-to-day schedule, and **clients**, who register, book, and manage their own appointments straight from Telegram.
 
 ---
 
@@ -27,8 +27,15 @@ Two roles share one bot: **administrators**, who run the clinic's day-to-day sch
 - **Reminders mirrored to admin** — the staff member who created the appointment gets the same 24h/2h reminders as the client.
 - **Name-change approval** — approve or reject a client's self-service name change request.
 
+### 🩺 Medical Records
+
+- **Record generation** — after an appointment, clinic staff can request automatic generation of a filled medical record (medical card, history of illness, treatment plan). AI-powered extraction of complaints, diseases, examination findings, treatment plan, and tooth map from free-text input.
+- **Per-clinic configuration** — each clinic instance has an optional Word template (`.docx`); templates are loaded from `data/` and rendering includes tooth-map tables keyed by FDI numbers.
+- **Integrated workflow** — accessible from appointment browser (admin) and appointment-details view (client).
+
 ### ⚙️ Behind the scenes
 
+- **Multi-clinic deployment** — the same codebase runs as a separate OS process per clinic (`BOT_INSTANCE=zb` / `mm`), each with its own bot token, SQLite database, seed staff, price list, and medical-record template — see `bot/config/clinic_instances.py`.
 - Background jobs (via **APScheduler**) handle reminders, auto-completion, and the expiry of unanswered booking/reschedule requests — all cancelled and rescheduled automatically as appointment state changes.
 - Natural-language Russian date/time parsing (`dateparser`) for both admin and client input ("завтра в 15:00", "в пятницу утром", etc.).
 - Two-way Telegram notifications between client and clinic on every state change, with graceful failure handling so a failed notification never breaks the underlying action.
@@ -43,6 +50,7 @@ The project is designed to grow into an AI-assisted assistant:
 - 💬 Natural language appointment creation from free text
 - 🧠 Automatic extraction of patient / date / time / service from a single message
 - 🖥️ Local LLM support via Ollama, so appointments can be created without manual admin input at all
+- 📋 Subscription system and automated recurring appointments
 
 ---
 
@@ -50,14 +58,16 @@ The project is designed to grow into an AI-assisted assistant:
 
 | | |
 |---|---|
-| Language | Python 3.13+ |
-| Bot framework | aiogram 3 |
-| Database | SQLite via `aiosqlite` |
-| Scheduling | APScheduler |
-| Date parsing | `dateparser` |
-| Testing | pytest + pytest-asyncio |
+| Language | Python 3 |
+| Bot framework | aiogram 3.29 |
+| Database | SQLite via `aiosqlite` 0.22 |
+| Scheduling | APScheduler 3.11 |
+| Date parsing | `dateparser` ≥1.1 |
+| AI / LLM | Mistral AI (via `mistralai` SDK, hosted API) |
+| Document generation | `docxtpl` + `python-docx` |
+| Testing | pytest 9 + pytest-asyncio 1.2 |
 
-**Planned:** PostgreSQL (multi-clinic scale), Whisper, Ollama / local LLMs.
+**Planned:** PostgreSQL (multi-clinic scale), Whisper, local LLMs (Ollama).
 
 ---
 
@@ -83,21 +93,29 @@ Supporting layers sit alongside: **Validators**, **FSM States**, **Keyboards**, 
 
 ```text
 bot/
-├── config/          # env-driven config, booking constants
-├── exceptions/       # domain exceptions
-├── handlers/         # Telegram routers (admin/, client/, common/)
+├── config/            # env-driven config, clinic instances, booking constants
+├── create_bot.py      # bot factory
+├── loader.py          # dependency injection setup
+├── run.py             # entry point
+├── exceptions/        # domain exceptions (appointment, user, medical_record)
+├── handlers/          # Telegram routers (admin/, client/, common/)
 ├── keyboards/         # inline/reply keyboards, callback factories
 ├── middlewares/       # logging, error handling, user resolution
 ├── models/            # domain models (User, Appointment, Clinic, Staff)
-├── repositories/       # SQL access, one per entity
-├── services/           # business logic (appointment/, client/, utils/)
-├── states/             # aiogram FSM state groups
-├── validators/          # input validation
-├── utils/               # enums, role filters, helpers
-└── run.py               # entry point
+├── repositories/      # SQL access (clinic, staff, user, appointment, client_clinic, user_settings, medical_record)
+├── services/          # business logic
+│   ├── appointment/   # appointment workflows
+│   ├── client/        # client-facing flows
+│   ├── llm/           # Mistral AI integration (ChatLLM agent)
+│   ├── document_generator/  # Word document rendering (pydocx)
+│   ├── medical_record/      # medical record orchestration service
+│   └── utils/         # shared utilities
+├── states/            # aiogram FSM state groups
+├── validators/        # input validation
+└── utils/             # enums, role filters, helpers
 
-tests/                  # unit + real-SQLite integration + E2E test suite
-docs/                    # design notes, QA checklists, agent prompts
+tests/                 # unit + real-SQLite integration + E2E test suite (83 test files)
+docs/                  # design notes, QA checklists
 ```
 
 ---
@@ -106,7 +124,7 @@ docs/                    # design notes, QA checklists, agent prompts
 
 🚧 **Active development.**
 
-Core flows are implemented and covered by an extensive automated test suite: patient CRUD, self-booking, booking/reschedule negotiation, reminders, auto-completion, and name-change approval. AI-assisted features (voice, NLP appointment creation, local LLM) are on the roadmap but not started.
+Core flows are implemented and covered by an extensive automated test suite: patient CRUD, self-booking, booking/reschedule negotiation, reminders, auto-completion, name-change approval, and medical record generation. Additional AI-assisted features (voice, NLP appointment creation, local LLM, subscriptions) are on the roadmap but not started.
 
 ---
 
