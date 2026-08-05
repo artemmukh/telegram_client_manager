@@ -14,7 +14,7 @@ now-removed manual cancel_*/schedule_* methods.
 """
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.appointment_management.booking_requests import (
@@ -31,6 +31,14 @@ from bot.utils.role import Role
 
 ADMIN_TELEGRAM_ID = 999
 ADMIN_ID = 1
+
+# Well beyond MIN_LEAD_TIME (2h30m) from "now" so the propose_new_datetime
+# lead-time guard never trips regardless of when the suite runs.
+NEW_PROPOSED_DATETIME = (datetime.now() + timedelta(days=30)).replace(
+    hour=12, minute=0, second=0, microsecond=0,
+)
+NEW_PROPOSED_DATETIME_STR = NEW_PROPOSED_DATETIME.strftime("%Y-%m-%d %H:%M")
+NEW_PROPOSED_DATETIME_DISPLAY = NEW_PROPOSED_DATETIME.strftime("%d.%m.%Y %H:%M")
 
 LEGACY_SCHEDULER_METHODS = (
     "cancel_pending_expiry",
@@ -199,8 +207,8 @@ def _admin_user():
 def _make_state():
     state = MagicMock()
     state.get_data = AsyncMock(return_value={
-        "appointment_datetime_parsed": datetime(2026, 8, 5, 12, 0),
-        "appointment_datetime_display": "05.08.2026 12:00",
+        "appointment_datetime_parsed": NEW_PROPOSED_DATETIME,
+        "appointment_datetime_display": NEW_PROPOSED_DATETIME_DISPLAY,
     })
     state.clear = AsyncMock()
     return state
@@ -258,7 +266,7 @@ async def test_approve_propose_datetime_resyncs_jobs_once_and_skips_legacy_metho
     )
 
     assert appointment.status is AppointmentStatus.PENDING
-    assert appointment.datetime == "2026-08-05 12:00"
+    assert appointment.datetime == NEW_PROPOSED_DATETIME_STR
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
     _assert_only_resync_called(appointment_scheduler, appointment)

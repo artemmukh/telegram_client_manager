@@ -13,7 +13,7 @@ surfaces the alert and invalidates the actor's own stale message).
 Follows the direct-callback-invocation pattern established in
 test_booking_requests_ownership.py / test_reschedule_requests_ownership.py.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -43,6 +43,13 @@ ADMIN_ID = 1
 WINNER_ID = 55
 WINNER_TELEGRAM_ID = 2000
 DECIDED_LABEL = {"ru": "Администратор Ivanova Irina", "uz": "Administrator Ivanova Irina"}
+
+# Well beyond MIN_LEAD_TIME (2h30m) from "now" so the propose_new_datetime
+# lead-time guard never trips regardless of when the suite runs.
+NEW_PROPOSED_DATETIME = (datetime.now() + timedelta(days=30)).replace(
+    hour=12, minute=0, second=0, microsecond=0,
+)
+NEW_PROPOSED_DATETIME_DISPLAY = NEW_PROPOSED_DATETIME.strftime("%d.%m.%Y %H:%M")
 
 
 class FakeUserRepo:
@@ -341,8 +348,8 @@ async def test_approve_propose_datetime_shows_alert_and_invalidates_own_message_
     callback_query = _callback_query()
     state = MagicMock()
     state.get_data = AsyncMock(return_value={
-        "appointment_datetime_parsed": datetime(2026, 8, 5, 12, 0),
-        "appointment_datetime_display": "05.08.2026 12:00",
+        "appointment_datetime_parsed": NEW_PROPOSED_DATETIME,
+        "appointment_datetime_display": NEW_PROPOSED_DATETIME_DISPLAY,
     })
     state.clear = AsyncMock()
 

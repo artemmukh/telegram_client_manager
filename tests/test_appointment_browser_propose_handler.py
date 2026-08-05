@@ -14,7 +14,7 @@ mock aiogram objects.
 """
 import pytest
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.appointment_management.appointment_browser import (
@@ -30,6 +30,14 @@ from bot.utils.role import Role
 
 
 ADMIN_TELEGRAM_ID = 999
+
+# Well beyond MIN_LEAD_TIME (2h30m) from "now" so the propose_new_datetime
+# lead-time guard never trips regardless of when the suite runs.
+NEW_PROPOSED_DATETIME = (datetime.now() + timedelta(days=30)).replace(
+    hour=12, minute=0, second=0, microsecond=0,
+)
+NEW_PROPOSED_DATETIME_STR = NEW_PROPOSED_DATETIME.strftime("%Y-%m-%d %H:%M")
+NEW_PROPOSED_DATETIME_DISPLAY = NEW_PROPOSED_DATETIME.strftime("%d.%m.%Y %H:%M")
 
 
 class FakeAppointmentRepository:
@@ -166,8 +174,8 @@ def _make_callback_query():
 def _make_state():
     state = MagicMock()
     state.get_data = AsyncMock(return_value={
-        "appointment_datetime_parsed": datetime(2026, 8, 5, 12, 0),
-        "appointment_datetime_display": "05.08.2026 12:00",
+        "appointment_datetime_parsed": NEW_PROPOSED_DATETIME,
+        "appointment_datetime_display": NEW_PROPOSED_DATETIME_DISPLAY,
     })
     state.clear = AsyncMock()
     return state
@@ -207,7 +215,7 @@ async def test_approve_new_datetime_commits_and_demotes_to_pending_then_resyncs_
     # matching the sibling "no telegram account" test below.
     resynced = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
     assert resynced.status is AppointmentStatus.PENDING
-    assert resynced.datetime == "2026-08-05 12:00"
+    assert resynced.datetime == NEW_PROPOSED_DATETIME_STR
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
 
@@ -226,7 +234,7 @@ async def test_approve_new_datetime_commits_and_demotes_to_pending_then_resyncs_
     # Toast shows both the pre-change (original confirmed) time and the new time.
     toast_text = callback_query.message.edit_text.call_args.args[0]
     assert "1 августа 2026, 10:00" in toast_text
-    assert "05.08.2026 12:00" in toast_text
+    assert NEW_PROPOSED_DATETIME_DISPLAY in toast_text
 
 
 @pytest.mark.asyncio
@@ -268,7 +276,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
 
     resynced = appointment_scheduler.resync_appointment_jobs.await_args.args[0]
     assert resynced.status is AppointmentStatus.CONFIRMED
-    assert resynced.datetime == "2026-08-05 12:00"
+    assert resynced.datetime == NEW_PROPOSED_DATETIME_STR
     assert resynced.proposed_datetime is None
     assert resynced.proposed_by is None
     assert appt_repo.proposed_datetime_updates == [(1, None)]
@@ -284,7 +292,7 @@ async def test_approve_new_datetime_immediately_applies_when_client_has_no_teleg
     # (pre-call) datetime, not appointment.datetime after the service mutated
     # it to the new value.
     assert "1 августа 2026, 10:00" in toast_text
-    assert "05.08.2026 12:00" in toast_text
+    assert NEW_PROPOSED_DATETIME_DISPLAY in toast_text
     callback_query.answer.assert_awaited_once_with("Время записи изменено")
     state.clear.assert_awaited_once()
 
