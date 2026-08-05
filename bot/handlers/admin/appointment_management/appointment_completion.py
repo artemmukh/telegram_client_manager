@@ -99,6 +99,7 @@ def create_admin_completion_router(
                 await invalidate_sibling_notifications(
                     notification_service, appt_mng, appointment.id, "completion",
                     callback_query.from_user.id, decided_by_label, outcome_text,
+                    appointment=appointment, lang=lang,
                 )
             except Exception as e:
                 logger.warning(
@@ -153,6 +154,7 @@ def create_admin_completion_router(
                 await invalidate_sibling_notifications(
                     notification_service, appt_mng, appointment.id, "completion",
                     callback_query.from_user.id, decided_by_label, outcome_text,
+                    appointment=appointment, lang=lang,
                 )
             except Exception as e:
                 logger.warning(

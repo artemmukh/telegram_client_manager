@@ -134,7 +134,7 @@ def create_admin_booking_requests_router(
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
-    async def invalidate_booking_siblings(callback_query: CallbackQuery, appointment) -> None:
+    async def invalidate_booking_siblings(callback_query: CallbackQuery, appointment, lang: str = "ru") -> None:
         if not notification_service:
             return
         try:
@@ -144,6 +144,7 @@ def create_admin_booking_requests_router(
             await invalidate_sibling_notifications(
                 notification_service, appt_mng, appointment.id, "booking",
                 callback_query.from_user.id, decided_by_label, outcome_text,
+                appointment=appointment, lang=lang,
             )
         except Exception as e:
             logger.warning(
@@ -232,7 +233,7 @@ def create_admin_booking_requests_router(
 
         await callback_query.answer(_REQUEST_CONFIRMED.get(lang, _REQUEST_CONFIRMED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
-        await invalidate_booking_siblings(callback_query, appointment)
+        await invalidate_booking_siblings(callback_query, appointment, lang)
         await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "reject"))
@@ -273,7 +274,7 @@ def create_admin_booking_requests_router(
 
         await callback_query.answer(_REQUEST_REJECTED.get(lang, _REQUEST_REJECTED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
-        await invalidate_booking_siblings(callback_query, appointment)
+        await invalidate_booking_siblings(callback_query, appointment, lang)
         await notify_staff_booking_decision(callback_query, appointment, confirmed=False, lang=lang)
 
     @router.callback_query(BookingRequestActionCB.filter(F.action == "propose"))
@@ -494,7 +495,7 @@ def create_admin_booking_requests_router(
                     value=_format_datetime_value(appointment.datetime, lang),
                 )
             )
-            await invalidate_booking_siblings(callback_query, appointment)
+            await invalidate_booking_siblings(callback_query, appointment, lang)
             await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
             await state.clear()
             return
@@ -517,7 +518,7 @@ def create_admin_booking_requests_router(
                 value=_format_datetime_value(appointment.datetime, lang),
             )
         )
-        await invalidate_booking_siblings(callback_query, appointment)
+        await invalidate_booking_siblings(callback_query, appointment, lang)
         await state.clear()
 
     async def notify_client_confirmed(appointment) -> None:

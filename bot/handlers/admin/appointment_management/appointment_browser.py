@@ -24,7 +24,10 @@ from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
     format_calendar_date_display,
     format_month_label,
 )
-from bot.handlers.utils.admin_utils.appointment_decision_helpers import notify_staff_reschedule_decision
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    notify_staff_appointment_cancellation,
+    notify_staff_reschedule_decision,
+)
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
     datetime_processing,
@@ -567,6 +570,7 @@ def create_admin_appointment_browser_router(
                 logger.warning(
                     f"Failed to notify client about cancellation for appointment {callback_data.appointment_id}: {e}"
                 )
+            await notify_staff_appointment_cancellation(notification_service, appt_mng, callback_query.from_user.id, appointment)
 
         await callback_query.answer(_STATUS_UPDATED_TEXT.get(lang, _STATUS_UPDATED_TEXT["ru"]))
         await callback_query.message.edit_text(
@@ -685,16 +689,26 @@ def create_admin_appointment_browser_router(
             await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
-        if appointment_scheduler:
-            await appointment_scheduler.cancel_all_jobs(callback_data.appointment_id)
-
-        if notify and notification_service and appointment:
+        # Notifications (client + staff) are sent only after delete_appointment
+        # succeeds: notifying first would falsely tell everyone the appointment
+        # was cancelled even if the delete then failed (e.g. concurrent delete),
+        # and appointment_notifications rows cascade-delete with the appointment
+        # row anyway, so recording one before the delete would be wasted (record=False
+        # below skips that write instead of racing the cascade).
+        if notify and notification_service:
             try:
                 await notification_service.notify_client_appointment_cancelled_by_admin(appointment)
             except Exception as e:
                 logger.warning(
                     f"Failed to notify client about deletion for appointment {callback_data.appointment_id}: {e}"
                 )
+            await notify_staff_appointment_cancellation(
+                notification_service, appt_mng, callback_query.from_user.id, appointment,
+                deleted=True, record=False,
+            )
+
+        if appointment_scheduler:
+            await appointment_scheduler.cancel_all_jobs(callback_data.appointment_id)
 
         clinic_id, doctor_id = await resolve_filtered_doctor_id(
             callback_query.from_user.id, state, callback_data.mode

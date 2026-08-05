@@ -17,6 +17,7 @@ from bot.handlers.utils.admin_utils.appointment_helpers import (
     datetime_processing,
     purpose_processing,
 )
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import notify_staff_appointment_creation
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     ask_full_name,
@@ -529,6 +530,13 @@ def create_admin_appointment_creation_router(instance:str,
             reply_markup=back_to_records_kb(lang=lang),
         )
         await appt_mng.update_admin_notification_message_id(appointment.id, callback_query.message.message_id)
+        try:
+            await appt_mng.record_notification(
+                appointment.id, callback_query.from_user.id, callback_query.message.message_id, kind="creation",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record own creation notification for appointment {appointment.id}: {e}")
+        await notify_staff_appointment_creation(notification_service, appt_mng, callback_query.from_user.id, appointment)
         await state.clear()
 
     return router

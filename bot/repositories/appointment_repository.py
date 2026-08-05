@@ -762,6 +762,20 @@ class AppointmentRepository:
             for row in rows
         ]
 
+    async def get_latest_notification_message_id(self, appointment_id: int, chat_id: int) -> int | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT message_id
+            FROM appointment_notifications
+            WHERE appointment_id = ? AND chat_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (appointment_id, chat_id),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
     async def delete_appointment(self, appointment_id: int) -> None:
         await self.connection.execute(
             "DELETE FROM appointments WHERE id = ?",

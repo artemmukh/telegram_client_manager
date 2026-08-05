@@ -84,7 +84,11 @@ class FakeUserRepo:
 
 
 class FakeAppointmentRepo:
-    pass
+    def __init__(self, latest_notification_message_id=None):
+        self.latest_notification_message_id = latest_notification_message_id
+
+    async def get_latest_notification_message_id(self, appointment_id, chat_id):
+        return self.latest_notification_message_id
 
 
 def _client():
@@ -228,18 +232,19 @@ async def test_notify_admin_cancellation():
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "Клиент Иванов Иван отменил запись."
+    assert "Клиент Иванов Иван отменил запись." in msg['text']
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "Консультация" in msg['text']
 
 
 @pytest.mark.asyncio
 async def test_notify_admin_cancellation_replies_when_admin_message_id_set():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=888)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = 888
 
     await service.notify_admin_cancellation(54321, appointment, "Иванов Иван")
 
@@ -251,11 +256,10 @@ async def test_notify_admin_cancellation_replies_when_admin_message_id_set():
 async def test_notify_admin_cancellation_no_reply_parameters_when_admin_message_id_missing():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=None)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = None
 
     await service.notify_admin_cancellation(54321, appointment, "Иванов Иван")
 
@@ -277,18 +281,19 @@ async def test_notify_admin_confirmation_sends_short_text():
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "Клиент Иванов Иван подтвердил запись."
+    assert "Клиент Иванов Иван подтвердил запись." in msg['text']
+    assert "10 июля 2026, 14:30" in msg['text']
+    assert "Консультация" in msg['text']
 
 
 @pytest.mark.asyncio
 async def test_notify_admin_confirmation_replies_when_admin_message_id_set():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=888)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = 888
 
     await service.notify_admin_confirmation(54321, appointment, "Иванов Иван")
 
@@ -300,11 +305,10 @@ async def test_notify_admin_confirmation_replies_when_admin_message_id_set():
 async def test_notify_admin_confirmation_no_reply_parameters_when_admin_message_id_missing():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=None)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = None
 
     await service.notify_admin_confirmation(54321, appointment, "Иванов Иван")
 
@@ -336,11 +340,10 @@ async def test_notify_admin_completion_sends_followup_prompt_with_keyboard():
 async def test_notify_admin_completion_replies_when_admin_message_id_set():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=888)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = 888
 
     await service.notify_admin_completion(54321, appointment)
 
@@ -352,11 +355,10 @@ async def test_notify_admin_completion_replies_when_admin_message_id_set():
 async def test_notify_admin_completion_no_reply_parameters_when_admin_message_id_missing():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=None)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = None
 
     await service.notify_admin_completion(54321, appointment)
 
@@ -915,11 +917,10 @@ async def test_notify_staff_proposal_accepted_sends_short_text():
 async def test_notify_staff_proposal_accepted_replies_when_admin_message_id_set():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=888)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = 888
 
     await service.notify_staff_proposal_accepted(54321, appointment, "Иванов Иван")
 
@@ -931,11 +932,10 @@ async def test_notify_staff_proposal_accepted_replies_when_admin_message_id_set(
 async def test_notify_staff_proposal_accepted_no_reply_parameters_when_admin_message_id_missing():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=None)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = None
 
     await service.notify_staff_proposal_accepted(54321, appointment, "Иванов Иван")
 
@@ -964,11 +964,10 @@ async def test_notify_staff_proposal_rejected_sends_short_text():
 async def test_notify_staff_proposal_rejected_replies_when_admin_message_id_set():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=888)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = 888
 
     await service.notify_staff_proposal_rejected(54321, appointment, "Иванов Иван")
 
@@ -980,11 +979,10 @@ async def test_notify_staff_proposal_rejected_replies_when_admin_message_id_set(
 async def test_notify_staff_proposal_rejected_no_reply_parameters_when_admin_message_id_missing():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=None)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = None
 
     await service.notify_staff_proposal_rejected(54321, appointment, "Иванов Иван")
 
@@ -1746,11 +1744,10 @@ async def test_notify_admin_proposal_reminder_ignores_created_by_telegram_id():
 async def test_notify_admin_proposal_reminder_replies_when_admin_message_id_set():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=888)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = 888
 
     await service.notify_admin_proposal_reminder(54321, appointment)
 
@@ -1762,11 +1759,10 @@ async def test_notify_admin_proposal_reminder_replies_when_admin_message_id_set(
 async def test_notify_admin_proposal_reminder_no_reply_parameters_when_admin_message_id_missing():
     notifier = FakeTelegramNotifier()
     user_repo = FakeUserRepo(_client())
-    appointment_repo = FakeAppointmentRepo()
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=None)
 
     service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
     appointment = _appointment()
-    appointment.admin_notification_message_id = None
 
     await service.notify_admin_proposal_reminder(54321, appointment)
 

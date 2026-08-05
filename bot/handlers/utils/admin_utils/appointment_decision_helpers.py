@@ -3,7 +3,10 @@ import logging
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+from bot.services.appointment.appointment_notifications import (
+    DEFAULT_UNKNOWN_CLIENT_LABEL,
+    AppointmentNotificationService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +20,6 @@ DEFAULT_OUTCOME_TEXT = {
     "uz": "qaror qabul qilindi",
 }
 
-DEFAULT_UNKNOWN_CLIENT_LABEL = {
-    "ru": "Клиент",
-    "uz": "Mijoz",
-}
-
 
 async def invalidate_sibling_notifications(
     notification_service: AppointmentNotificationService,
@@ -31,6 +29,8 @@ async def invalidate_sibling_notifications(
     actor_chat_id: int,
     decided_by_label: dict[str, str],
     outcome_text: dict[str, str],
+    appointment=None,
+    lang: str = "ru",
 ) -> None:
     """Стереть клавиатуры у уведомлений остальных получателей той же заявки.
 
@@ -39,12 +39,18 @@ async def invalidate_sibling_notifications(
     получившие такое же уведомление, не пытались решить уже решённую заявку.
     Собственное сообщение действующего сотрудника (actor_chat_id) не трогаем —
     оно уже отредактировано обычным success-путём хендлера.
+
+    appointment/lang, if provided, are used to build an appointment card
+    (client/phone/time/status) appended below the decision text, the same way
+    invalidate_actor_stale_message does for the acting user's own message.
     """
     targets = await appt_mng.get_invalidation_targets(appointment_id, kind, actor_chat_id)
+    appointment_summary = build_appointment_card(appointment, lang) if appointment else None
 
     for target in targets:
         await notification_service.invalidate_stale_decision_message(
             target.chat_id, target.message_id, decided_by_label, outcome_text,
+            appointment_summary=appointment_summary,
         )
 
 
@@ -118,4 +124,97 @@ async def notify_staff_reschedule_decision(
             logger.warning(
                 f"Failed to notify staff {recipient.telegram_user_id} about reschedule decision "
                 f"for appointment {appointment.id}: {e}"
+            )
+
+
+async def notify_staff_appointment_cancellation(
+    notification_service: AppointmentNotificationService,
+    appt_mng: AppointmentManagement,
+    actor_telegram_id: int,
+    appointment,
+    deleted: bool = False,
+    record: bool = True,
+) -> None:
+    """Уведомить остальных сотрудников об отмене/удалении записи коллегой.
+
+    Действующий сотрудник (actor_telegram_id) не получает уведомление о
+    собственном действии. deleted=True переключает формулировку на "удалена"
+    (для finish_delete, где строка appointments уже отсутствует) вместо
+    "отменена" (для set_status -> CANCELLED, где строка сохраняется).
+    record=False пропускает запись в appointment_notifications — используется
+    при deleted=True, так как строку appointments, к которой относится FK,
+    уже удалили.
+    """
+    if not notification_service:
+        return
+    try:
+        actor = await appt_mng.get_user_by_telegram_id(actor_telegram_id)
+        actor_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+        client = await appt_mng.get_client_by_id(appointment.client_id)
+        client_name = client.full_name if client else None
+        recipients = await appt_mng.resolve_notification_recipients(appointment)
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve staff recipients for cancellation of appointment {appointment.id}: {e}"
+        )
+        return
+
+    for recipient in recipients:
+        if recipient.telegram_user_id == actor_telegram_id:
+            continue
+        try:
+            message_id = await notification_service.notify_staff_appointment_cancelled(
+                recipient.telegram_user_id, appointment, actor_label, client_name, deleted=deleted,
+            )
+            if message_id and record:
+                await appt_mng.record_notification(
+                    appointment.id, recipient.telegram_user_id, message_id, kind="cancellation",
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to notify staff {recipient.telegram_user_id} about cancellation of "
+                f"appointment {appointment.id}: {e}"
+            )
+
+
+async def notify_staff_appointment_creation(
+    notification_service: AppointmentNotificationService,
+    appt_mng: AppointmentManagement,
+    actor_telegram_id: int,
+    appointment,
+) -> None:
+    """Уведомить остальных сотрудников о новой записи, созданной коллегой.
+
+    Действующий сотрудник (actor_telegram_id) не получает уведомление о
+    собственном создании записи.
+    """
+    if not notification_service:
+        return
+    try:
+        actor = await appt_mng.get_user_by_telegram_id(actor_telegram_id)
+        actor_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+        client = await appt_mng.get_client_by_id(appointment.client_id)
+        client_name = client.full_name if client else None
+        recipients = await appt_mng.resolve_notification_recipients(appointment)
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve staff recipients for new appointment {appointment.id}: {e}"
+        )
+        return
+
+    for recipient in recipients:
+        if recipient.telegram_user_id == actor_telegram_id:
+            continue
+        try:
+            message_id = await notification_service.notify_staff_appointment_created(
+                recipient.telegram_user_id, appointment, actor_label, client_name,
+            )
+            if message_id:
+                await appt_mng.record_notification(
+                    appointment.id, recipient.telegram_user_id, message_id, kind="creation",
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to notify staff {recipient.telegram_user_id} about new appointment "
+                f"{appointment.id}: {e}"
             )

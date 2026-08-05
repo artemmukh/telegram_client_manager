@@ -73,8 +73,28 @@ _ADMIN_UPCOMING_APPOINTMENT = {
 }
 
 _ADMIN_CANCELLATION = {
-    "ru": "Клиент {client_name} отменил запись.",
-    "uz": "Mijoz {client_name} yozuvni bekor qildi.",
+    "ru": "Клиент {client_name} отменил запись.\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "Mijoz {client_name} yozuvni bekor qildi.\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+}
+
+DEFAULT_UNKNOWN_CLIENT_LABEL = {
+    "ru": "Клиент",
+    "uz": "Mijoz",
+}
+
+_STAFF_APPOINTMENT_CANCELLED = {
+    "ru": "❌ Запись клиента {client_name} отменена ({actor}).\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+}
+
+_STAFF_APPOINTMENT_DELETED = {
+    "ru": "🗑 Запись клиента {client_name} удалена ({actor}).\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "🗑 Mijoz {client_name} yozuvi o'chirildi ({actor}).\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+}
+
+_STAFF_APPOINTMENT_CREATED = {
+    "ru": "🆕 Создана новая запись клиента {client_name} ({actor}).\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _ADMIN_CLIENT_CHANGED_TIME = {
@@ -83,8 +103,8 @@ _ADMIN_CLIENT_CHANGED_TIME = {
 }
 
 _ADMIN_CONFIRMATION = {
-    "ru": "Клиент {client_name} подтвердил запись.",
-    "uz": "Mijoz {client_name} yozuvni tasdiqladi.",
+    "ru": "Клиент {client_name} подтвердил запись.\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "Mijoz {client_name} yozuvni tasdiqladi.\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _ADMIN_COMPLETION_PROMPT = {
@@ -334,8 +354,25 @@ def admin_upcoming_appointment_text(
     )
 
 
-def admin_cancellation_text(client_name: str, lang: str = "ru") -> str:
-    return _ADMIN_CANCELLATION.get(lang, _ADMIN_CANCELLATION["ru"]).format(client_name=client_name)
+def admin_cancellation_text(client_name: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+    return _ADMIN_CANCELLATION.get(lang, _ADMIN_CANCELLATION["ru"]).format(
+        client_name=client_name, datetime=datetime_value, purpose=purpose,
+    )
+
+
+def staff_appointment_cancelled_text(
+    client_name: str, actor: str, datetime_value: str, purpose: str, lang: str = "ru", deleted: bool = False,
+) -> str:
+    template = _STAFF_APPOINTMENT_DELETED if deleted else _STAFF_APPOINTMENT_CANCELLED
+    return template.get(lang, template["ru"]).format(
+        client_name=client_name, actor=actor, datetime=datetime_value, purpose=purpose,
+    )
+
+
+def staff_appointment_created_text(client_name: str, actor: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+    return _STAFF_APPOINTMENT_CREATED.get(lang, _STAFF_APPOINTMENT_CREATED["ru"]).format(
+        client_name=client_name, actor=actor, datetime=datetime_value, purpose=purpose,
+    )
 
 
 def admin_client_changed_time_text(client_name: str, datetime_value: str, lang: str = "ru") -> str:
@@ -344,8 +381,10 @@ def admin_client_changed_time_text(client_name: str, datetime_value: str, lang: 
     )
 
 
-def admin_confirmation_text(client_name: str, lang: str = "ru") -> str:
-    return _ADMIN_CONFIRMATION.get(lang, _ADMIN_CONFIRMATION["ru"]).format(client_name=client_name)
+def admin_confirmation_text(client_name: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+    return _ADMIN_CONFIRMATION.get(lang, _ADMIN_CONFIRMATION["ru"]).format(
+        client_name=client_name, datetime=datetime_value, purpose=purpose,
+    )
 
 
 def admin_completion_prompt(lang: str = "ru") -> str:
@@ -675,17 +714,25 @@ class AppointmentNotificationService:
     def _reply_to_message_id(self, appointment: Appointment) -> int | None:
         return appointment.notification_message_id
 
-    def _admin_reply_to_message_id(self, appointment: Appointment) -> int | None:
-        return appointment.admin_notification_message_id
+    async def _admin_reply_to_message_id(self, appointment: Appointment, chat_id: int) -> int | None:
+        """Resolve the reply-to anchor for an admin/staff-facing notification.
+
+        Looks up the most recently recorded notification message for this
+        appointment in this specific chat (regardless of kind), since admin and
+        doctor are in different Telegram chats and a single stored
+        admin_notification_message_id column cannot be a correct anchor for both.
+        """
+        return await self.appointment_repo.get_latest_notification_message_id(appointment.id, chat_id)
 
     async def notify_admin_upcoming_appointment(
         self,
         admin_telegram_id: int,
         appointment: Appointment,
         client_name: str,
-    ) -> None:
+    ) -> int | None:
         """Send reminder to admin about upcoming appointment WITHOUT buttons.
 
+        Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
         """
         client = await self.user_repo.get_client_by_id(appointment.client_id)
@@ -697,7 +744,7 @@ class AppointmentNotificationService:
         )
 
         try:
-            await self.notifier.send_message(
+            return await self.notifier.send_message(
                 chat_id=admin_telegram_id,
                 text=message_text,
             )
@@ -711,13 +758,18 @@ class AppointmentNotificationService:
         admin_telegram_id: int,
         appointment: Appointment,
         client_name: str
-    ) -> None:
-        """Send cancellation notification to admin."""
+    ) -> int | None:
+        """Send cancellation notification to admin.
+
+        Returns the sent message's message_id.
+        """
         lang = await self._resolve_lang(admin_telegram_id)
-        await self.notifier.send_message(
+        return await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text=admin_cancellation_text(client_name, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            text=admin_cancellation_text(
+                client_name, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            ),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
     async def notify_admin_client_changed_time(
@@ -733,7 +785,7 @@ class AppointmentNotificationService:
             text=admin_client_changed_time_text(
                 client_name, _format_datetime_value(appointment.datetime, lang), lang,
             ),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
     async def notify_admin_confirmation(
@@ -741,13 +793,18 @@ class AppointmentNotificationService:
         admin_telegram_id: int,
         appointment: Appointment,
         client_name: str
-    ) -> None:
-        """Send confirmation notification to admin."""
+    ) -> int | None:
+        """Send confirmation notification to admin.
+
+        Returns the sent message's message_id.
+        """
         lang = await self._resolve_lang(admin_telegram_id)
-        await self.notifier.send_message(
+        return await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text=admin_confirmation_text(client_name, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            text=admin_confirmation_text(
+                client_name, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            ),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
     async def notify_admin_completion(self, admin_telegram_id: int, appointment: Appointment) -> int | None:
@@ -760,7 +817,7 @@ class AppointmentNotificationService:
             chat_id=admin_telegram_id,
             text=admin_completion_prompt(lang),
             reply_markup=completion_followup_kb(appointment.id),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
     async def notify_staff_new_booking_request(
@@ -1002,7 +1059,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_proposal_accepted_text(client_name, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
     async def notify_staff_proposal_rejected(
@@ -1016,7 +1073,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_proposal_rejected_text(client_name, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
     async def notify_staff_booking_confirmed(
@@ -1032,7 +1089,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_booking_confirmed_text(client_name, actor, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
     async def notify_staff_booking_rejected(
@@ -1048,7 +1105,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_booking_rejected_text(client_name, actor, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
     async def notify_staff_reschedule_decision_accepted(
@@ -1064,7 +1121,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_reschedule_decision_accepted_text(client_name, actor, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
     async def notify_staff_reschedule_decision_rejected(
@@ -1080,7 +1137,63 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_reschedule_decision_rejected_text(client_name, actor, lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
+        )
+
+    async def notify_staff_appointment_cancelled(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str | None,
+        deleted: bool = False,
+    ) -> int | None:
+        """Notify other staff that a colleague cancelled or deleted this appointment.
+
+        client_name is the client's full name, or None if the client record could
+        not be resolved -- in that case a localized "Client"/"Mijoz" fallback is
+        used, resolved to this recipient's own language (independent of the
+        acting user's language).
+
+        Returns the sent message's message_id.
+        """
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        display_name = client_name or DEFAULT_UNKNOWN_CLIENT_LABEL.get(lang, DEFAULT_UNKNOWN_CLIENT_LABEL["ru"])
+        reply_to_message_id = (
+            None if deleted else await self._admin_reply_to_message_id(appointment, staff_telegram_id)
+        )
+        return await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=staff_appointment_cancelled_text(
+                display_name, actor, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                deleted=deleted,
+            ),
+            reply_to_message_id=reply_to_message_id,
+        )
+
+    async def notify_staff_appointment_created(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str | None,
+    ) -> int | None:
+        """Notify other staff that a colleague created this appointment.
+
+        client_name is the client's full name, or None if the client record could
+        not be resolved -- resolved the same way as notify_staff_appointment_cancelled.
+
+        Returns the sent message's message_id.
+        """
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        display_name = client_name or DEFAULT_UNKNOWN_CLIENT_LABEL.get(lang, DEFAULT_UNKNOWN_CLIENT_LABEL["ru"])
+        return await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=staff_appointment_created_text(
+                display_name, actor, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            ),
         )
 
     async def notify_admin_proposal_reminder(self, telegram_id: int, appointment: Appointment) -> None:
@@ -1094,7 +1207,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=telegram_id,
             text=admin_proposal_reminder_text(lang),
-            reply_to_message_id=self._admin_reply_to_message_id(appointment),
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, telegram_id),
         )
 
     async def notify_staff_reschedule_requested(

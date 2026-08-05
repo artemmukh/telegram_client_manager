@@ -49,6 +49,9 @@ class FakeAppointmentRepoForIntegration:
     async def get_appointments_by_client_id(self, client_id):
         return [a for a in self.appointments if a.client_id == client_id]
 
+    async def get_latest_notification_message_id(self, appointment_id, chat_id):
+        return None
+
 
 class FakeUserRepoForIntegration:
     def __init__(self):

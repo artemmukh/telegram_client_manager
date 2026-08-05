@@ -119,7 +119,7 @@ def create_admin_reschedule_requests_router(
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))
 
-    async def invalidate_reschedule_siblings(callback_query: CallbackQuery, appointment) -> None:
+    async def invalidate_reschedule_siblings(callback_query: CallbackQuery, appointment, lang: str = "ru") -> None:
         if not notification_service:
             return
         try:
@@ -129,6 +129,7 @@ def create_admin_reschedule_requests_router(
             await invalidate_sibling_notifications(
                 notification_service, appt_mng, appointment.id, "reschedule",
                 callback_query.from_user.id, decided_by_label, outcome_text,
+                appointment=appointment, lang=lang,
             )
         except Exception as e:
             logger.warning(
@@ -191,7 +192,7 @@ def create_admin_reschedule_requests_router(
 
         await callback_query.answer(_RESCHEDULE_ACCEPTED.get(lang, _RESCHEDULE_ACCEPTED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
-        await invalidate_reschedule_siblings(callback_query, appointment)
+        await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await notify_staff_reschedule_decision(
             notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
         )
@@ -237,7 +238,7 @@ def create_admin_reschedule_requests_router(
 
         await callback_query.answer(_RESCHEDULE_REJECTED.get(lang, _RESCHEDULE_REJECTED["ru"]))
         await callback_query.message.edit_text(build_appointment_card(appointment, lang))
-        await invalidate_reschedule_siblings(callback_query, appointment)
+        await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await notify_staff_reschedule_decision(
             notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=False, lang=lang,
         )
@@ -464,7 +465,7 @@ def create_admin_reschedule_requests_router(
                     value=data.get('appointment_datetime_display'),
                 )
             )
-            await invalidate_reschedule_siblings(callback_query, appointment)
+            await invalidate_reschedule_siblings(callback_query, appointment, lang)
             await notify_staff_reschedule_decision(
                 notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
             )
@@ -490,7 +491,7 @@ def create_admin_reschedule_requests_router(
                 value=data.get('appointment_datetime_display'),
             )
         )
-        await invalidate_reschedule_siblings(callback_query, appointment)
+        await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await state.clear()
 
     return router

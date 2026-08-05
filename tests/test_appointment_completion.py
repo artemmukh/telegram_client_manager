@@ -207,6 +207,7 @@ async def test_open_edit_invalidates_sibling_notifications_on_success():
         555, 777,
         {"ru": "Доктор Петров Петр", "uz": "Shifokor Петров Петр"},
         {"ru": "приём завершён", "uz": "qabul yakunlandi"},
+        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
     )
 
 

@@ -104,6 +104,34 @@ async def test_deletes_appointment(appointment_setup):
     assert await appointment_repo.appointment_exists(appointment_id) is False
 
 
+@pytest.mark.asyncio
+async def test_get_latest_notification_message_id_returns_none_when_no_rows(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    result = await appointment_repo.get_latest_notification_message_id(appointment_id, chat_id=999)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_latest_notification_message_id_returns_most_recent_regardless_of_kind(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=999, message_id=101, kind="creation")
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=999, message_id=102, kind="booking")
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=999, message_id=103, kind="cancellation")
+    # A different chat's notifications must not leak into this chat's result.
+    await appointment_repo.add_appointment_notification(appointment_id, chat_id=888, message_id=999, kind="cancellation")
+
+    result = await appointment_repo.get_latest_notification_message_id(appointment_id, chat_id=999)
+
+    assert result == 103
+
+
 # --- Pagination methods (in-memory sqlite, to avoid Windows file-lock flakiness) ---
 
 async def _in_memory_repos():
