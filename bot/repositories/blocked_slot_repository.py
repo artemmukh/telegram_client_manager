@@ -95,21 +95,10 @@ class BlockedSlotRepository:
         # Interval overlap convention: a block occupies [start_datetime,
         # end_datetime) -- start inclusive, end EXCLUSIVE -- matching the
         # half-open convention used for appointment slots elsewhere in this
-        # codebase. Standard half-open overlap is
-        #     block.start_datetime < query_end AND block.end_datetime > query_start
-        # which is correct for a proper range query (query_end > query_start)
-        # but breaks for the degenerate point-in-time query used at booking
-        # time (start_datetime == end_datetime == the exact slot instant):
-        # a slot landing exactly on a block's start instant would fail
-        # `block.start_datetime < query_end` (both equal), silently letting a
-        # double-booking through. The `OR start_datetime = ?` disjunct below
-        # special-cases only that degenerate query: it is a no-op for a
-        # proper range (if block.start == query_start and query_start <
-        # query_end, then block.start < query_end already holds), so it adds
-        # no false positives for range-vs-range conflict checks (e.g.
-        # back-to-back blocks that just touch are correctly NOT flagged as
-        # overlapping) while still catching a booking that lands exactly on
-        # a block's start.
+        # codebase, and the query range is half-open too. Back-to-back
+        # intervals that merely touch are therefore correctly NOT flagged as
+        # overlapping. Callers must pass a proper range (start < end); the
+        # service layer widens a single slot into [slot, slot + slot step).
         cursor = await self.connection.execute(
             """
             SELECT id, clinic_id, staff_id, start_datetime, end_datetime,
@@ -119,10 +108,10 @@ class BlockedSlotRepository:
                 AND cancelled_at IS NULL
                 AND (staff_id = ? OR staff_id IS NULL)
                 AND end_datetime > ?
-                AND (start_datetime < ? OR start_datetime = ?)
+                AND start_datetime < ?
             ORDER BY start_datetime ASC
             """,
-            (clinic_id, staff_id, start_datetime, end_datetime, start_datetime),
+            (clinic_id, staff_id, start_datetime, end_datetime),
         )
         rows = await cursor.fetchall()
         return [self._row_to_blocked_slot(row) for row in rows]

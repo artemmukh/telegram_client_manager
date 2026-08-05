@@ -48,26 +48,30 @@ async def test_get_block_by_id_returns_none_when_missing(blocked_slot_repo):
 
 
 @pytest.mark.asyncio
-async def test_get_blocks_covering_range_point_query_at_block_start_matches(blocked_slot_repo):
+async def test_get_blocks_covering_range_matches_block_starting_exactly_at_range_start(blocked_slot_repo):
+    """A slot range that opens exactly where the block opens overlaps it: both
+    intervals are half-open, so [09:00, 09:15) and [09:00, 10:00) share 09:00."""
     await blocked_slot_repo.create_block(
         _block(start="2026-08-10 09:00", end="2026-08-10 10:00")
     )
 
     matches = await blocked_slot_repo.get_blocks_covering_range(
-        1, 42, "2026-08-10 09:00", "2026-08-10 09:00"
+        1, 42, "2026-08-10 09:00", "2026-08-10 09:15"
     )
 
     assert len(matches) == 1
 
 
 @pytest.mark.asyncio
-async def test_get_blocks_covering_range_point_query_at_block_end_does_not_match(blocked_slot_repo):
+async def test_get_blocks_covering_range_range_starting_at_block_end_does_not_match(blocked_slot_repo):
+    """A slot range that opens exactly where the block closes does not overlap
+    it: [10:00, 10:15) and [09:00, 10:00) only touch."""
     await blocked_slot_repo.create_block(
         _block(start="2026-08-10 09:00", end="2026-08-10 10:00")
     )
 
     matches = await blocked_slot_repo.get_blocks_covering_range(
-        1, 42, "2026-08-10 10:00", "2026-08-10 10:00"
+        1, 42, "2026-08-10 10:00", "2026-08-10 10:15"
     )
 
     assert matches == []

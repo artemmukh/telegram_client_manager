@@ -159,6 +159,30 @@ def format_datetime_for_db(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+def parse_db_datetime(value: str) -> Optional[datetime]:
+    """
+    Parse a datetime stored in the database.
+
+    Accepts both stored shapes: "YYYY-MM-DD HH:MM" (datetime, proposed_datetime)
+    and "YYYY-MM-DD HH:MM:SS" (created_at, cancelled_at, status_updated_at).
+
+    Returns None if the value cannot be parsed.
+    """
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def datetime_ranges_overlap(start_a: datetime, end_a: datetime, start_b: datetime, end_b: datetime) -> bool:
+    """
+    Whether two half-open intervals [start_a, end_a) and [start_b, end_b) overlap.
+
+    Ranges that merely touch (one ends exactly where the other starts) do not overlap.
+    """
+    return start_a < end_b and start_b < end_a
+
+
 def get_current_tashkent_time() -> str:
     """
     Get current time in Asia/Tashkent timezone formatted for database storage.

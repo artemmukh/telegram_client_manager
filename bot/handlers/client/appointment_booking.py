@@ -145,6 +145,11 @@ def create_client_booking_router(
         slots = await appointment_management_service.get_available_slots(data["staff_user_id"], day, now)
 
         if not slots:
+            reason = await appointment_management_service.get_day_block_reason(data["staff_user_id"], day, now)
+            if reason is not None:
+                await callback_query.answer(msg.day_blocked(reason, lang), show_alert=True)
+                return
+
             await callback_query.answer(msg.no_slots_for_day(lang), show_alert=True)
             return
 

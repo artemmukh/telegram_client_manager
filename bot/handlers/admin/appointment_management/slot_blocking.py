@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.exceptions.blocked_slot_exceptions import InvalidBlockRangeError
 from bot.exceptions.exceptions import BotException
-from bot.exceptions.user_exceptions import UserNotFoundError
+from bot.exceptions.user_exceptions import ValidationError
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import notify_staff_appointment_cancellation
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.keyboards.admin.record_management_kb.slot_blocking_cb import (
@@ -69,7 +69,7 @@ _CONFLICT_LINE_TEXT = {
 }
 _UNKNOWN_CLIENT_LABEL = {
     "ru": "клиент не указан",
-    "uz": "mijoz korsatilmagan",
+    "uz": "mijoz ko'rsatilmagan",
 }
 _CONFIRM_BLOCK_TEXT = {
     "ru": "Создать блокировку с {start} по {end}?\nПричина: {reason}",
@@ -89,7 +89,7 @@ _LIST_HEADER_TEXT = {
 }
 _LIST_EMPTY_TEXT = {
     "ru": "Активных блокировок нет.",
-    "uz": "Faol bloklashlar yoq.",
+    "uz": "Faol bloklashlar yo'q.",
 }
 _BLOCK_LINE_TEXT = {
     "ru": "🚫 №{id} | {start} — {end}\n👤 {target}\n📝 {reason}",
@@ -225,7 +225,13 @@ def create_admin_slot_blocking_router(
     @router.message(SlotBlockCreationStates.reason, F.text)
     async def get_reason(message: Message, state: FSMContext, current_user: User):
         lang = current_user.language
-        reason = message.text.strip()
+
+        try:
+            reason = slot_blocking_service.validate_reason(message.text)
+        except ValidationError as e:
+            await message.answer(e.localized(lang), reply_markup=back_to_records_kb(lang=lang))
+            return
+
         await state.update_data(reason=reason)
         data = await state.get_data()
 
@@ -284,13 +290,12 @@ def create_admin_slot_blocking_router(
                 callback_query.from_user.id, data["clinic_id"], data.get("staff_id"),
                 data["range_start_raw"], data["range_end_raw"], data["reason"],
             )
-        except (InvalidBlockRangeError, UserNotFoundError) as e:
-            await callback_query.answer(e.localized(lang), show_alert=True)
-            await state.clear()
-            return
         except BotException as e:
-            await callback_query.answer(e.localized(lang), show_alert=True)
             await state.clear()
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await callback_query.message.edit_text(
+                _MENU_TEXT.get(lang, _MENU_TEXT["ru"]), reply_markup=slot_blocking_menu_kb(lang=lang),
+            )
             return
 
         for appointment in cancelled_appointments:

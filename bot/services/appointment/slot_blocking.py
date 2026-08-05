@@ -1,7 +1,12 @@
+from datetime import timedelta
+
+from bot.config.booking_config import SLOT_STEP_MINUTES
+from bot.exceptions.appointment_exceptions import InvalidPurposeError
 from bot.exceptions.blocked_slot_exceptions import (
     BlockedSlotAlreadyCancelledError,
     BlockedSlotNotFoundError,
     InvalidBlockRangeError,
+    InvalidBlockReasonError,
 )
 from bot.exceptions.user_exceptions import UserNotFoundError
 from bot.models.appointment import Appointment
@@ -13,12 +18,15 @@ from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import (
+    datetime_ranges_overlap,
     format_datetime_for_db,
     get_current_tashkent_time,
     get_current_tashkent_datetime,
+    parse_db_datetime,
     parse_ru_datetime,
 )
 from bot.utils.appointment_enums import AppointmentStatus
+from bot.validators.validators import validate_purpose
 
 _INVALID_RANGE_FORMAT_MESSAGE = {
     "ru": "Не удалось распознать дату и время. Проверьте формат и попробуйте снова.",
@@ -30,9 +38,14 @@ _INVALID_RANGE_ORDER_MESSAGE = {
     "uz": "Bloklash tugashi uning boshlanishidan keyin bo'lishi kerak.",
 }
 
-_INVALID_RANGE_PAST_MESSAGE = {
-    "ru": "Начало блокировки не может быть в прошлом.",
-    "uz": "Bloklash boshlanishi o'tmishda bo'lishi mumkin emas.",
+_INVALID_RANGE_FULLY_PAST_MESSAGE = {
+    "ru": "Нельзя заблокировать полностью прошедший интервал.",
+    "uz": "To'liq o'tib ketgan oraliqni bloklab bo'lmaydi.",
+}
+
+_INVALID_REASON_MESSAGE = {
+    "ru": "Опишите причину блокировки (от 2 до 100 символов). Например: Отпуск, Больничный.",
+    "uz": "Bloklash sababini yozing (2 dan 100 belgigacha). Masalan: Ta'til, Kasallik.",
 }
 
 _BLOCK_NOT_FOUND_MESSAGE = {
@@ -79,15 +92,47 @@ class SlotBlockingService:
             raise InvalidBlockRangeError(_INVALID_RANGE_ORDER_MESSAGE)
 
         now = format_datetime_for_db(get_current_tashkent_datetime())
-        if start < now:
-            raise InvalidBlockRangeError(_INVALID_RANGE_PAST_MESSAGE)
+        if end <= now:
+            raise InvalidBlockRangeError(_INVALID_RANGE_FULLY_PAST_MESSAGE)
 
         return start, end
+
+    def validate_reason(self, raw: str) -> str:
+        try:
+            return validate_purpose(raw)
+        except InvalidPurposeError:
+            raise InvalidBlockReasonError(_INVALID_REASON_MESSAGE)
 
     async def find_conflicts(
         self, clinic_id: int, staff_id: int | None, start: str, end: str
     ) -> list[Appointment]:
-        return await self.appointment_repository.get_appointments_in_range(clinic_id, staff_id, start, end)
+        """Appointments whose occupied interval [datetime, +SLOT_STEP_MINUTES)
+        overlaps the block range [start, end)."""
+        start_parsed = parse_db_datetime(start)
+        end_parsed = parse_db_datetime(end)
+        if start_parsed is None or end_parsed is None:
+            raise InvalidBlockRangeError(_INVALID_RANGE_FORMAT_MESSAGE)
+
+        slot_step = timedelta(minutes=SLOT_STEP_MINUTES)
+        candidate_start = format_datetime_for_db(start_parsed - slot_step)
+
+        candidates = await self.appointment_repository.get_appointments_in_range(
+            clinic_id, staff_id, candidate_start, end
+        )
+
+        conflicts: list[Appointment] = []
+        for appointment in candidates:
+            appointment_start = parse_db_datetime(appointment.datetime)
+            # Unlike _is_slot_blocked, an unparseable datetime is excluded here:
+            # conflicts get cancelled, so over-inclusion would kill a real booking.
+            if appointment_start is None:
+                continue
+            if datetime_ranges_overlap(
+                appointment_start, appointment_start + slot_step, start_parsed, end_parsed
+            ):
+                conflicts.append(appointment)
+
+        return conflicts
 
     async def find_cancelable_conflicts(
         self, clinic_id: int, staff_id: int | None, start: str, end: str
@@ -111,6 +156,7 @@ class SlotBlockingService:
         end_raw: str,
         reason: str,
     ) -> tuple[BlockedSlot, list[Appointment]]:
+        reason = self.validate_reason(reason)
         start, end = await self.validate_range(start_raw, end_raw)
         conflicts = await self.find_conflicts(clinic_id, staff_id, start, end)
 

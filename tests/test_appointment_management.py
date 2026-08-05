@@ -4272,3 +4272,187 @@ async def test_create_appointment_ignores_blocks_when_repository_not_injected():
     assert appt_repo.created == [appointment]
 
 
+# --- appointment duration vs block boundaries ---
+#
+# A slot is not a point in time: it occupies [slot, slot + SLOT_STEP_MINUTES).
+# The tests below use block boundaries that do NOT sit on the slot grid, which
+# is the only shape that distinguishes interval overlap from the old
+# "is the slot's start instant inside the block" check.
+#
+# Two vacuity traps are deliberately guarded against here:
+#   * _get_day_blocks / _get_active_block_for_datetime return nothing at all
+#     unless user_repository.get_user_by_id(doctor_id) resolves a doctor with a
+#     clinic_id -- hence _blocking_doctor() + users_by_id below (a plain
+#     FakeUserRepo(_client()) would make every blocking assertion vacuous);
+#   * SLOT_STEP_MINUTES is bound by name inside appointment_management (same as
+#     MAX_BOOKINGS_PER_SLOT above), so it is patched on that module where a step
+#     other than the real zb 15 is needed. BOOKING_SLOTS is deliberately never
+#     patched -- it is derived from the step at import time, so patching one
+#     without the other yields a self-contradictory world. The only test that
+#     changes the step (_ensure_slot_available via create_appointment) never
+#     consults the slot grid at all, so the two stay independent.
+
+
+def _blocking_doctor(doctor_id=42, clinic_id=1):
+    return User(
+        full_name="Доктор", phone="+998900000000", role=Role.ADMIN,
+        ID=doctor_id, telegram_user_id=999, clinic_id=clinic_id,
+    )
+
+
+def _blocking_service(blocks, doctor_id=42, appt_repo=None):
+    doctor = _blocking_doctor(doctor_id)
+    user_repo = FakeUserRepo(_client(), admin=doctor, users_by_id={doctor_id: doctor})
+    return AppointmentManagement(
+        appt_repo if appt_repo is not None else FakeAppointmentRepository(),
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+        blocked_slot_repository=FakeBlockedSlotRepository(list(blocks)),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_available_slots_excludes_slot_whose_duration_runs_into_an_off_grid_block():
+    """zb step is 15 minutes, so the 10:00 slot occupies [10:00, 10:15) and
+    collides with a 10:05-10:10 block even though 10:05 is not a grid time.
+    The next slot, [10:15, 10:30), stays available."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:05", end="2026-07-20 10:10", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    slots = await service.get_available_slots(doctor_id, day, now)
+
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
+    assert "10:00" not in slots
+    assert "10:15" in slots
+
+
+@pytest.mark.asyncio
+async def test_get_day_slot_occupancy_excludes_slot_whose_duration_runs_into_an_off_grid_block():
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:05", end="2026-07-20 10:10", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    occupancy = await service.get_day_slot_occupancy(doctor_id, day, now)
+
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
+    offered_slots = [slot for slot, _ in occupancy]
+    assert "10:00" not in offered_slots
+    assert "10:15" in offered_slots
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_blocked_when_block_starts_inside_the_appointments_duration(monkeypatch):
+    """With a 60-minute step, a 14:00 booking occupies [14:00, 15:00) and runs
+    into a 14:30-15:00 block, even though 14:00 itself is before the block."""
+    monkeypatch.setattr("bot.services.appointment.appointment_management.SLOT_STEP_MINUTES", 60)
+    appointment_datetime = _future_datetime(days=2, time_str="14:00")
+    day = appointment_datetime.split(" ")[0]
+    block = _blocked_slot(staff_id=42, start=f"{day} 14:30", end=f"{day} 15:00", reason="Планёрка")
+    service = _blocking_service([block])
+
+    with pytest.raises(SlotUnavailableError) as exc_info:
+        await service.create_appointment(
+            999,
+            {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+        )
+
+    assert "Планёрка" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_allowed_when_block_ends_exactly_at_the_slot_start():
+    """Back-to-back is not a collision: a block closing at 14:00 leaves the
+    [14:00, 14:15) slot free."""
+    appointment_datetime = _future_datetime(days=2, time_str="14:00")
+    day = appointment_datetime.split(" ")[0]
+    block = _blocked_slot(staff_id=42, start=f"{day} 13:00", end=f"{day} 14:00", reason="Планёрка")
+    appt_repo = FakeAppointmentRepository()
+    service = _blocking_service([block], appt_repo=appt_repo)
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+    )
+
+    assert await service._get_day_blocks(42, date.fromisoformat(day)) == [block]  # guards against a vacuous pass
+    assert appt_repo.created == [appointment]
+
+
+# --- get_day_block_reason ---
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_returns_reason_when_the_whole_day_is_blocked():
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    block = _blocked_slot(
+        staff_id=doctor_id, start="2026-07-20 00:00", end="2026-07-21 00:00", reason="Отпуск врача",
+    )
+    service = _blocking_service([block], doctor_id)
+
+    assert await service.get_day_block_reason(doctor_id, day, now) == "Отпуск врача"
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_returns_none_without_blocks():
+    doctor_id = 42
+    service = _blocking_service([], doctor_id)
+
+    assert await service.get_day_block_reason(doctor_id, date(2026, 7, 20), datetime(2026, 7, 1, 9, 0)) is None
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_returns_none_when_block_ends_before_the_first_slot():
+    """The block is loaded for the day but ends exactly at the 10:00 opening
+    slot, so it covers no bookable time."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 09:00", end="2026-07-20 10:00", reason="Уборка")
+    service = _blocking_service([block], doctor_id)
+
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
+    assert await service.get_day_block_reason(doctor_id, day, now) is None
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_returns_reason_for_an_off_grid_block():
+    """10:05-10:10 starts and ends between grid times, but the 10:00 slot's
+    [10:00, 10:15) duration runs into it."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:05", end="2026-07-20 10:10", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    assert await service.get_day_block_reason(doctor_id, day, now) == "Планёрка"
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_uses_now_to_drop_slots_that_already_passed_today():
+    """Late in the day only the 17:15/17:30 slots remain, and a morning block no
+    longer covers any of them."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:00", end="2026-07-20 11:00", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    assert await service.get_day_block_reason(doctor_id, day, datetime(2026, 7, 20, 17, 0)) is None
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_still_reports_a_block_over_remaining_slots_today():
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:00", end="2026-07-20 11:00", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    assert await service.get_day_block_reason(doctor_id, day, datetime(2026, 7, 20, 9, 0)) == "Планёрка"
+
+

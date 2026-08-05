@@ -7,11 +7,13 @@ from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import (
     MAX_YEARS_AHEAD,
     build_reschedule_proposal_line,
+    datetime_ranges_overlap,
     format_appointment_card_datetime,
     format_datetime_for_confirmation,
     format_datetime_for_display,
     get_current_tashkent_datetime,
     is_appointment_upcoming,
+    parse_db_datetime,
     parse_ru_datetime,
     reschedule_negotiation_note,
 )
@@ -305,3 +307,74 @@ def test_reschedule_negotiation_note_uz():
 
     assert note != reschedule_negotiation_note("ru")
     assert note.startswith("ℹ️")
+
+
+# --- parse_db_datetime ---
+
+def test_parse_db_datetime_parses_minute_precision_shape():
+    """The shape used by appointment.datetime / blocked_slots.start_datetime."""
+    assert parse_db_datetime("2026-08-10 09:00") == datetime(2026, 8, 10, 9, 0)
+
+
+def test_parse_db_datetime_parses_second_precision_shape():
+    """The shape used by created_at / cancelled_at / status_updated_at."""
+    assert parse_db_datetime("2026-08-10 09:00:30") == datetime(2026, 8, 10, 9, 0, 30)
+
+
+def test_parse_db_datetime_returns_none_on_garbage():
+    assert parse_db_datetime("not-a-real-datetime") is None
+
+
+def test_parse_db_datetime_returns_none_on_display_format():
+    """The dd.mm.yyyy display format is not a stored shape and must not parse."""
+    assert parse_db_datetime("10.08.2026 09:00") is None
+
+
+def test_parse_db_datetime_returns_none_on_empty_string():
+    assert parse_db_datetime("") is None
+
+
+# --- datetime_ranges_overlap ---
+
+def test_datetime_ranges_overlap_true_for_partial_overlap():
+    assert datetime_ranges_overlap(
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 10, 15),
+        datetime(2026, 8, 10, 10, 5), datetime(2026, 8, 10, 10, 10),
+    ) is True
+
+
+def test_datetime_ranges_overlap_true_when_one_range_contains_the_other():
+    assert datetime_ranges_overlap(
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 10, 15),
+        datetime(2026, 8, 10, 9, 0), datetime(2026, 8, 10, 18, 0),
+    ) is True
+
+
+def test_datetime_ranges_overlap_true_when_ranges_share_only_their_start():
+    assert datetime_ranges_overlap(
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 10, 15),
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 11, 0),
+    ) is True
+
+
+def test_datetime_ranges_overlap_false_for_back_to_back_ranges():
+    """Half-open intervals: a range ending exactly where the other starts does
+    not overlap it."""
+    assert datetime_ranges_overlap(
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 11, 0),
+        datetime(2026, 8, 10, 11, 0), datetime(2026, 8, 10, 12, 0),
+    ) is False
+
+
+def test_datetime_ranges_overlap_false_for_back_to_back_ranges_in_reverse_order():
+    assert datetime_ranges_overlap(
+        datetime(2026, 8, 10, 11, 0), datetime(2026, 8, 10, 12, 0),
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 11, 0),
+    ) is False
+
+
+def test_datetime_ranges_overlap_false_for_disjoint_ranges():
+    assert datetime_ranges_overlap(
+        datetime(2026, 8, 10, 10, 0), datetime(2026, 8, 10, 10, 15),
+        datetime(2026, 8, 10, 14, 0), datetime(2026, 8, 10, 15, 0),
+    ) is False

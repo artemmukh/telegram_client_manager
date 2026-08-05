@@ -197,6 +197,11 @@ def create_client_reschedule_router(
         )
 
         if not slots:
+            reason = await appointment_management_service.get_day_block_reason(data["doctor_id"], day, now)
+            if reason is not None:
+                await callback_query.answer(msg.day_blocked(reason, lang), show_alert=True)
+                return
+
             await callback_query.answer(msg.no_slots_for_day(lang), show_alert=True)
             return
 

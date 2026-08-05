@@ -72,11 +72,6 @@ _PROPOSE_DATETIME_TO_CLIENT = {
     "uz": "Mijozga vaqt taklif qilinsinmi: {value}?",
 }
 
-_NO_SLOTS_FOR_DAY = {
-    "ru": "На этот день нет доступных слотов.",
-    "uz": "Bu kunga bo'sh vaqt yo'q.",
-}
-
 _DATE_PROCESSING_ERROR = {
     "ru": "Ошибка: не удалось обработать дату. Попробуйте снова.",
     "uz": "Xatolik: sanani qayta ishlab bo'lmadi. Qaytadan urinib ko'ring.",
@@ -330,7 +325,7 @@ def create_admin_reschedule_requests_router(
             appt_mng, callback_query, state, day_iso, choose_slot_state=RescheduleRequestStates.choose_slot, now=now,
             lang=lang,
         ):
-            await callback_query.answer(_NO_SLOTS_FOR_DAY.get(lang, _NO_SLOTS_FOR_DAY["ru"]), show_alert=True)
+            await ah.answer_no_slots_for_day(appt_mng, callback_query, state, day_iso, now, lang)
             return
 
         await callback_query.answer()

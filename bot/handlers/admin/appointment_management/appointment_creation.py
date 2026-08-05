@@ -87,11 +87,6 @@ _ASK_PAIN_OR_PROBLEM = {
     "uz": "Og'riq yoki muammoni yozing:",
 }
 
-_NO_SLOTS_FOR_DAY = {
-    "ru": "На этот день нет доступных слотов.",
-    "uz": "Bu kunga bo'sh vaqt yo'q.",
-}
-
 _APPOINTMENT_NOT_FOUND = {
     "ru": "Запись не найдена.",
     "uz": "Yozuv topilmadi.",
@@ -378,9 +373,10 @@ def create_admin_appointment_creation_router(instance:str,
         year, month = clamp_month_to_range(callback_data.year, callback_data.month)
         await ah.render_calendar_month(callback_query, state, year, month, lang=current_user.language)
 
-    async def render_slot_grid(callback_query: CallbackQuery, state: FSMContext, day_iso: str, lang: str = "ru") -> bool:
+    async def render_slot_grid(
+        callback_query: CallbackQuery, state: FSMContext, day_iso: str, now: datetime, lang: str = "ru",
+    ) -> bool:
         day = date.fromisoformat(day_iso)
-        now = get_current_tashkent_datetime()
         data = await state.get_data()
         occupancy = await appt_mng.get_day_slot_occupancy(data["staff_user_id"], day, now)
 
@@ -402,9 +398,10 @@ def create_admin_appointment_creation_router(instance:str,
         lang = current_user.language
         year, month, day_num = clamp_calendar_date(callback_data.year, callback_data.month, callback_data.day)
         day_iso = date(year, month, day_num).isoformat()
+        now = get_current_tashkent_datetime()
 
-        if not await render_slot_grid(callback_query, state, day_iso, lang):
-            await callback_query.answer(_NO_SLOTS_FOR_DAY.get(lang, _NO_SLOTS_FOR_DAY["ru"]), show_alert=True)
+        if not await render_slot_grid(callback_query, state, day_iso, now, lang):
+            await ah.answer_no_slots_for_day(appt_mng, callback_query, state, day_iso, now, lang)
             return
 
         await callback_query.answer()
@@ -436,7 +433,8 @@ def create_admin_appointment_creation_router(instance:str,
     @router.callback_query(AppointmentCreationStates.choose_slot, F.data == "admin_book_back_to_slots")
     async def back_to_slot_grid(callback_query: CallbackQuery, state: FSMContext, current_user: User):
         data = await state.get_data()
-        await render_slot_grid(callback_query, state, data["day_iso"], current_user.language)
+        now = get_current_tashkent_datetime()
+        await render_slot_grid(callback_query, state, data["day_iso"], now, current_user.language)
         await callback_query.answer()
 
     @router.callback_query(AppointmentCreationStates.choose_slot, ClientBookSlotCB.filter())

@@ -808,7 +808,13 @@ class AppointmentRepository:
     ) -> list[Appointment]:
         """Return every appointment (any status) for clinic_id (and doctor_id, if
         given) whose datetime falls in the half-open interval [start_datetime,
-        end_datetime)."""
+        end_datetime).
+
+        Selection is by the appointment's START instant only. A caller that needs
+        "the interval the appointment occupies" semantics must widen start_datetime
+        by one slot step and re-check the overlap exactly on its own side -- that
+        business rule belongs to the service layer, and the exact re-check also
+        absorbs the "HH:MM" vs "HH:MM:SS" imprecision of string comparison."""
         conditions = ["a.clinic_id = ?", "a.datetime >= ?", "a.datetime < ?"]
         params = [clinic_id, start_datetime, end_datetime]
 

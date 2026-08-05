@@ -6,6 +6,7 @@ from bot.config.booking_config import (
     MAX_BOOKINGS_PER_SLOT,
     MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
     MAX_PENDING_REQUESTS_PER_CLIENT,
+    SLOT_STEP_MINUTES,
 )
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyDecidedError,
@@ -33,7 +34,13 @@ from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.clinic import resolve_staff_clinic
-from bot.services.utils.date_parser import get_current_tashkent_time, get_current_tashkent_datetime
+from bot.services.utils.date_parser import (
+    datetime_ranges_overlap,
+    format_datetime_for_db,
+    get_current_tashkent_time,
+    get_current_tashkent_datetime,
+    parse_db_datetime,
+)
 from bot.services.utils.booking_day_helpers import (
     find_first_available_week_offset as _find_first_available_week_offset,
     generate_working_days,
@@ -1060,12 +1067,22 @@ class AppointmentManagement:
         if self.blocked_slot_repository is None:
             return None
 
+        # The datetime is validated upstream, so an unparseable value here means
+        # a caller bug rather than a blocked slot -- report "not blocked" instead
+        # of failing the booking with an unexpected exception.
+        slot_start = parse_db_datetime(datetime_str)
+        if slot_start is None:
+            return None
+
         doctor = await self.user_repository.get_user_by_id(doctor_id)
         if doctor is None or doctor.clinic_id is None:
             return None
 
+        range_start = format_datetime_for_db(slot_start)
+        range_end = format_datetime_for_db(slot_start + timedelta(minutes=SLOT_STEP_MINUTES))
+
         blocks = await self.blocked_slot_repository.get_blocks_covering_range(
-            doctor.clinic_id, doctor_id, datetime_str, datetime_str
+            doctor.clinic_id, doctor_id, range_start, range_end
         )
         return blocks[0] if blocks else None
 
@@ -1118,7 +1135,26 @@ class AppointmentManagement:
 
     @staticmethod
     def _is_slot_blocked(slot_datetime: str, blocks: list[BlockedSlot]) -> bool:
-        return any(block.start_datetime <= slot_datetime < block.end_datetime for block in blocks)
+        """Whether the appointment occupying [slot_datetime, +SLOT_STEP_MINUTES)
+        overlaps any of the blocks, each covering [start_datetime, end_datetime).
+
+        Unparseable datetimes are treated as blocked: hiding a slot is safer than
+        offering one that may sit inside a block."""
+        slot_start = parse_db_datetime(slot_datetime)
+        if slot_start is None:
+            return True
+
+        slot_end = slot_start + timedelta(minutes=SLOT_STEP_MINUTES)
+
+        for block in blocks:
+            block_start = parse_db_datetime(block.start_datetime)
+            block_end = parse_db_datetime(block.end_datetime)
+            if block_start is None or block_end is None:
+                return True
+            if datetime_ranges_overlap(slot_start, slot_end, block_start, block_end):
+                return True
+
+        return False
 
     async def get_available_slots(
         self, doctor_id: int, day: date, now: datetime, exclude_appointment_id: int | None = None
@@ -1154,6 +1190,24 @@ class AppointmentManagement:
             if counts[slot] < MAX_BOOKINGS_PER_SLOT
             and not self._is_slot_blocked(f"{day.isoformat()} {slot}", blocks)
         ]
+
+    async def get_day_block_reason(self, doctor_id: int, day: date, now: datetime) -> str | None:
+        """Reason of the first block covering any slot generated for `day`, or None.
+
+        `now` must be the same value passed to get_available_slots, which drops
+        slots that already passed today -- a different `now` would make the two
+        calls disagree about which slots exist."""
+        slots = generate_available_slots(day, now)
+        if not slots:
+            return None
+
+        blocks = await self._get_day_blocks(doctor_id, day)
+
+        for block in blocks:
+            if any(self._is_slot_blocked(f"{day.isoformat()} {slot}", [block]) for slot in slots):
+                return block.reason
+
+        return None
 
     async def get_day_slot_occupancy(
         self, doctor_id: int, day: date, now: datetime, exclude_appointment_id: int | None = None

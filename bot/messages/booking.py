@@ -32,6 +32,11 @@ _NO_SLOTS_FOR_DAY = {
     "uz": "Bu kunga endi bo'sh vaqt yo'q.",
 }
 
+_DAY_BLOCKED = {
+    "ru": "На этот день запись закрыта. Причина: {reason}",
+    "uz": "Bu kunga yozilish yopilgan. Sababi: {reason}",
+}
+
 _INVALID_TIME = {
     "ru": "Некорректное время, попробуйте ещё раз.",
     "uz": "Vaqt noto'g'ri, qaytadan urinib ko'ring.",
@@ -105,6 +110,10 @@ def invalid_date(lang: str = "ru") -> str:
 
 def no_slots_for_day(lang: str = "ru") -> str:
     return _NO_SLOTS_FOR_DAY.get(lang, _NO_SLOTS_FOR_DAY["ru"])
+
+
+def day_blocked(reason: str, lang: str = "ru") -> str:
+    return _DAY_BLOCKED.get(lang, _DAY_BLOCKED["ru"]).format(reason=reason)
 
 
 def invalid_time(lang: str = "ru") -> str:

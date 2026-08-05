@@ -356,9 +356,10 @@ class FakeBlockedSlotRepository:
     get_block_by_id, cancel_block). Backed by a flat in-memory list, with the
     same overlap semantics as the real SQL in get_blocks_covering_range:
     a block occupies the half-open interval [start_datetime, end_datetime),
-    staff_id=None on the query means "clinic-wide blocks only" (not a
-    wildcard), and a degenerate point-in-time query (start == end) still
-    matches a block that starts exactly at that instant."""
+    the query range is half-open too (so back-to-back ranges that merely touch
+    do not match), and staff_id=None on the query means "clinic-wide blocks
+    only" (not a wildcard) -- mirroring SQL, where `staff_id = NULL` never
+    matches and the predicate collapses to `staff_id IS NULL`."""
 
     def __init__(self, blocks=None):
         self.blocks: list[BlockedSlot] = list(blocks or [])
@@ -394,7 +395,7 @@ class FakeBlockedSlotRepository:
             and b.cancelled_at is None
             and (b.staff_id == staff_id or b.staff_id is None)
             and b.end_datetime > start_datetime
-            and (b.start_datetime < end_datetime or b.start_datetime == start_datetime)
+            and b.start_datetime < end_datetime
         ]
         return sorted(matches, key=lambda b: b.start_datetime)
 

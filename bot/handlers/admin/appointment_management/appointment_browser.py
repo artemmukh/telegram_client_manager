@@ -116,10 +116,6 @@ _ENTER_NEW_DATETIME_TEXT = {
 }
 _NEW_DATETIME_DISPLAY_TEXT = {"ru": "Новая дата и время: {value}", "uz": "Yangi sana va vaqt: {value}"}
 _CHOOSE_TIME_FOR_DAY_TEXT = {"ru": "Выберите время на {day}:", "uz": "{day} uchun vaqtni tanlang:"}
-_NO_SLOTS_FOR_DAY_TEXT = {
-    "ru": "На этот день нет доступных слотов.",
-    "uz": "Bu kun uchun bo'sh vaqt yo'q.",
-}
 _INVALID_TIME_TEXT = {"ru": "Некорректное время, попробуйте ещё раз.", "uz": "Vaqt noto'g'ri, qaytadan urinib ko'ring."}
 _NEW_DATETIME_CHANGE_TEXT = {"ru": "Новая дата и время: {old} → {new}", "uz": "Yangi sana va vaqt: {old} → {new}"}
 _DATETIME_PARSE_ERROR_TEXT = {
@@ -817,10 +813,9 @@ def create_admin_appointment_browser_router(
         )
 
     async def render_edit_datetime_slot_grid(
-        callback_query: CallbackQuery, state: FSMContext, day_iso: str, lang: str = "ru",
+        callback_query: CallbackQuery, state: FSMContext, day_iso: str, now: datetime, lang: str = "ru",
     ) -> bool:
         day = date.fromisoformat(day_iso)
-        now = get_current_tashkent_datetime()
         data = await state.get_data()
         occupancy = await appt_mng.get_day_slot_occupancy(
             data["staff_user_id"], day, now, exclude_appointment_id=data["appointment_id"],
@@ -844,9 +839,10 @@ def create_admin_appointment_browser_router(
         lang = current_user.language
         year, month, day_num = clamp_calendar_date(callback_data.year, callback_data.month, callback_data.day)
         day_iso = date(year, month, day_num).isoformat()
+        now = get_current_tashkent_datetime()
 
-        if not await render_edit_datetime_slot_grid(callback_query, state, day_iso, lang):
-            await callback_query.answer(_NO_SLOTS_FOR_DAY_TEXT.get(lang, _NO_SLOTS_FOR_DAY_TEXT["ru"]), show_alert=True)
+        if not await render_edit_datetime_slot_grid(callback_query, state, day_iso, now, lang):
+            await ah.answer_no_slots_for_day(appt_mng, callback_query, state, day_iso, now, lang)
             return
 
         await callback_query.answer()
@@ -884,7 +880,8 @@ def create_admin_appointment_browser_router(
     @router.callback_query(AppointmentBrowserStates.edit_choose_slot, F.data == "admin_book_back_to_slots")
     async def back_to_edit_datetime_slot_grid(callback_query: CallbackQuery, state: FSMContext, current_user: User):
         data = await state.get_data()
-        await render_edit_datetime_slot_grid(callback_query, state, data["day_iso"], current_user.language)
+        now = get_current_tashkent_datetime()
+        await render_edit_datetime_slot_grid(callback_query, state, data["day_iso"], now, current_user.language)
         await callback_query.answer()
 
     @router.callback_query(AppointmentBrowserStates.edit_choose_slot, ClientBookSlotCB.filter())
