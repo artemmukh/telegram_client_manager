@@ -23,9 +23,11 @@ from bot.exceptions.appointment_exceptions import (
 from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
+from bot.models.blocked_slot import BlockedSlot
 from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.blocked_slot_repository import BlockedSlotRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
 from bot.repositories.staff_repository import StaffRepository
@@ -52,6 +54,11 @@ SLOT_UNAVAILABLE_MESSAGE = {
 DUPLICATE_CLIENT_SLOT_MESSAGE = {
     "ru": "У этого клиента уже есть запись на это время.",
     "uz": "Bu mijozning bu vaqtga allaqachon yozuvi bor.",
+}
+
+_SLOT_BLOCKED_MESSAGE = {
+    "ru": "Это время заблокировано клиникой. Причина: {reason}",
+    "uz": "Bu vaqt klinika tomonidan bloklangan. Sababi: {reason}",
 }
 
 _DOCTOR_NOT_FOUND_MESSAGE = {
@@ -207,6 +214,7 @@ class AppointmentManagement:
         clinic_repository: ClinicRepository,
         client_management=None,
         client_clinic_repository: ClientClinicRepository | None = None,
+        blocked_slot_repository: BlockedSlotRepository | None = None,
     ):
         self.appointment_repository = appointment_repository
         self.user_repository = user_repository
@@ -214,6 +222,7 @@ class AppointmentManagement:
         self.clinic_repository = clinic_repository
         self.client_management = client_management
         self.client_clinic_repository = client_clinic_repository
+        self.blocked_slot_repository = blocked_slot_repository
 
     async def create_appointment(self, doctor_telegram_id: int, data: dict) -> Appointment:
         clinic = await self.get_admin_clinic(doctor_telegram_id)
@@ -1047,9 +1056,30 @@ class AppointmentManagement:
 
         return count
 
+    async def _get_active_block_for_datetime(self, doctor_id: int, datetime_str: str) -> BlockedSlot | None:
+        if self.blocked_slot_repository is None:
+            return None
+
+        doctor = await self.user_repository.get_user_by_id(doctor_id)
+        if doctor is None or doctor.clinic_id is None:
+            return None
+
+        blocks = await self.blocked_slot_repository.get_blocks_covering_range(
+            doctor.clinic_id, doctor_id, datetime_str, datetime_str
+        )
+        return blocks[0] if blocks else None
+
     async def _ensure_slot_available(
         self, doctor_id: int, datetime_str: str, exclude_appointment_id: int | None, client_id: int
     ) -> None:
+        block = await self._get_active_block_for_datetime(doctor_id, datetime_str)
+        if block is not None:
+            message = {
+                lang: text.format(reason=block.reason)
+                for lang, text in _SLOT_BLOCKED_MESSAGE.items()
+            }
+            raise SlotUnavailableError(message)
+
         date_part = datetime_str.split(" ")[0]
 
         appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
@@ -1072,10 +1102,29 @@ class AppointmentManagement:
         if len(active_at_slot) >= MAX_BOOKINGS_PER_SLOT:
             raise SlotUnavailableError(SLOT_UNAVAILABLE_MESSAGE)
 
+    async def _get_day_blocks(self, doctor_id: int, day: date) -> list[BlockedSlot]:
+        if self.blocked_slot_repository is None:
+            return []
+
+        doctor = await self.user_repository.get_user_by_id(doctor_id)
+        if doctor is None or doctor.clinic_id is None:
+            return []
+
+        day_start = f"{day.isoformat()} 00:00"
+        next_day_start = f"{(day + timedelta(days=1)).isoformat()} 00:00"
+        return await self.blocked_slot_repository.get_blocks_covering_range(
+            doctor.clinic_id, doctor_id, day_start, next_day_start
+        )
+
+    @staticmethod
+    def _is_slot_blocked(slot_datetime: str, blocks: list[BlockedSlot]) -> bool:
+        return any(block.start_datetime <= slot_datetime < block.end_datetime for block in blocks)
+
     async def get_available_slots(
         self, doctor_id: int, day: date, now: datetime, exclude_appointment_id: int | None = None
     ) -> list[str]:
         slots = generate_available_slots(day, now)
+        blocks = await self._get_day_blocks(doctor_id, day)
 
         if MAX_BOOKINGS_PER_SLOT is None:
             occupying = await self.appointment_repository.get_appointments_by_doctor_and_date(
@@ -1086,7 +1135,11 @@ class AppointmentManagement:
                 for appointment in occupying
                 if appointment.id != exclude_appointment_id
             }
-            return [slot for slot in slots if slot not in booked_times]
+            return [
+                slot for slot in slots
+                if slot not in booked_times
+                and not self._is_slot_blocked(f"{day.isoformat()} {slot}", blocks)
+            ]
 
         appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
             doctor_id, day.isoformat(), statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
@@ -1096,7 +1149,11 @@ class AppointmentManagement:
             for appointment in appointments
             if appointment.id != exclude_appointment_id
         )
-        return [slot for slot in slots if counts[slot] < MAX_BOOKINGS_PER_SLOT]
+        return [
+            slot for slot in slots
+            if counts[slot] < MAX_BOOKINGS_PER_SLOT
+            and not self._is_slot_blocked(f"{day.isoformat()} {slot}", blocks)
+        ]
 
     async def get_day_slot_occupancy(
         self, doctor_id: int, day: date, now: datetime, exclude_appointment_id: int | None = None
@@ -1105,8 +1162,12 @@ class AppointmentManagement:
         occupying it (CONFIRMED or PENDING). Normally 0 or 1 occupants under the
         current single-occupant-per-slot rule, but legacy mm slots booked before
         the capacity was collapsed to 1 may still carry 2-3 -- all occupants are
-        returned rather than picking one, leaving the choice to the caller."""
+        returned rather than picking one, leaving the choice to the caller.
+
+        Slots covered by an active blocked_slots entry are excluded entirely,
+        the same way an already-fully-booked slot is."""
         slots = generate_available_slots(day, now)
+        blocks = await self._get_day_blocks(doctor_id, day)
 
         appointments = await self.appointment_repository.get_appointments_by_doctor_and_date(
             doctor_id, day.isoformat(), statuses=[AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING]
@@ -1119,7 +1180,11 @@ class AppointmentManagement:
             slot_time = appointment.datetime.split(" ")[1]
             occupants_by_slot.setdefault(slot_time, []).append(appointment)
 
-        return [(slot, occupants_by_slot.get(slot, [])) for slot in slots]
+        return [
+            (slot, occupants_by_slot.get(slot, []))
+            for slot in slots
+            if not self._is_slot_blocked(f"{day.isoformat()} {slot}", blocks)
+        ]
 
     async def get_working_days(self, reference_date: date, week_offset: int) -> list[date]:
         return generate_working_days(reference_date, week_offset)

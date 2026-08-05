@@ -20,6 +20,7 @@ from bot.handlers.admin.appointment_management.appointment_creation import creat
 from bot.handlers.admin.appointment_management.appointment_browser import create_admin_appointment_browser_router
 from bot.handlers.admin.appointment_management.booking_requests import create_admin_booking_requests_router
 from bot.handlers.admin.appointment_management.reschedule_requests import create_admin_reschedule_requests_router
+from bot.handlers.admin.appointment_management.slot_blocking import create_admin_slot_blocking_router
 from bot.handlers.client.appointment_booking import create_client_booking_router
 from bot.handlers.client.appointment_invite import create_client_appointment_invite_router
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
@@ -36,6 +37,7 @@ from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.user import UserContextMiddleware
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.appointment_repository import AppointmentRepository
+from bot.repositories.blocked_slot_repository import BlockedSlotRepository
 from bot.repositories.medical_record_repository import MedicalRecordRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.staff_repository import StaffRepository
@@ -64,6 +66,7 @@ async def main():
     staff_repo = StaffRepository(connection)
     client_clinic_repo = ClientClinicRepository(connection)
     medical_record_repo = MedicalRecordRepository(connection)
+    blocked_slot_repo = BlockedSlotRepository(connection)
 
     await user_repo.init()
 
@@ -75,6 +78,7 @@ async def main():
     await clinic_repo.init(config.instance)
     await staff_repo.init(config.instance)
     await client_clinic_repo.init()
+    await blocked_slot_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["appointment_repo"] = appointment_repo
@@ -96,6 +100,7 @@ async def main():
     appointment_management_service = AppointmentManagement(
         appointment_repo, user_repo, staff_repo, clinic_repo,
         client_clinic_repository=client_clinic_repo,
+        blocked_slot_repository=blocked_slot_repo,
     )
     notifier = get_notifier()
     notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
@@ -155,6 +160,7 @@ async def main():
     dp.include_router(create_admin_appointment_creation_router(
         config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, client_management_service,
         notification_service, appointment_scheduler, client_clinic_repo,
+        blocked_slot_repository=blocked_slot_repo,
     ))
     # booking_requests and reschedule_requests are registered before
     # appointment_browser: their propose-datetime calendars (choose_day/
@@ -164,17 +170,23 @@ async def main():
     # booking_requests.py/reschedule_requests.py for the matching state-filter
     # half of this fix.
     dp.include_router(create_admin_booking_requests_router(
-        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler,
+        blocked_slot_repository=blocked_slot_repo,
     ))
     dp.include_router(create_admin_reschedule_requests_router(
-        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler
+        config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, notification_service, appointment_scheduler,
+        blocked_slot_repository=blocked_slot_repo,
     ))
     dp.include_router(create_admin_appointment_browser_router(
         config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,
-        medical_record_service=medical_record_service,
+        medical_record_service=medical_record_service, blocked_slot_repository=blocked_slot_repo,
     ))
     dp.include_router(create_admin_completion_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,
+    ))
+    dp.include_router(create_admin_slot_blocking_router(
+        user_repo, staff_repo, clinic_repo, appointment_repo, blocked_slot_repo,
+        notification_service=notification_service, appointment_scheduler=appointment_scheduler,
     ))
 
     #client handlers

@@ -803,6 +803,24 @@ class AppointmentRepository:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def get_appointments_in_range(
+        self, clinic_id: int, doctor_id: int | None, start_datetime: str, end_datetime: str
+    ) -> list[Appointment]:
+        """Return every appointment (any status) for clinic_id (and doctor_id, if
+        given) whose datetime falls in the half-open interval [start_datetime,
+        end_datetime)."""
+        conditions = ["a.clinic_id = ?", "a.datetime >= ?", "a.datetime < ?"]
+        params = [clinic_id, start_datetime, end_datetime]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"\nWHERE {' AND '.join(conditions)}\nORDER BY a.datetime ASC"
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
     async def get_appointments_by_client_ids(
         self, client_ids: list[int], clinic_id: int, doctor_id: int | None = None
     ) -> list[Appointment]:

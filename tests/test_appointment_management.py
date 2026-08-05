@@ -26,6 +26,7 @@ from bot.config.clinic_instances import STAFF_SEED_BY_INSTANCE
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
+from bot.models.blocked_slot import BlockedSlot
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
@@ -40,9 +41,10 @@ from bot.services.appointment.appointment_management import (
     AppointmentManagement,
 )
 from bot.services.client.client_management import ClientManagement
-from bot.services.utils.date_parser import get_current_tashkent_datetime
+from bot.services.utils.date_parser import format_datetime_for_db, get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
+from tests.conftest import FakeBlockedSlotRepository
 
 
 FINALIZED_STATUSES = {
@@ -77,6 +79,14 @@ class FakeAppointmentRepository:
 
     async def get_appointment_by_id(self, appointment_id):
         return next((a for a in self.appointments if a.id == appointment_id), None)
+
+    async def get_appointments_in_range(self, clinic_id, doctor_id, start_datetime, end_datetime):
+        return [
+            a for a in self.appointments
+            if a.clinic_id == clinic_id
+            and (doctor_id is None or a.doctor_id == doctor_id)
+            and start_datetime <= a.datetime < end_datetime
+        ]
 
     async def get_appointments_by_doctor_and_date(self, doctor_id, date, statuses: list[AppointmentStatus] | None = None):
         if statuses is None:
@@ -4104,5 +4114,161 @@ async def test_zb_slot_blocks_second_pending_from_different_client():
         assert str(exc_info.value) == SLOT_UNAVAILABLE_MESSAGE["ru"]
     finally:
         await connection.close()
+
+
+# --- blocked slot integration (_ensure_slot_available / get_available_slots) ---
+
+def _blocked_slot(
+    block_id=1, clinic_id=1, staff_id=None, start="2026-08-07 00:00", end="2026-08-08 00:00",
+    reason="Отпуск врача", cancelled_at=None,
+):
+    return BlockedSlot(
+        id=block_id, clinic_id=clinic_id, staff_id=staff_id, start_datetime=start, end_datetime=end,
+        reason=reason, created_by=1, created_at="2026-08-05 08:00:00", cancelled_at=cancelled_at,
+    )
+
+
+def _appointment_datetime_and_day_range(days=2, time_str="14:30"):
+    """A future appointment datetime plus a same-day [00:00, next-day 00:00)
+    range, both in DB string format, for building a covering block."""
+    appointment_datetime = _future_datetime(days=days, time_str=time_str)
+    day = appointment_datetime.split(" ")[0]
+    day_start = f"{day} 00:00"
+    next_day = format_datetime_for_db(
+        get_current_tashkent_datetime() + timedelta(days=days + 1)
+    ).split(" ")[0]
+    next_day_start = f"{next_day} 00:00"
+    return appointment_datetime, day_start, next_day_start
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_blocked_by_doctor_specific_block():
+    appointment_datetime, day_start, next_day_start = _appointment_datetime_and_day_range()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
+    user_repo = FakeUserRepo(client, admin=admin, users_by_id={42: admin})
+    block = _blocked_slot(staff_id=42, start=day_start, end=next_day_start, reason="Отпуск врача")
+    blocked_slot_repo = FakeBlockedSlotRepository([block])
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+        blocked_slot_repository=blocked_slot_repo,
+    )
+
+    with pytest.raises(SlotUnavailableError) as exc_info:
+        await service.create_appointment(
+            999,
+            {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+        )
+
+    assert "Отпуск врача" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_blocked_by_clinic_wide_block():
+    appointment_datetime, day_start, next_day_start = _appointment_datetime_and_day_range()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
+    user_repo = FakeUserRepo(client, admin=admin, users_by_id={42: admin})
+    # staff_id=None -> clinic-wide block, must still apply to a specific doctor's slot.
+    block = _blocked_slot(staff_id=None, start=day_start, end=next_day_start, reason="Клиника закрыта")
+    blocked_slot_repo = FakeBlockedSlotRepository([block])
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+        blocked_slot_repository=blocked_slot_repo,
+    )
+
+    with pytest.raises(SlotUnavailableError) as exc_info:
+        await service.create_appointment(
+            999,
+            {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+        )
+
+    assert "Клиника закрыта" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_available_outside_block_range():
+    appointment_datetime, day_start, next_day_start = _appointment_datetime_and_day_range()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
+    user_repo = FakeUserRepo(client, admin=admin, users_by_id={42: admin})
+    # Block covers a different, later day entirely -- must not affect this booking.
+    other_day_datetime, other_day_start, other_next_day_start = _appointment_datetime_and_day_range(days=20)
+    block = _blocked_slot(staff_id=42, start=other_day_start, end=other_next_day_start, reason="Отпуск врача")
+    blocked_slot_repo = FakeBlockedSlotRepository([block])
+    appt_repo = FakeAppointmentRepository()
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+        blocked_slot_repository=blocked_slot_repo,
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+    )
+
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_available_when_covering_block_is_cancelled():
+    appointment_datetime, day_start, next_day_start = _appointment_datetime_and_day_range()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
+    user_repo = FakeUserRepo(client, admin=admin, users_by_id={42: admin})
+    block = _blocked_slot(
+        staff_id=42, start=day_start, end=next_day_start, reason="Отпуск врача",
+        cancelled_at="2026-08-05 09:00:00",
+    )
+    blocked_slot_repo = FakeBlockedSlotRepository([block])
+    appt_repo = FakeAppointmentRepository()
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+        blocked_slot_repository=blocked_slot_repo,
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+    )
+
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_create_appointment_ignores_blocks_when_repository_not_injected():
+    """Backward compatibility: AppointmentManagement built without a
+    blocked_slot_repository (the pre-feature default) must behave exactly as
+    before -- no block lookups, no SlotUnavailableError from blocking logic."""
+    appointment_datetime, _, _ = _appointment_datetime_and_day_range()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
+    user_repo = FakeUserRepo(client, admin=admin, users_by_id={42: admin})
+    appt_repo = FakeAppointmentRepository()
+    service = AppointmentManagement(
+        appt_repo,
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+    )
+
+    appointment = await service.create_appointment(
+        999,
+        {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+    )
+
+    assert appt_repo.created == [appointment]
 
 

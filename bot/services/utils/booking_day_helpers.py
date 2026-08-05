@@ -1,3 +1,4 @@
+import math
 from datetime import date, timedelta
 
 from bot.config.booking_config import BOOKING_HORIZON_DAYS, WORKING_WEEKDAYS
@@ -24,7 +25,9 @@ def generate_working_days(reference_date: date, week_offset: int) -> list[date]:
     return days
 
 
-def find_first_available_week_offset(reference_date: date, max_offset: int = 3) -> int:
+def find_first_available_week_offset(
+    reference_date: date, max_offset: int = math.ceil(BOOKING_HORIZON_DAYS / 7) + 1
+) -> int:
     """Return the earliest week_offset (starting from 0) that yields working days.
 
     Needed because week_offset=0 can be empty (e.g. reference_date is a Sunday,

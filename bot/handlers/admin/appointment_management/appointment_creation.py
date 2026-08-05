@@ -135,13 +135,13 @@ _AUTO_COMPLETE_SCHEDULED = {
 
 def create_admin_appointment_creation_router(instance:str,
     appointment_repo, user_repo, staff_repo, clinic_repo, client_management=None, notification_service=None,
-    scheduler=None, client_clinic_repo=None
+    scheduler=None, client_clinic_repo=None, blocked_slot_repository=None
 ):
     router = Router()
 
     appt_mng = AppointmentManagement(
         appointment_repo, user_repo, staff_repo, clinic_repo, client_management,
-        client_clinic_repository=client_clinic_repo,
+        client_clinic_repository=client_clinic_repo, blocked_slot_repository=blocked_slot_repository,
     )
 
     router.message.filter(RoleFilter("admin"))

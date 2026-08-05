@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError
+from bot.models.blocked_slot import BlockedSlot
 from bot.models.medical_record import MedicalRecord
 from bot.models.user import User
 from bot.models.user_settings import UserSettings
@@ -347,6 +348,76 @@ LLM_RESPONSE = {
     "treatment": "Пломбирование композитным материалом",
     "tooth_map": [{"tooth": 37, "marker": "C"}],
 }
+
+
+class FakeBlockedSlotRepository:
+    """Drop-in for BlockedSlotRepository, matching its method names/signatures
+    (create_block, get_active_blocks_by_clinic, get_blocks_covering_range,
+    get_block_by_id, cancel_block). Backed by a flat in-memory list, with the
+    same overlap semantics as the real SQL in get_blocks_covering_range:
+    a block occupies the half-open interval [start_datetime, end_datetime),
+    staff_id=None on the query means "clinic-wide blocks only" (not a
+    wildcard), and a degenerate point-in-time query (start == end) still
+    matches a block that starts exactly at that instant."""
+
+    def __init__(self, blocks=None):
+        self.blocks: list[BlockedSlot] = list(blocks or [])
+        self._next_id = max((b.id for b in self.blocks if b.id is not None), default=0) + 1
+        self.cancel_calls: list[tuple[int, str]] = []
+
+    async def create_block(self, block: BlockedSlot) -> BlockedSlot:
+        stored = BlockedSlot(
+            id=self._next_id,
+            clinic_id=block.clinic_id,
+            staff_id=block.staff_id,
+            start_datetime=block.start_datetime,
+            end_datetime=block.end_datetime,
+            reason=block.reason,
+            created_by=block.created_by,
+            created_at=block.created_at,
+            cancelled_at=block.cancelled_at,
+        )
+        self._next_id += 1
+        self.blocks.append(stored)
+        return stored
+
+    async def get_active_blocks_by_clinic(self, clinic_id: int) -> list[BlockedSlot]:
+        active = [b for b in self.blocks if b.clinic_id == clinic_id and b.cancelled_at is None]
+        return sorted(active, key=lambda b: b.start_datetime)
+
+    async def get_blocks_covering_range(
+        self, clinic_id: int, staff_id: int | None, start_datetime: str, end_datetime: str,
+    ) -> list[BlockedSlot]:
+        matches = [
+            b for b in self.blocks
+            if b.clinic_id == clinic_id
+            and b.cancelled_at is None
+            and (b.staff_id == staff_id or b.staff_id is None)
+            and b.end_datetime > start_datetime
+            and (b.start_datetime < end_datetime or b.start_datetime == start_datetime)
+        ]
+        return sorted(matches, key=lambda b: b.start_datetime)
+
+    async def get_block_by_id(self, block_id: int) -> BlockedSlot | None:
+        return next((b for b in self.blocks if b.id == block_id), None)
+
+    async def cancel_block(self, block_id: int, cancelled_at: str) -> bool:
+        self.cancel_calls.append((block_id, cancelled_at))
+        block = next((b for b in self.blocks if b.id == block_id), None)
+        if block is None or block.cancelled_at is not None:
+            return False
+        block.cancelled_at = cancelled_at
+        return True
+
+
+@pytest.fixture
+def fake_blocked_slot_repo() -> FakeBlockedSlotRepository:
+    return FakeBlockedSlotRepository()
+
+
+@pytest.fixture
+def fake_blocked_slot_repo_factory():
+    return FakeBlockedSlotRepository
 
 
 class FakeChatLLM:

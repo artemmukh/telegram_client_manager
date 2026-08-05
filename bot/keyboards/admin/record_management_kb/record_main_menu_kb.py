@@ -11,6 +11,11 @@ _RECORDS_LABEL = {
     "uz": "📒 Yozuvlar",
 }
 
+_SLOT_BLOCKING_LABEL = {
+    "ru": "🚫 Блокировка слотов",
+    "uz": "🚫 Slotlarni bloklash",
+}
+
 
 def record_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -25,6 +30,11 @@ def record_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
         callback_data="browse_appointments"
     )
 
-    builder.adjust(2)
+    builder.button(
+        text=_SLOT_BLOCKING_LABEL.get(lang, _SLOT_BLOCKING_LABEL["ru"]),
+        callback_data="slot_blocking_menu"
+    )
+
+    builder.adjust(2, 1)
 
     return builder.as_markup()

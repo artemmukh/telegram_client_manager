@@ -111,10 +111,14 @@ _NEW_TIME_ASSIGNED = {
 def create_admin_reschedule_requests_router(
     instance: str,
     appointment_repo, user_repo, staff_repo, clinic_repo, notification_service=None, appointment_scheduler=None,
+    blocked_slot_repository=None,
 ) -> Router:
     router = Router()
 
-    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    appt_mng = AppointmentManagement(
+        appointment_repo, user_repo, staff_repo, clinic_repo,
+        blocked_slot_repository=blocked_slot_repository,
+    )
 
     router.message.filter(RoleFilter("admin"))
     router.callback_query.filter(RoleFilter("admin"))

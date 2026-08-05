@@ -11,6 +11,7 @@ from bot.keyboards.client.appointment_response_kb import (
 )
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
+    appointment_cancelled_by_admin_text,
     reminder_text,
 )
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
@@ -603,6 +604,64 @@ async def test_notify_client_appointment_cancelled_by_admin_returns_false_when_n
 
     assert result is False
     assert len(notifier.sent_messages) == 0
+
+
+# --- appointment_cancelled_by_admin_text ---
+
+def test_appointment_cancelled_by_admin_text_without_reason_omits_reason_line():
+    text = appointment_cancelled_by_admin_text("Доктор Петров", "+998901234568")
+
+    assert "Доктор Петров" in text
+    assert "+998901234568" in text
+    assert "Причина" not in text
+
+
+def test_appointment_cancelled_by_admin_text_with_reason_includes_reason_line():
+    text = appointment_cancelled_by_admin_text("Доктор Петров", "+998901234568", reason="Отпуск врача")
+
+    assert "Доктор Петров" in text
+    assert "+998901234568" in text
+    assert "Причина: Отпуск врача" in text
+
+
+def test_appointment_cancelled_by_admin_text_uz_with_reason():
+    text = appointment_cancelled_by_admin_text("Доктор Петров", "+998901234568", lang="uz", reason="Ta'mirlash")
+
+    assert "Sabab: Ta'mirlash" in text
+
+
+# --- notify_client_appointment_cancelled_by_admin with reason ---
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_cancelled_by_admin_includes_reason_when_given():
+    notifier = FakeTelegramNotifier()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_appointment_cancelled_by_admin(appointment, reason="Отпуск врача")
+
+    assert result is True
+    msg = notifier.sent_messages[0]
+    assert "Причина: Отпуск врача" in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_cancelled_by_admin_no_reason_by_default():
+    notifier = FakeTelegramNotifier()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    appointment = _appointment()
+
+    result = await service.notify_client_appointment_cancelled_by_admin(appointment)
+
+    assert result is True
+    msg = notifier.sent_messages[0]
+    assert "Причина" not in msg['text']
 
 
 # DISABLED INTENTIONALLY (2026-08-04, by explicit user request) — do NOT restore.

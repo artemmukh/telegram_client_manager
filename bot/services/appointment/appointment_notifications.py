@@ -45,6 +45,11 @@ _APPOINTMENT_CANCELLED_BY_ADMIN = {
     "uz": "❌ Sizning yozuvingiz administrator tomonidan bekor qilindi.\n\n👨‍⚕️ Shifokor: {doctor_full_name}\n📱 Raqam: {doctor_phone}",
 }
 
+_APPOINTMENT_CANCELLED_BY_ADMIN_REASON = {
+    "ru": "\n\nПричина: {reason}",
+    "uz": "\n\nSabab: {reason}",
+}
+
 _BOOKING_REQUEST_REJECTED = {
     "ru": "❌ Клиника отклонила вашу заявку на запись.",
     "uz": "❌ Klinika sizning yozilish arizangizni rad etdi.",
@@ -333,11 +338,17 @@ def reminder_text(phone: str, purpose: str, datetime_value: str, lang: str = "ru
 
 
 def appointment_cancelled_by_admin_text(
-    doctor_full_name: str | None, doctor_phone: str | None, lang: str = "ru",
+    doctor_full_name: str | None, doctor_phone: str | None, lang: str = "ru", reason: str | None = None,
 ) -> str:
-    return _APPOINTMENT_CANCELLED_BY_ADMIN.get(lang, _APPOINTMENT_CANCELLED_BY_ADMIN["ru"]).format(
+    text = _APPOINTMENT_CANCELLED_BY_ADMIN.get(lang, _APPOINTMENT_CANCELLED_BY_ADMIN["ru"]).format(
         doctor_full_name=doctor_full_name or '—', doctor_phone=doctor_phone or '—',
     )
+    if reason:
+        reason_template = _APPOINTMENT_CANCELLED_BY_ADMIN_REASON.get(
+            lang, _APPOINTMENT_CANCELLED_BY_ADMIN_REASON["ru"]
+        )
+        text += reason_template.format(reason=reason)
+    return text
 
 
 def booking_request_rejected_text(lang: str = "ru") -> str:
@@ -684,7 +695,9 @@ class AppointmentNotificationService:
         )
         return True
 
-    async def notify_client_appointment_cancelled_by_admin(self, appointment: Appointment) -> bool:
+    async def notify_client_appointment_cancelled_by_admin(
+        self, appointment: Appointment, reason: str | None = None
+    ) -> bool:
         """Notify client that their appointment was cancelled by an administrator.
 
         Returns True if message sent, False if user not found or no telegram_id.
@@ -697,7 +710,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
             text=appointment_cancelled_by_admin_text(
-                appointment.doctor_full_name, appointment.doctor_phone, client.language,
+                appointment.doctor_full_name, appointment.doctor_phone, client.language, reason,
             ),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )

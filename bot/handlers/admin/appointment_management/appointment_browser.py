@@ -258,11 +258,14 @@ async def render_appointment_list(
 def create_admin_appointment_browser_router(
     instance: str,
     appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler=None, notification_service=None,
-    medical_record_service=None,
+    medical_record_service=None, blocked_slot_repository=None,
 ):
     router = Router()
 
-    appt_mng = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
+    appt_mng = AppointmentManagement(
+        appointment_repo, user_repo, staff_repo, clinic_repo,
+        blocked_slot_repository=blocked_slot_repository,
+    )
     pagination_service = AppointmentPaginationService(appointment_repo)
 
     router.message.filter(RoleFilter("admin"))
