@@ -41,8 +41,8 @@ _REMINDER_TEXT = {
 }
 
 _APPOINTMENT_CANCELLED_BY_ADMIN = {
-    "ru": "❌ Ваша запись отменена администратором.",
-    "uz": "❌ Sizning yozuvingiz administrator tomonidan bekor qilindi.",
+    "ru": "❌ Ваша запись отменена администратором.\n\n👨‍⚕️ Врач: {doctor_full_name}\n📱 Номер: {doctor_phone}",
+    "uz": "❌ Sizning yozuvingiz administrator tomonidan bekor qilindi.\n\n👨‍⚕️ Shifokor: {doctor_full_name}\n📱 Raqam: {doctor_phone}",
 }
 
 _BOOKING_REQUEST_REJECTED = {
@@ -73,8 +73,8 @@ _ADMIN_UPCOMING_APPOINTMENT = {
 }
 
 _ADMIN_CANCELLATION = {
-    "ru": "Клиент {client_name} отменил запись.\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "Mijoz {client_name} yozuvni bekor qildi.\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "Клиент {client_name} отменил запись.\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "Mijoz {client_name} yozuvni bekor qildi.\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 DEFAULT_UNKNOWN_CLIENT_LABEL = {
@@ -83,28 +83,28 @@ DEFAULT_UNKNOWN_CLIENT_LABEL = {
 }
 
 _STAFF_APPOINTMENT_CANCELLED = {
-    "ru": "❌ Запись клиента {client_name} отменена ({actor}).\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "❌ Запись клиента {client_name} отменена ({actor}).\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _STAFF_APPOINTMENT_DELETED = {
-    "ru": "🗑 Запись клиента {client_name} удалена ({actor}).\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "🗑 Mijoz {client_name} yozuvi o'chirildi ({actor}).\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "🗑 Запись клиента {client_name} удалена ({actor}).\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "🗑 Mijoz {client_name} yozuvi o'chirildi ({actor}).\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _STAFF_APPOINTMENT_CREATED = {
-    "ru": "🆕 Создана новая запись клиента {client_name} ({actor}).\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "🆕 Создана новая запись клиента {client_name} ({actor}).\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _ADMIN_CLIENT_CHANGED_TIME = {
-    "ru": "🕐 Клиент {client_name} изменил время заявки.\n📅 Новое время: {datetime}",
-    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.\n📅 Yangi vaqt: {datetime}",
+    "ru": "🕐 Клиент {client_name} изменил время заявки.\n📱 Номер: {client_phone}\n📅 Новое время: {datetime}",
+    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.\n📱 Raqam: {client_phone}\n📅 Yangi vaqt: {datetime}",
 }
 
 _ADMIN_CONFIRMATION = {
-    "ru": "Клиент {client_name} подтвердил запись.\n\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "Mijoz {client_name} yozuvni tasdiqladi.\n\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "Клиент {client_name} подтвердил запись.\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "Mijoz {client_name} yozuvni tasdiqladi.\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _ADMIN_COMPLETION_PROMPT = {
@@ -113,8 +113,8 @@ _ADMIN_COMPLETION_PROMPT = {
 }
 
 _STAFF_NEW_BOOKING_REQUEST = {
-    "ru": "🆕 Новая заявка на запись\n\n👤 Клиент: {client_name}\n📅 Дата и время: {datetime}\n📝 Жалоба: {purpose}",
-    "uz": "🆕 Yozilish uchun yangi ariza\n\n👤 Mijoz: {client_name}\n📅 Sana va vaqt: {datetime}\n📝 Shikoyat: {purpose}",
+    "ru": "🆕 Новая заявка на запись\n\n👤 Клиент: {client_name}\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n📝 Жалоба: {purpose}",
+    "uz": "🆕 Yozilish uchun yangi ariza\n\n👤 Mijoz: {client_name}\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n📝 Shikoyat: {purpose}",
 }
 
 _CLIENT_AUTO_CONFIRMED = {
@@ -208,13 +208,13 @@ _STALE_DECISION_TEXT = {
 }
 
 _STAFF_PROPOSAL_ACCEPTED = {
-    "ru": "✅ Клиент {client_name} согласился на предложенное время.",
-    "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.",
+    "ru": "✅ Клиент {client_name} согласился на предложенное время.\n\n📱 Номер: {client_phone}",
+    "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.\n\n📱 Raqam: {client_phone}",
 }
 
 _STAFF_PROPOSAL_REJECTED = {
-    "ru": "❌ Клиент {client_name} отклонил предложенное время.",
-    "uz": "❌ Mijoz {client_name} taklif qilingan vaqtni rad etdi.",
+    "ru": "❌ Клиент {client_name} отклонил предложенное время.\n\n📱 Номер: {client_phone}",
+    "uz": "❌ Mijoz {client_name} taklif qilingan vaqtni rad etdi.\n\n📱 Raqam: {client_phone}",
 }
 
 _ADMIN_PROPOSAL_REMINDER = {
@@ -223,23 +223,23 @@ _ADMIN_PROPOSAL_REMINDER = {
 }
 
 _STAFF_BOOKING_CONFIRMED = {
-    "ru": "✅ Заявка клиента {client_name} подтверждена ({actor}).",
-    "uz": "✅ Mijoz {client_name} arizasi tasdiqlandi ({actor}).",
+    "ru": "✅ Заявка клиента {client_name} подтверждена ({actor}).\n\n📱 Номер: {client_phone}",
+    "uz": "✅ Mijoz {client_name} arizasi tasdiqlandi ({actor}).\n\n📱 Raqam: {client_phone}",
 }
 
 _STAFF_BOOKING_REJECTED = {
-    "ru": "❌ Заявка клиента {client_name} отклонена ({actor}).",
-    "uz": "❌ Mijoz {client_name} arizasi rad etildi ({actor}).",
+    "ru": "❌ Заявка клиента {client_name} отклонена ({actor}).\n\n📱 Номер: {client_phone}",
+    "uz": "❌ Mijoz {client_name} arizasi rad etildi ({actor}).\n\n📱 Raqam: {client_phone}",
 }
 
 _STAFF_RESCHEDULE_DECISION_ACCEPTED = {
-    "ru": "✅ Перенос записи клиента {client_name} принят ({actor}).",
-    "uz": "✅ Mijoz {client_name} yozuvini ko'chirish so'rovi qabul qilindi ({actor}).",
+    "ru": "✅ Перенос записи клиента {client_name} принят ({actor}).\n\n📱 Номер: {client_phone}",
+    "uz": "✅ Mijoz {client_name} yozuvini ko'chirish so'rovi qabul qilindi ({actor}).\n\n📱 Raqam: {client_phone}",
 }
 
 _STAFF_RESCHEDULE_DECISION_REJECTED = {
-    "ru": "❌ Перенос записи клиента {client_name} отклонён ({actor}).",
-    "uz": "❌ Mijoz {client_name} yozuvini ko'chirish so'rovi rad etildi ({actor}).",
+    "ru": "❌ Перенос записи клиента {client_name} отклонён ({actor}).\n\n📱 Номер: {client_phone}",
+    "uz": "❌ Mijoz {client_name} yozuvini ko'chirish so'rovi rad etildi ({actor}).\n\n📱 Raqam: {client_phone}",
 }
 
 _STAFF_RESCHEDULE_REQUESTED = {
@@ -332,8 +332,12 @@ def reminder_text(phone: str, purpose: str, datetime_value: str, lang: str = "ru
     )
 
 
-def appointment_cancelled_by_admin_text(lang: str = "ru") -> str:
-    return _APPOINTMENT_CANCELLED_BY_ADMIN.get(lang, _APPOINTMENT_CANCELLED_BY_ADMIN["ru"])
+def appointment_cancelled_by_admin_text(
+    doctor_full_name: str | None, doctor_phone: str | None, lang: str = "ru",
+) -> str:
+    return _APPOINTMENT_CANCELLED_BY_ADMIN.get(lang, _APPOINTMENT_CANCELLED_BY_ADMIN["ru"]).format(
+        doctor_full_name=doctor_full_name or '—', doctor_phone=doctor_phone or '—',
+    )
 
 
 def booking_request_rejected_text(lang: str = "ru") -> str:
@@ -354,36 +358,52 @@ def admin_upcoming_appointment_text(
     )
 
 
-def admin_cancellation_text(client_name: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+def admin_cancellation_text(
+    client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
+) -> str:
     return _ADMIN_CANCELLATION.get(lang, _ADMIN_CANCELLATION["ru"]).format(
-        client_name=client_name, datetime=datetime_value, purpose=purpose,
+        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value, purpose=purpose,
     )
 
 
 def staff_appointment_cancelled_text(
-    client_name: str, actor: str, datetime_value: str, purpose: str, lang: str = "ru", deleted: bool = False,
+    client_name: str,
+    client_phone: str | None,
+    actor: str,
+    datetime_value: str,
+    purpose: str,
+    lang: str = "ru",
+    deleted: bool = False,
 ) -> str:
     template = _STAFF_APPOINTMENT_DELETED if deleted else _STAFF_APPOINTMENT_CANCELLED
     return template.get(lang, template["ru"]).format(
-        client_name=client_name, actor=actor, datetime=datetime_value, purpose=purpose,
+        client_name=client_name, client_phone=client_phone or '—', actor=actor,
+        datetime=datetime_value, purpose=purpose,
     )
 
 
-def staff_appointment_created_text(client_name: str, actor: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+def staff_appointment_created_text(
+    client_name: str, client_phone: str | None, actor: str, datetime_value: str, purpose: str, lang: str = "ru",
+) -> str:
     return _STAFF_APPOINTMENT_CREATED.get(lang, _STAFF_APPOINTMENT_CREATED["ru"]).format(
-        client_name=client_name, actor=actor, datetime=datetime_value, purpose=purpose,
+        client_name=client_name, client_phone=client_phone or '—', actor=actor,
+        datetime=datetime_value, purpose=purpose,
     )
 
 
-def admin_client_changed_time_text(client_name: str, datetime_value: str, lang: str = "ru") -> str:
+def admin_client_changed_time_text(
+    client_name: str, client_phone: str | None, datetime_value: str, lang: str = "ru",
+) -> str:
     return _ADMIN_CLIENT_CHANGED_TIME.get(lang, _ADMIN_CLIENT_CHANGED_TIME["ru"]).format(
-        client_name=client_name, datetime=datetime_value,
+        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value,
     )
 
 
-def admin_confirmation_text(client_name: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+def admin_confirmation_text(
+    client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
+) -> str:
     return _ADMIN_CONFIRMATION.get(lang, _ADMIN_CONFIRMATION["ru"]).format(
-        client_name=client_name, datetime=datetime_value, purpose=purpose,
+        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value, purpose=purpose,
     )
 
 
@@ -391,9 +411,11 @@ def admin_completion_prompt(lang: str = "ru") -> str:
     return _ADMIN_COMPLETION_PROMPT.get(lang, _ADMIN_COMPLETION_PROMPT["ru"])
 
 
-def staff_new_booking_request_text(client_name: str, datetime_value: str, purpose: str, lang: str = "ru") -> str:
+def staff_new_booking_request_text(
+    client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
+) -> str:
     return _STAFF_NEW_BOOKING_REQUEST.get(lang, _STAFF_NEW_BOOKING_REQUEST["ru"]).format(
-        client_name=client_name, datetime=datetime_value, purpose=purpose,
+        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value, purpose=purpose,
     )
 
 
@@ -449,39 +471,47 @@ def stale_decision_text(
     return text
 
 
-def staff_proposal_accepted_text(client_name: str, lang: str = "ru") -> str:
-    return _STAFF_PROPOSAL_ACCEPTED.get(lang, _STAFF_PROPOSAL_ACCEPTED["ru"]).format(client_name=client_name)
+def staff_proposal_accepted_text(client_name: str, client_phone: str | None, lang: str = "ru") -> str:
+    return _STAFF_PROPOSAL_ACCEPTED.get(lang, _STAFF_PROPOSAL_ACCEPTED["ru"]).format(
+        client_name=client_name, client_phone=client_phone or '—',
+    )
 
 
-def staff_proposal_rejected_text(client_name: str, lang: str = "ru") -> str:
-    return _STAFF_PROPOSAL_REJECTED.get(lang, _STAFF_PROPOSAL_REJECTED["ru"]).format(client_name=client_name)
+def staff_proposal_rejected_text(client_name: str, client_phone: str | None, lang: str = "ru") -> str:
+    return _STAFF_PROPOSAL_REJECTED.get(lang, _STAFF_PROPOSAL_REJECTED["ru"]).format(
+        client_name=client_name, client_phone=client_phone or '—',
+    )
 
 
 def admin_proposal_reminder_text(lang: str = "ru") -> str:
     return _ADMIN_PROPOSAL_REMINDER.get(lang, _ADMIN_PROPOSAL_REMINDER["ru"])
 
 
-def staff_booking_confirmed_text(client_name: str, actor: str, lang: str = "ru") -> str:
+def staff_booking_confirmed_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
     return _STAFF_BOOKING_CONFIRMED.get(lang, _STAFF_BOOKING_CONFIRMED["ru"]).format(
-        client_name=client_name, actor=actor,
+        client_name=client_name, client_phone=client_phone or '—', actor=actor,
     )
 
 
-def staff_booking_rejected_text(client_name: str, actor: str, lang: str = "ru") -> str:
+def staff_booking_rejected_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
     return _STAFF_BOOKING_REJECTED.get(lang, _STAFF_BOOKING_REJECTED["ru"]).format(
-        client_name=client_name, actor=actor,
+        client_name=client_name, client_phone=client_phone or '—', actor=actor,
     )
 
 
-def staff_reschedule_decision_accepted_text(client_name: str, actor: str, lang: str = "ru") -> str:
+def staff_reschedule_decision_accepted_text(
+    client_name: str, client_phone: str | None, actor: str, lang: str = "ru",
+) -> str:
     return _STAFF_RESCHEDULE_DECISION_ACCEPTED.get(lang, _STAFF_RESCHEDULE_DECISION_ACCEPTED["ru"]).format(
-        client_name=client_name, actor=actor,
+        client_name=client_name, client_phone=client_phone or '—', actor=actor,
     )
 
 
-def staff_reschedule_decision_rejected_text(client_name: str, actor: str, lang: str = "ru") -> str:
+def staff_reschedule_decision_rejected_text(
+    client_name: str, client_phone: str | None, actor: str, lang: str = "ru",
+) -> str:
     return _STAFF_RESCHEDULE_DECISION_REJECTED.get(lang, _STAFF_RESCHEDULE_DECISION_REJECTED["ru"]).format(
-        client_name=client_name, actor=actor,
+        client_name=client_name, client_phone=client_phone or '—', actor=actor,
     )
 
 
@@ -666,7 +696,9 @@ class AppointmentNotificationService:
 
         await self.notifier.send_message(
             chat_id=client.telegram_user_id,
-            text=appointment_cancelled_by_admin_text(client.language),
+            text=appointment_cancelled_by_admin_text(
+                appointment.doctor_full_name, appointment.doctor_phone, client.language,
+            ),
             reply_to_message_id=self._reply_to_message_id(appointment),
         )
 
@@ -767,7 +799,8 @@ class AppointmentNotificationService:
         return await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=admin_cancellation_text(
-                client_name, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                client_name, appointment.client_phone,
+                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
             ),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
@@ -783,7 +816,7 @@ class AppointmentNotificationService:
         await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=admin_client_changed_time_text(
-                client_name, _format_datetime_value(appointment.datetime, lang), lang,
+                client_name, appointment.client_phone, _format_datetime_value(appointment.datetime, lang), lang,
             ),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
@@ -802,7 +835,8 @@ class AppointmentNotificationService:
         return await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=admin_confirmation_text(
-                client_name, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                client_name, appointment.client_phone,
+                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
             ),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
@@ -834,7 +868,7 @@ class AppointmentNotificationService:
         """
         lang = await self._resolve_lang(staff_telegram_id)
         message_text = staff_new_booking_request_text(
-            client_name, appointment.datetime, appointment.purpose, lang,
+            client_name, appointment.client_phone, appointment.datetime, appointment.purpose, lang,
         )
 
         try:
@@ -1058,7 +1092,7 @@ class AppointmentNotificationService:
         lang = await self._resolve_lang(staff_telegram_id)
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=staff_proposal_accepted_text(client_name, lang),
+            text=staff_proposal_accepted_text(client_name, appointment.client_phone, lang),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1072,7 +1106,7 @@ class AppointmentNotificationService:
         lang = await self._resolve_lang(staff_telegram_id)
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=staff_proposal_rejected_text(client_name, lang),
+            text=staff_proposal_rejected_text(client_name, appointment.client_phone, lang),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1088,7 +1122,7 @@ class AppointmentNotificationService:
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=staff_booking_confirmed_text(client_name, actor, lang),
+            text=staff_booking_confirmed_text(client_name, appointment.client_phone, actor, lang),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1104,7 +1138,7 @@ class AppointmentNotificationService:
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=staff_booking_rejected_text(client_name, actor, lang),
+            text=staff_booking_rejected_text(client_name, appointment.client_phone, actor, lang),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1120,7 +1154,7 @@ class AppointmentNotificationService:
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=staff_reschedule_decision_accepted_text(client_name, actor, lang),
+            text=staff_reschedule_decision_accepted_text(client_name, appointment.client_phone, actor, lang),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1136,7 +1170,7 @@ class AppointmentNotificationService:
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         await self.notifier.send_message(
             chat_id=staff_telegram_id,
-            text=staff_reschedule_decision_rejected_text(client_name, actor, lang),
+            text=staff_reschedule_decision_rejected_text(client_name, appointment.client_phone, actor, lang),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1166,7 +1200,8 @@ class AppointmentNotificationService:
         return await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_appointment_cancelled_text(
-                display_name, actor, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                display_name, appointment.client_phone, actor,
+                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
                 deleted=deleted,
             ),
             reply_to_message_id=reply_to_message_id,
@@ -1192,7 +1227,8 @@ class AppointmentNotificationService:
         return await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_appointment_created_text(
-                display_name, actor, _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                display_name, appointment.client_phone, actor,
+                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
             ),
         )
 

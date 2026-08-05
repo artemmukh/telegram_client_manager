@@ -910,7 +910,7 @@ async def test_notify_staff_proposal_accepted_sends_short_text():
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "✅ Клиент Иванов Иван согласился на предложенное время."
+    assert msg['text'] == "✅ Клиент Иванов Иван согласился на предложенное время.\n\n📱 Номер: —"
 
 
 @pytest.mark.asyncio
@@ -957,7 +957,7 @@ async def test_notify_staff_proposal_rejected_sends_short_text():
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "❌ Клиент Иванов Иван отклонил предложенное время."
+    assert msg['text'] == "❌ Клиент Иванов Иван отклонил предложенное время.\n\n📱 Номер: —"
 
 
 @pytest.mark.asyncio
