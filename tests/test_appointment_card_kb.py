@@ -86,7 +86,7 @@ def test_pending_shows_two_status_buttons_and_service_and_time():
     assert _action_cb("edit_datetime", 1, "list", 1) in callback_datas
     assert _action_cb("edit_price", 1, "list", 1) not in callback_datas
     assert _back_cb("list", 1, "pending") in callback_datas
-    assert _action_cb("delete", 1, "list", 1) in callback_datas
+    assert _action_cb("delete", 1, "list", 1) not in callback_datas
     assert _action_cb("finish_appointment", 1, "list", 1) not in callback_datas
 
 
@@ -101,7 +101,7 @@ def test_confirmed_hides_confirm_button_but_keeps_other_three():
     assert _action_cb("edit_purpose", 1, "list", 1) in callback_datas
     assert _action_cb("edit_datetime", 1, "list", 1) in callback_datas
     assert _action_cb("edit_price", 1, "list", 1) not in callback_datas
-    assert _action_cb("delete", 1, "list", 1) in callback_datas
+    assert _action_cb("delete", 1, "list", 1) not in callback_datas
     assert _back_cb("list", 1, "confirmed") in callback_datas
 
 
@@ -177,13 +177,11 @@ def test_status_menu_button_shown_only_for_completed_no_show_cancelled():
         assert is_present == expected, f"status_menu button presence mismatch for status={status}"
 
 
-def test_delete_action_present_only_for_pending_and_confirmed():
+def test_delete_action_never_present():
     for status in AppointmentStatus:
         markup = appointment_card_kb(1, "list", 1, status=status)
         callback_datas = _callback_datas(markup)
-        is_present = _action_cb("delete", 1, "list", 1) in callback_datas
-        expected = status in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED)
-        assert is_present == expected, f"delete button presence mismatch for status={status}"
+        assert _action_cb("delete", 1, "list", 1) not in callback_datas, f"delete button present for status={status}"
 
 
 def test_post_appt_shows_three_status_buttons_via_select_status_action():

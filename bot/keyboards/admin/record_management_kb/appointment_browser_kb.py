@@ -65,7 +65,6 @@ _EDIT_PURPOSE_LABEL = {"ru": "📝 Изменить услугу", "uz": "📝 X
 _PRICE_LABEL = {"ru": "💰 Цена", "uz": "💰 Narx"}
 _FINISH_APPOINTMENT_LABEL = {"ru": "✅ Завершить приём", "uz": "✅ Qabulni yakunlash"}
 _EDIT_TIME_LABEL = {"ru": "🕐 Изменить время", "uz": "🕐 Vaqtni o'zgartirish"}
-_DELETE_LABEL = {"ru": "🗑 Удалить", "uz": "🗑 O'chirish"}
 _CHANGE_STATUS_LABEL = {"ru": "🔁 Изменить статус", "uz": "🔁 Holatni o'zgartirish"}
 _GET_MEDICAL_RECORD_LABEL = {"ru": "📄 Получить историю болезни", "uz": "📄 Kasallik tarixini olish"}
 _ADD_MEDICAL_RECORD_LABEL = {"ru": "➕ Добавить документ", "uz": "➕ Hujjat qo'shish"}
@@ -363,13 +362,6 @@ def appointment_card_kb(
 
     if editing_buttons_added:
         rows.append(editing_buttons_added)
-
-    if status in _STATUS_EDITABLE_STATUSES:
-        builder.button(
-            text=_DELETE_LABEL.get(lang, _DELETE_LABEL["ru"]),
-            callback_data=ApptActionCB(action="delete", appointment_id=appointment_id, mode=mode, page=page).pack(),
-        )
-        rows.append(1)
 
     if status in _STATUS_CHANGE_MENU_STATUSES:
         builder.button(
