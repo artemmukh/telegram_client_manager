@@ -243,3 +243,70 @@ async def test_pick_slot_with_valid_slot_updates_state_and_renders_confirm_scree
     state.set_state.assert_awaited_once_with(ClientRescheduleStates.confirm)
     callback_query.message.edit_text.assert_called_once()
     callback_query.answer.assert_called_once_with()
+
+
+# --- pick_day: no-slots-for-day alert (shared helper) ---
+
+def _pick_day_state(doctor_id=42, appointment_id=1):
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={"doctor_id": doctor_id, "appointment_id": appointment_id})
+    return state
+
+
+@pytest.mark.asyncio
+async def test_pick_day_with_no_slots_shows_generic_client_wording():
+    """Client wording ("На этот день больше нет доступных слотов.") is
+    distinct from the admin wording -- pinned via bot.messages.booking."""
+    import bot.messages.booking as msg
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_available_slots = AsyncMock(return_value=[])
+    appointment_management_service.get_day_block_reason = AsyncMock(return_value=None)
+
+    router = create_client_reschedule_router(appointment_management_service, MagicMock(), MagicMock())
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _pick_day_state()
+
+    await pick_day(
+        callback_query,
+        ClientRescheduleDayCB(appointment_id=1, week_offset=0, day_iso="2026-08-01"),
+        state,
+        _client_user(),
+    )
+
+    callback_query.answer.assert_called_once_with(msg.no_slots_for_day("ru"), show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+    appointment_management_service.get_available_slots.assert_awaited_once()
+    doctor_id_kw = appointment_management_service.get_available_slots.await_args.kwargs.get("exclude_appointment_id")
+    assert doctor_id_kw == 1
+
+
+@pytest.mark.asyncio
+async def test_pick_day_with_blocked_day_shows_block_reason_unescaped():
+    """callback_query.answer(show_alert=True) has no parse_mode -- a reason
+    with '<' must reach it verbatim."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_available_slots = AsyncMock(return_value=[])
+    appointment_management_service.get_day_block_reason = AsyncMock(return_value="Ремонт <кабинет>")
+
+    router = create_client_reschedule_router(appointment_management_service, MagicMock(), MagicMock())
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _pick_day_state(doctor_id=42, appointment_id=1)
+
+    await pick_day(
+        callback_query,
+        ClientRescheduleDayCB(appointment_id=1, week_offset=0, day_iso="2026-08-01"),
+        state,
+        _client_user(),
+    )
+
+    toast_text = callback_query.answer.call_args.args[0]
+    assert "<кабинет>" in toast_text
+    assert "&lt;" not in toast_text
+    doctor_id_arg, day_arg, _now_arg = appointment_management_service.get_day_block_reason.await_args.args
+    assert doctor_id_arg == 42
+    assert day_arg.isoformat() == "2026-08-01"

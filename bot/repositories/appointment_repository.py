@@ -827,6 +827,35 @@ class AppointmentRepository:
         rows = await cursor.fetchall()
         return [self._row_to_appointment(row) for row in rows]
 
+    async def get_appointments_with_proposed_datetime_in_range(
+        self, clinic_id: int, doctor_id: int | None, start_datetime: str, end_datetime: str
+    ) -> list[Appointment]:
+        """Return every appointment (any status) for clinic_id (and doctor_id, if
+        given) whose proposed_datetime is set and falls in the half-open interval
+        [start_datetime, end_datetime).
+
+        Selection is by the appointment's proposed START instant only, mirroring
+        get_appointments_in_range. A caller that needs "the interval the proposal
+        occupies" semantics must widen start_datetime by one slot step and re-check
+        the overlap exactly on its own side -- that business rule belongs to the
+        service layer."""
+        conditions = [
+            "a.clinic_id = ?",
+            "a.proposed_datetime IS NOT NULL",
+            "a.proposed_datetime >= ?",
+            "a.proposed_datetime < ?",
+        ]
+        params = [clinic_id, start_datetime, end_datetime]
+
+        if doctor_id is not None:
+            conditions.append("a.admin_id = ?")
+            params.append(doctor_id)
+
+        sql = APPOINTMENT_SELECT + f"\nWHERE {' AND '.join(conditions)}\nORDER BY a.proposed_datetime ASC"
+        cursor = await self.connection.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [self._row_to_appointment(row) for row in rows]
+
     async def get_appointments_by_client_ids(
         self, client_ids: list[int], clinic_id: int, doctor_id: int | None = None
     ) -> list[Appointment]:

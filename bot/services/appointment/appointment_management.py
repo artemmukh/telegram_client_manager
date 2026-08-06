@@ -1057,7 +1057,9 @@ class AppointmentManagement:
                 continue
             if a.status_updated_at is None:
                 continue
-            cancelled_at = datetime.fromisoformat(a.status_updated_at)
+            cancelled_at = parse_db_datetime(a.status_updated_at)
+            if cancelled_at is None:
+                continue
             if now - cancelled_at < window:
                 count += 1
 
@@ -1192,7 +1194,11 @@ class AppointmentManagement:
         ]
 
     async def get_day_block_reason(self, doctor_id: int, day: date, now: datetime) -> str | None:
-        """Reason of the first block covering any slot generated for `day`, or None.
+        """Reason of the block(s) covering `day`, returned only when EVERY slot
+        generated for the day is blocked -- a day that is mostly blocked but
+        partly just booked out falls back to the generic "no slots" message
+        instead. When every slot is blocked, returns the reason of whichever
+        block covers the first slot, as a deterministic tie-break.
 
         `now` must be the same value passed to get_available_slots, which drops
         slots that already passed today -- a different `now` would make the two
@@ -1202,9 +1208,15 @@ class AppointmentManagement:
             return None
 
         blocks = await self._get_day_blocks(doctor_id, day)
+        if not blocks:
+            return None
 
+        if not all(self._is_slot_blocked(f"{day.isoformat()} {slot}", blocks) for slot in slots):
+            return None
+
+        first_slot_datetime = f"{day.isoformat()} {slots[0]}"
         for block in blocks:
-            if any(self._is_slot_blocked(f"{day.isoformat()} {slot}", [block]) for slot in slots):
+            if self._is_slot_blocked(first_slot_datetime, [block]):
                 return block.reason
 
         return None

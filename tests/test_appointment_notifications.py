@@ -625,9 +625,33 @@ def test_appointment_cancelled_by_admin_text_with_reason_includes_reason_line():
 
 
 def test_appointment_cancelled_by_admin_text_uz_with_reason():
+    """The message is sent with HTML parse_mode, so the reason is escaped with
+    quote=False -- Telegram HTML only requires escaping <, >, & and the uz
+    locale uses apostrophes heavily (Ta'mirlash), so quote=True's numeric
+    entity &#x27; must not be produced here."""
     text = appointment_cancelled_by_admin_text("Доктор Петров", "+998901234568", lang="uz", reason="Ta'mirlash")
 
     assert "Sabab: Ta'mirlash" in text
+
+
+def test_appointment_cancelled_by_admin_text_escapes_html_special_characters_in_reason():
+    text = appointment_cancelled_by_admin_text(
+        "Доктор Петров", "+998901234568", reason='Ремонт <кабинет> & "покраска"',
+    )
+
+    assert 'Причина: Ремонт &lt;кабинет&gt; &amp; "покраска"' in text
+    assert "<кабинет>" not in text
+
+
+def test_appointment_cancelled_by_admin_text_does_not_over_escape_a_plain_reason():
+    """A reason with no HTML-special characters must come through byte-for-byte
+    -- no stray &amp; or other escaping artifacts."""
+    text = appointment_cancelled_by_admin_text("Доктор Петров", "+998901234568", reason="Отпуск врача")
+
+    assert "Причина: Отпуск врача" in text
+    assert "&amp;" not in text
+    assert "&lt;" not in text
+    assert "&quot;" not in text
 
 
 # --- notify_client_appointment_cancelled_by_admin with reason ---

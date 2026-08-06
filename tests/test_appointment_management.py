@@ -1466,6 +1466,50 @@ async def test_cancellation_cooldown_also_counts_admin_rejected_requests():
 
 
 @pytest.mark.asyncio
+async def test_cancellation_cooldown_skips_malformed_status_updated_at_instead_of_raising():
+    """A malformed status_updated_at (e.g. corrupted/legacy row) must be
+    skipped, not crash the cooldown check with ValueError. 2 valid recent
+    cancellations plus 1 malformed one must behave exactly like a control set
+    containing only the 2 valid rows: both stay under
+    MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW (3) and the booking must succeed."""
+    client = _booking_client()
+    staff = _staff_member()
+    base = get_current_tashkent_datetime().replace(second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.appointment_management.get_current_tashkent_datetime",
+        return_value=base,
+    ):
+        recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+        appt_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at="not-a-date"),
+        ])
+        control_repo = FakeAppointmentRepository([
+            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+        ])
+        user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
+        service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+        control_service = AppointmentManagement(control_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+        count = await service._count_recent_client_cancellations(client.telegram_user_id)
+        control_count = await control_service._count_recent_client_cancellations(client.telegram_user_id)
+
+        assert count == control_count == 2
+
+        target = (base + timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+        appointment = await service.create_self_booking(
+            client.telegram_user_id,
+            {"staff_user_id": staff.ID, "appointment_datetime": target, "complaint": "Болит зуб"},
+        )
+
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
 async def test_find_client_by_phone_without_clinic_id_uses_global_lookup():
     client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, clinic_id=1)
     service = AppointmentManagement(
@@ -4167,6 +4211,36 @@ async def test_create_appointment_blocked_by_doctor_specific_block():
 
 
 @pytest.mark.asyncio
+async def test_create_appointment_blocked_message_does_not_escape_html_special_characters():
+    """_SLOT_BLOCKED_MESSAGE ends up in a callback_query.answer(show_alert=True)
+    toast, which has no parse_mode -- unlike the admin block-list/confirmation
+    screens (sent with HTML parse_mode), this reason must reach the caller
+    verbatim, not HTML-escaped."""
+    appointment_datetime, day_start, next_day_start = _appointment_datetime_and_day_range()
+    admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
+    client = User(full_name="Иванов Иван", phone="+998901234567", role=Role.CLIENT, ID=7, telegram_user_id=555)
+    user_repo = FakeUserRepo(client, admin=admin, users_by_id={42: admin})
+    block = _blocked_slot(staff_id=42, start=day_start, end=next_day_start, reason="Ремонт <кабинет>")
+    blocked_slot_repo = FakeBlockedSlotRepository([block])
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=999, clinic_id=1)),
+        _clinic_repo(),
+        blocked_slot_repository=blocked_slot_repo,
+    )
+
+    with pytest.raises(SlotUnavailableError) as exc_info:
+        await service.create_appointment(
+            999,
+            {"phone": "+998901234567", "appointment_datetime": appointment_datetime, "purpose": "Консультация"},
+        )
+
+    assert "<кабинет>" in str(exc_info.value)
+    assert "&lt;" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_create_appointment_blocked_by_clinic_wide_block():
     appointment_datetime, day_start, next_day_start = _appointment_datetime_and_day_range()
     admin = User(full_name="Доктор", phone="+998900000000", role=Role.ADMIN, ID=42, telegram_user_id=999, clinic_id=1)
@@ -4422,15 +4496,34 @@ async def test_get_day_block_reason_returns_none_when_block_ends_before_the_firs
 
 
 @pytest.mark.asyncio
-async def test_get_day_block_reason_returns_reason_for_an_off_grid_block():
-    """10:05-10:10 starts and ends between grid times, but the 10:00 slot's
-    [10:00, 10:15) duration runs into it."""
+async def test_get_day_block_reason_returns_none_when_only_one_slot_is_blocked():
+    """THE regression test for the "mostly booked, one slot blocked" bug: a
+    block closing only the 10:00 slot must NOT make the whole day report as
+    "blocked" -- get_day_block_reason now requires EVERY generated slot to be
+    blocked, not just one. Before this tightening this returned "Планёрка",
+    which incorrectly told the client the entire day was closed by the clinic
+    instead of the generic "no slots" message."""
     doctor_id = 42
     day = date(2026, 7, 20)
     now = datetime(2026, 7, 1, 9, 0)
     block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:05", end="2026-07-20 10:10", reason="Планёрка")
     service = _blocking_service([block], doctor_id)
 
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
+    assert await service.get_day_block_reason(doctor_id, day, now) is None
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_returns_reason_when_the_whole_day_is_blocked_off_grid():
+    """A block spanning the entire generated grid (even with off-grid
+    boundaries) still blocks every slot, so a reason is returned."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-19 23:55", end="2026-07-21 00:05", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
     assert await service.get_day_block_reason(doctor_id, day, now) == "Планёрка"
 
 
@@ -4447,12 +4540,52 @@ async def test_get_day_block_reason_uses_now_to_drop_slots_that_already_passed_t
 
 
 @pytest.mark.asyncio
-async def test_get_day_block_reason_still_reports_a_block_over_remaining_slots_today():
+async def test_get_day_block_reason_returns_none_when_block_covers_only_part_of_remaining_slots_today():
+    """now=9:00 leaves the full 10:00-17:30 grid remaining, but the block only
+    covers 10:00-11:00 -- most of the day is merely unblocked/bookable, so this
+    must fall back to the generic "no slots" message, not report a reason."""
     doctor_id = 42
     day = date(2026, 7, 20)
     block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 10:00", end="2026-07-20 11:00", reason="Планёрка")
     service = _blocking_service([block], doctor_id)
 
-    assert await service.get_day_block_reason(doctor_id, day, datetime(2026, 7, 20, 9, 0)) == "Планёрка"
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
+    assert await service.get_day_block_reason(doctor_id, day, datetime(2026, 7, 20, 9, 0)) is None
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_still_reports_a_block_over_all_remaining_slots_today():
+    """The "doctor went home sick" case that a previous batch deliberately
+    enabled: now=13:00 leaves only slots after 13:00 in the grid (13:15
+    onward), and a 12:00-18:00 block covers every one of them, so a reason
+    must still be reported even though the block does not cover the whole
+    nominal working day."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    block = _blocked_slot(staff_id=doctor_id, start="2026-07-20 12:00", end="2026-07-20 18:00", reason="Планёрка")
+    service = _blocking_service([block], doctor_id)
+
+    assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
+    assert await service.get_day_block_reason(doctor_id, day, datetime(2026, 7, 20, 13, 0)) == "Планёрка"
+
+
+@pytest.mark.asyncio
+async def test_get_day_block_reason_returns_first_slots_block_when_two_blocks_together_cover_the_day():
+    """Two blocks that together cover every slot but neither covers the whole
+    day individually -- the reason must come from whichever block covers the
+    FIRST generated slot, deterministically, not from an arbitrary one."""
+    doctor_id = 42
+    day = date(2026, 7, 20)
+    now = datetime(2026, 7, 1, 9, 0)
+    morning_block = _blocked_slot(
+        block_id=1, staff_id=doctor_id, start="2026-07-20 10:00", end="2026-07-20 13:00", reason="Утро",
+    )
+    afternoon_block = _blocked_slot(
+        block_id=2, staff_id=doctor_id, start="2026-07-20 13:00", end="2026-07-20 18:00", reason="Вечер",
+    )
+    service = _blocking_service([morning_block, afternoon_block], doctor_id)
+
+    assert await service._get_day_blocks(doctor_id, day) == [morning_block, afternoon_block]
+    assert await service.get_day_block_reason(doctor_id, day, now) == "Утро"
 
 

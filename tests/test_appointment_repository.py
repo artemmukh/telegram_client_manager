@@ -1015,6 +1015,85 @@ async def test_update_proposed_by_round_trips_via_get_by_id_and_by_telegram_id()
         await connection.close()
 
 
+# --- get_appointments_with_proposed_datetime_in_range ---
+
+@pytest.mark.asyncio
+async def test_get_appointments_with_proposed_datetime_in_range_matches_the_real_schema():
+    """New SQL added for the slot-blocking "warn about proposed-datetime
+    conflicts" feature -- a fake repository cannot catch a wrong column name,
+    so this exercises the real query: NULL proposed_datetime excluded,
+    half-open range boundaries, doctor_id scoping, and any-status inclusion
+    (the repository is deliberately status-agnostic; filtering to
+    PENDING/CONFIRMED is the service layer's job)."""
+    connection, user_repo, appointment_repo = await _in_memory_repos()
+    try:
+        client = await _seed_client(user_repo, "Иванов Иван", "+998901111111")
+        doctor_a = await _seed_doctor(user_repo, "Доктор А", "+998900000101", telegram_user_id=100101)
+        doctor_b = await _seed_doctor(user_repo, "Доктор Б", "+998900000102", telegram_user_id=100102)
+
+        no_proposal = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_a.ID, datetime="2026-07-10 09:00",
+                purpose="Consultation", created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+
+        in_range = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_a.ID, datetime="2026-07-01 08:00",
+                purpose="Consultation", created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+        await appointment_repo.update_proposed_datetime(in_range.id, "2026-07-10 10:00")
+
+        at_end_boundary = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_a.ID, datetime="2026-07-02 08:00",
+                purpose="Consultation", created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+        await appointment_repo.update_proposed_datetime(at_end_boundary.id, "2026-07-10 11:00")
+
+        other_doctor = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_b.ID, datetime="2026-07-03 08:00",
+                purpose="Consultation", created_by=CreatedBy.ADMIN, status=AppointmentStatus.PENDING,
+            )
+        )
+        await appointment_repo.update_proposed_datetime(other_doctor.id, "2026-07-10 10:30")
+
+        completed_with_proposal = await appointment_repo.create_appointment(
+            Appointment(
+                clinic_id=1, client_id=client.ID, doctor_id=doctor_a.ID, datetime="2026-07-04 08:00",
+                purpose="Consultation", created_by=CreatedBy.ADMIN, status=AppointmentStatus.COMPLETED,
+            )
+        )
+        await appointment_repo.update_proposed_datetime(completed_with_proposal.id, "2026-07-10 10:15")
+
+        matches = await appointment_repo.get_appointments_with_proposed_datetime_in_range(
+            1, doctor_a.ID, "2026-07-10 09:00", "2026-07-10 11:00",
+        )
+
+        matched_ids = [a.id for a in matches]
+        assert no_proposal.id not in matched_ids
+        assert at_end_boundary.id not in matched_ids  # half-open: end boundary excluded
+        assert other_doctor.id not in matched_ids  # doctor_id scoping
+        assert matched_ids == [in_range.id, completed_with_proposal.id]  # ordered by proposed_datetime ASC
+
+        # Repository is status-agnostic -- a COMPLETED appointment with a live
+        # proposal still comes back; filtering to PENDING/CONFIRMED is the
+        # service's job (SlotBlockingService.find_proposed_datetime_conflicts).
+        completed_match = next(a for a in matches if a.id == completed_with_proposal.id)
+        assert completed_match.status is AppointmentStatus.COMPLETED
+
+        clinic_wide = await appointment_repo.get_appointments_with_proposed_datetime_in_range(
+            1, None, "2026-07-10 09:00", "2026-07-10 11:00",
+        )
+        assert {a.id for a in clinic_wide} == {in_range.id, other_doctor.id, completed_with_proposal.id}
+    finally:
+        await connection.close()
+
+
 # --- Slot conflict detection: get_appointments_by_doctor_and_date ---
 
 @pytest.mark.asyncio

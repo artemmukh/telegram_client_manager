@@ -5,7 +5,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State
 from aiogram.types import CallbackQuery, Message
 
-import bot.messages.booking as msg
 from bot.config.clinic_instances import DATEPARSER_BY_INSTANCE as DATA_PARSE_MODE
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
@@ -14,6 +13,9 @@ from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
     format_month_label,
 )
 from bot.handlers.utils.admin_utils.input_helpers import ask_full_name
+from bot.handlers.utils.appointment_slot_helpers import (
+    answer_no_slots_for_day as answer_no_slots_for_day_shared,
+)
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_calendar_kb
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.keyboards.admin.record_management_kb.appointment_slot_kb import (
@@ -516,13 +518,10 @@ async def answer_no_slots_for_day(
     `now` must be the same value used to build the (empty) grid, so both calls
     agree on which slots exist for the day."""
     data = await state.get_data()
-    reason = await appt_mng.get_day_block_reason(data["staff_user_id"], date.fromisoformat(day_iso), now)
-
-    if reason is not None:
-        await callback_query.answer(msg.day_blocked(reason, lang), show_alert=True)
-        return
-
-    await callback_query.answer(_NO_SLOTS_FOR_DAY.get(lang, _NO_SLOTS_FOR_DAY["ru"]), show_alert=True)
+    await answer_no_slots_for_day_shared(
+        appt_mng, callback_query, data["staff_user_id"], date.fromisoformat(day_iso), now,
+        _NO_SLOTS_FOR_DAY.get(lang, _NO_SLOTS_FOR_DAY["ru"]), lang,
+    )
 
 
 async def render_occupied_slot_card(

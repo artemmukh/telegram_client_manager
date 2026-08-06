@@ -43,6 +43,11 @@ _INVALID_RANGE_FULLY_PAST_MESSAGE = {
     "uz": "To'liq o'tib ketgan oraliqni bloklab bo'lmaydi.",
 }
 
+_INVALID_RANGE_START_TOO_OLD_MESSAGE = {
+    "ru": "Начало блокировки не может быть более чем на 7 дней в прошлом. Проверьте год и дату.",
+    "uz": "Bloklash boshlanishi 7 kundan ortiq o'tmishda bo'lishi mumkin emas. Yil va sanani tekshiring.",
+}
+
 _INVALID_REASON_MESSAGE = {
     "ru": "Опишите причину блокировки (от 2 до 100 символов). Например: Отпуск, Больничный.",
     "uz": "Bloklash sababini yozing (2 dan 100 belgigacha). Masalan: Ta'til, Kasallik.",
@@ -62,6 +67,8 @@ _ADMIN_NOT_FOUND_MESSAGE = {
     "ru": "Сотрудник не найден.",
     "uz": "Xodim topilmadi.",
 }
+
+_MAX_BLOCK_START_AGE = timedelta(days=7)
 
 
 class SlotBlockingService:
@@ -87,11 +94,16 @@ class SlotBlockingService:
 
         start = format_datetime_for_db(start_parsed)
         end = format_datetime_for_db(end_parsed)
+        now_dt = get_current_tashkent_datetime()
+        now = format_datetime_for_db(now_dt)
+
+        earliest_allowed_start = format_datetime_for_db(now_dt - _MAX_BLOCK_START_AGE)
+        if start < earliest_allowed_start:
+            raise InvalidBlockRangeError(_INVALID_RANGE_START_TOO_OLD_MESSAGE)
 
         if end <= start:
             raise InvalidBlockRangeError(_INVALID_RANGE_ORDER_MESSAGE)
 
-        now = format_datetime_for_db(get_current_tashkent_datetime())
         if end <= now:
             raise InvalidBlockRangeError(_INVALID_RANGE_FULLY_PAST_MESSAGE)
 
@@ -129,6 +141,38 @@ class SlotBlockingService:
                 continue
             if datetime_ranges_overlap(
                 appointment_start, appointment_start + slot_step, start_parsed, end_parsed
+            ):
+                conflicts.append(appointment)
+
+        return conflicts
+
+    async def find_proposed_datetime_conflicts(
+        self, clinic_id: int, staff_id: int | None, start: str, end: str
+    ) -> list[Appointment]:
+        """Appointments whose pending reschedule proposal [proposed_datetime,
+        +SLOT_STEP_MINUTES) overlaps the block range [start, end). Never
+        cancelled here -- the appointment's current time may still be free."""
+        start_parsed = parse_db_datetime(start)
+        end_parsed = parse_db_datetime(end)
+        if start_parsed is None or end_parsed is None:
+            raise InvalidBlockRangeError(_INVALID_RANGE_FORMAT_MESSAGE)
+
+        slot_step = timedelta(minutes=SLOT_STEP_MINUTES)
+        candidate_start = format_datetime_for_db(start_parsed - slot_step)
+
+        candidates = await self.appointment_repository.get_appointments_with_proposed_datetime_in_range(
+            clinic_id, staff_id, candidate_start, end
+        )
+
+        conflicts: list[Appointment] = []
+        for appointment in candidates:
+            proposed_start = parse_db_datetime(appointment.proposed_datetime)
+            if proposed_start is None:
+                continue
+            if appointment.status not in (AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED):
+                continue
+            if datetime_ranges_overlap(
+                proposed_start, proposed_start + slot_step, start_parsed, end_parsed
             ):
                 conflicts.append(appointment)
 

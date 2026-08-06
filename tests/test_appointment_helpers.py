@@ -6,7 +6,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 import bot.handlers.utils.admin_utils.appointment_helpers as appointment_helpers_module
-from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, datetime_processing
+import bot.messages.booking as booking_msg
+from bot.handlers.utils.admin_utils.appointment_helpers import (
+    answer_no_slots_for_day,
+    build_appointment_card,
+    datetime_processing,
+)
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import reschedule_negotiation_note
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
@@ -171,3 +176,62 @@ async def test_datetime_processing_logs_raw_text_and_parsed_result_on_success(fs
 
     assert "30.07 16:00" in caplog.text
     assert str(parsed_dt) in caplog.text
+
+
+# --- answer_no_slots_for_day (admin thin wrapper over the shared helper) ---
+
+def _no_slots_callback_query():
+    callback_query = MagicMock()
+    callback_query.answer = AsyncMock()
+    return callback_query
+
+
+def _no_slots_state(staff_user_id=42):
+    state = MagicMock()
+    state.get_data = AsyncMock(return_value={"staff_user_id": staff_user_id})
+    return state
+
+
+@pytest.mark.asyncio
+async def test_admin_answer_no_slots_for_day_shows_generic_admin_wording_without_a_block():
+    appt_mng = MagicMock()
+    appt_mng.get_day_block_reason = AsyncMock(return_value=None)
+    callback_query = _no_slots_callback_query()
+    state = _no_slots_state(staff_user_id=42)
+
+    await answer_no_slots_for_day(
+        appt_mng, callback_query, state, "2026-07-20", datetime(2026, 7, 1, 9, 0), lang="ru",
+    )
+
+    appt_mng.get_day_block_reason.assert_awaited_once()
+    doctor_id_arg, day_arg, now_arg = appt_mng.get_day_block_reason.await_args.args
+    assert doctor_id_arg == 42
+    assert day_arg.isoformat() == "2026-07-20"
+    assert now_arg == datetime(2026, 7, 1, 9, 0)
+    callback_query.answer.assert_awaited_once_with(
+        appointment_helpers_module._NO_SLOTS_FOR_DAY["ru"], show_alert=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_answer_no_slots_for_day_shows_block_reason_when_day_is_blocked():
+    appt_mng = MagicMock()
+    appt_mng.get_day_block_reason = AsyncMock(return_value="Отпуск врача")
+    callback_query = _no_slots_callback_query()
+    state = _no_slots_state(staff_user_id=42)
+
+    await answer_no_slots_for_day(
+        appt_mng, callback_query, state, "2026-07-20", datetime(2026, 7, 1, 9, 0), lang="ru",
+    )
+
+    toast_text = callback_query.answer.call_args.args[0]
+    assert "Отпуск врача" in toast_text
+    assert toast_text != appointment_helpers_module._NO_SLOTS_FOR_DAY["ru"]
+
+
+def test_admin_and_client_no_slots_wording_are_deliberately_different():
+    """These were never unified -- a future refactor must not merge them into
+    one shared string, since admin ("no slots for this day") and client
+    ("no MORE slots for this day") copy differ on purpose."""
+    assert appointment_helpers_module._NO_SLOTS_FOR_DAY["ru"] != booking_msg.no_slots_for_day("ru")
+    assert appointment_helpers_module._NO_SLOTS_FOR_DAY["uz"] != booking_msg.no_slots_for_day("uz")

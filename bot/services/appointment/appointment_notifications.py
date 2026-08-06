@@ -1,3 +1,4 @@
+import html
 import logging
 from datetime import datetime
 
@@ -347,7 +348,12 @@ def appointment_cancelled_by_admin_text(
         reason_template = _APPOINTMENT_CANCELLED_BY_ADMIN_REASON.get(
             lang, _APPOINTMENT_CANCELLED_BY_ADMIN_REASON["ru"]
         )
-        text += reason_template.format(reason=reason)
+        # Message is sent with HTML parse mode; reason is user-typed text,
+        # so it must be escaped here. quote=False: Telegram HTML only
+        # requires escaping <, >, &, and the uz locale uses apostrophes
+        # heavily (Ta'mirlash, yo'q), which quote=True would mangle into
+        # &#x27;.
+        text += reason_template.format(reason=html.escape(reason, quote=False))
     return text
 
 

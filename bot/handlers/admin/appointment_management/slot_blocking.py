@@ -1,3 +1,4 @@
+import html
 import logging
 from math import ceil
 
@@ -66,6 +67,18 @@ _CONFLICTS_FOOTER_TEXT = {
 _CONFLICT_LINE_TEXT = {
     "ru": "• {datetime} — {client}",
     "uz": "• {datetime} — {client}",
+}
+_PROPOSED_CONFLICTS_HEADER_TEXT = {
+    "ru": "\nℹ️ У этих записей есть предложение переноса на заблокированное время. "
+          "Сами записи НЕ отменяются и остаются на текущем времени, но предложенный перенос "
+          "принять будет нельзя:\n\n",
+    "uz": "\nℹ️ Ushbu yozuvlarda bloklanadigan vaqtga ko'chirish taklifi bor. Yozuvlarning o'zi "
+          "BEKOR QILINMAYDI va joriy vaqtida qoladi, lekin taklif qilingan ko'chirishni endi "
+          "qabul qilib bo'lmaydi:\n\n",
+}
+_PROPOSED_CONFLICTS_FOOTER_TEXT = {
+    "ru": "\nБлокировка всё равно будет создана, эти записи останутся на текущем времени.",
+    "uz": "\nBloklash baribir yaratiladi, bu yozuvlar joriy vaqtida qoladi.",
 }
 _UNKNOWN_CLIENT_LABEL = {
     "ru": "клиент не указан",
@@ -238,6 +251,37 @@ def create_admin_slot_blocking_router(
         cancelable_conflicts = await slot_blocking_service.find_cancelable_conflicts(
             data["clinic_id"], data.get("staff_id"), data["range_start"], data["range_end"],
         )
+        cancelable_ids = {appointment.id for appointment in cancelable_conflicts}
+
+        proposed_conflicts = await slot_blocking_service.find_proposed_datetime_conflicts(
+            data["clinic_id"], data.get("staff_id"), data["range_start"], data["range_end"],
+        )
+        # An appointment can have both its current datetime and its proposed
+        # datetime inside the same block range -- already-cancelable ones are
+        # reported once, in the cancelable-conflicts block above, not twice.
+        proposed_conflicts = [
+            appointment for appointment in proposed_conflicts if appointment.id not in cancelable_ids
+        ]
+
+        # proposed_block never carries its own closing question -- the
+        # cancelable branch appends _CONFLICTS_FOOTER_TEXT after it so that
+        # question still closes the message, and the no-cancelable branch
+        # relies on _CONFIRM_BLOCK_TEXT's own question instead, so the admin
+        # is never asked two different "continue?" questions in one message.
+        proposed_block = ""
+        if proposed_conflicts:
+            proposed_lines = [
+                _CONFLICT_LINE_TEXT.get(lang, _CONFLICT_LINE_TEXT["ru"]).format(
+                    datetime=format_appointment_card_datetime(appointment.proposed_datetime),
+                    client=appointment.client_full_name or _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                )
+                for appointment in proposed_conflicts
+            ]
+            proposed_block = (
+                _PROPOSED_CONFLICTS_HEADER_TEXT.get(lang, _PROPOSED_CONFLICTS_HEADER_TEXT["ru"])
+                + "\n".join(proposed_lines)
+                + _PROPOSED_CONFLICTS_FOOTER_TEXT.get(lang, _PROPOSED_CONFLICTS_FOOTER_TEXT["ru"])
+            )
 
         if cancelable_conflicts:
             lines = [
@@ -250,8 +294,13 @@ def create_admin_slot_blocking_router(
             text = (
                 _CONFLICTS_HEADER_TEXT.get(lang, _CONFLICTS_HEADER_TEXT["ru"])
                 + "\n".join(lines)
+                + proposed_block
                 + _CONFLICTS_FOOTER_TEXT.get(lang, _CONFLICTS_FOOTER_TEXT["ru"])
             )
+            # has_conflicts is driven only by cancelable_conflicts: that flag
+            # controls the confirm keyboard whose copy says "these will be
+            # cancelled", which is only true for cancelable_conflicts. A
+            # proposal-only conflict must never flip it.
             await state.set_state(SlotBlockCreationStates.confirm_conflicts)
             await message.answer(text, reply_markup=slot_blocking_confirm_kb(lang=lang, has_conflicts=True))
             return
@@ -261,8 +310,12 @@ def create_admin_slot_blocking_router(
             _CONFIRM_BLOCK_TEXT.get(lang, _CONFIRM_BLOCK_TEXT["ru"]).format(
                 start=format_appointment_card_datetime(data["range_start"]),
                 end=format_appointment_card_datetime(data["range_end"]),
-                reason=reason,
-            ),
+                # Message is sent with HTML parse mode; reason is user-typed
+                # text, so it must be escaped here. quote=False: only <, >, &
+                # matter for Telegram HTML, and apostrophes are common in the
+                # uz locale.
+                reason=html.escape(reason, quote=False),
+            ) + proposed_block,
             reply_markup=slot_blocking_confirm_kb(lang=lang, has_conflicts=False),
         )
 
@@ -357,13 +410,18 @@ def create_admin_slot_blocking_router(
                     target = doctor_name_by_id.get(
                         block.staff_id, _UNKNOWN_DOCTOR_LABEL.get(lang, _UNKNOWN_DOCTOR_LABEL["ru"]),
                     )
+                # Message is sent with HTML parse mode; reason and target may
+                # contain user-typed text, so they must be escaped here.
+                # quote=False: Telegram HTML only requires escaping <, >, &,
+                # and the uz locale uses apostrophes heavily (Ta'mirlash,
+                # yo'q), which quote=True would mangle into &#x27;.
                 lines.append(
                     _BLOCK_LINE_TEXT.get(lang, _BLOCK_LINE_TEXT["ru"]).format(
                         id=block.id,
                         start=format_appointment_card_datetime(block.start_datetime),
                         end=format_appointment_card_datetime(block.end_datetime),
-                        target=target,
-                        reason=block.reason,
+                        target=html.escape(target, quote=False),
+                        reason=html.escape(block.reason, quote=False),
                     )
                 )
             header = _LIST_HEADER_TEXT.get(lang, _LIST_HEADER_TEXT["ru"]).format(current=page, total=total_pages)

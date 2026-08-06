@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -18,7 +19,12 @@ from bot.models.blocked_slot import BlockedSlot
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
-from bot.services.appointment.slot_blocking import SlotBlockingService
+from bot.services.appointment.slot_blocking import (
+    _INVALID_RANGE_FULLY_PAST_MESSAGE,
+    _INVALID_RANGE_ORDER_MESSAGE,
+    _INVALID_RANGE_START_TOO_OLD_MESSAGE,
+    SlotBlockingService,
+)
 from bot.services.utils.date_parser import format_datetime_for_db, get_current_tashkent_datetime
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.reply_menu_labels import ADMIN_MENU_LABELS, REPLY_MENU_TEXT_MESSAGE
@@ -39,6 +45,18 @@ class FakeAppointmentRepository:
             and (doctor_id is None or a.doctor_id == doctor_id)
             and start_datetime <= a.datetime < end_datetime
         ]
+
+    async def get_appointments_with_proposed_datetime_in_range(
+        self, clinic_id, doctor_id, start_datetime, end_datetime,
+    ):
+        matches = [
+            a for a in self.appointments
+            if a.clinic_id == clinic_id
+            and (doctor_id is None or a.doctor_id == doctor_id)
+            and a.proposed_datetime is not None
+            and start_datetime <= a.proposed_datetime < end_datetime
+        ]
+        return sorted(matches, key=lambda a: a.proposed_datetime)
 
     async def update_appointment_status(self, appointment_id, status, status_updated_at):
         self.status_updates.append((appointment_id, status))
@@ -160,8 +178,12 @@ async def test_validate_range_rejects_end_before_start():
     day = (get_current_tashkent_datetime() + timedelta(days=2)).strftime("%d.%m.%Y")
     earlier_end_raw = f"{day} 09:00"
 
-    with pytest.raises(InvalidBlockRangeError):
+    with pytest.raises(InvalidBlockRangeError) as exc_info:
         await service.validate_range(start_raw, earlier_end_raw)
+
+    # Pin the specific message: without this, the new too-old check could
+    # swallow this case and the test would still pass on the bare exception type.
+    assert str(exc_info.value) == _INVALID_RANGE_ORDER_MESSAGE["ru"]
 
 
 @pytest.mark.asyncio
@@ -180,8 +202,13 @@ async def test_validate_range_rejects_fully_past_range():
     start_raw = f"{past_day} 10:00"
     end_raw = f"{past_day} 11:00"
 
-    with pytest.raises(InvalidBlockRangeError):
+    with pytest.raises(InvalidBlockRangeError) as exc_info:
         await service.validate_range(start_raw, end_raw)
+
+    # Pin the specific message: the range is only 1 day back, well inside the
+    # new 7-day too-old bound, so this must still be the fully-past message,
+    # not the too-old one.
+    assert str(exc_info.value) == _INVALID_RANGE_FULLY_PAST_MESSAGE["ru"]
 
 
 @pytest.mark.asyncio
@@ -204,6 +231,51 @@ async def test_validate_range_rejects_unparseable_input():
 
     with pytest.raises(InvalidBlockRangeError):
         await service.validate_range("not a date", "also not a date")
+
+
+# --- validate_range: lower bound on how far in the past `start` may be ---
+
+@pytest.mark.asyncio
+async def test_validate_range_rejects_start_more_than_seven_days_in_the_past():
+    service = _service()
+    eight_days_ago = (get_current_tashkent_datetime() - timedelta(days=8)).strftime("%d.%m.%Y")
+    tomorrow = (get_current_tashkent_datetime() + timedelta(days=1)).strftime("%d.%m.%Y")
+
+    with pytest.raises(InvalidBlockRangeError) as exc_info:
+        await service.validate_range(f"{eight_days_ago} 10:00", f"{tomorrow} 10:00")
+
+    assert str(exc_info.value) == _INVALID_RANGE_START_TOO_OLD_MESSAGE["ru"]
+
+
+@pytest.mark.asyncio
+async def test_validate_range_accepts_start_six_days_in_the_past():
+    service = _service()
+    six_days_ago = (get_current_tashkent_datetime() - timedelta(days=6)).strftime("%d.%m.%Y")
+    tomorrow = (get_current_tashkent_datetime() + timedelta(days=1)).strftime("%d.%m.%Y")
+
+    start, end = await service.validate_range(f"{six_days_ago} 10:00", f"{tomorrow} 10:00")
+
+    assert start < end
+
+
+@pytest.mark.asyncio
+async def test_validate_range_accepts_start_earlier_today_than_now():
+    """start = today 09:00 while now = today 13:00 -- well within the 7-day
+    bound, and must not be rejected as "too old" just because it precedes
+    `now` on the same day."""
+    service = _service()
+    fixed_now = get_current_tashkent_datetime().replace(hour=13, minute=0, second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.slot_blocking.get_current_tashkent_datetime", return_value=fixed_now,
+    ):
+        today = fixed_now.strftime("%d.%m.%Y")
+        tomorrow = (fixed_now + timedelta(days=1)).strftime("%d.%m.%Y")
+
+        start, end = await service.validate_range(f"{today} 09:00", f"{tomorrow} 10:00")
+
+    assert start < end
+    assert start == format_datetime_for_db(fixed_now.replace(hour=9, minute=0))
 
 
 # --- find_conflicts ---
@@ -703,6 +775,115 @@ async def test_find_cancelable_conflicts_filters_out_non_cancelable_statuses():
     assert cancelable == [pending]
 
 
+# --- find_proposed_datetime_conflicts ---
+
+def _appointment_with_proposal(
+    appointment_id=1, doctor_id=42, clinic_id=1, dt="2026-08-07 08:00", proposed_dt="2026-08-07 10:00",
+    status=AppointmentStatus.PENDING,
+):
+    appointment = _appointment(appointment_id=appointment_id, doctor_id=doctor_id, clinic_id=clinic_id, dt=dt, status=status)
+    appointment.proposed_datetime = proposed_dt
+    appointment.proposed_by = CreatedBy.CLIENT
+    return appointment
+
+
+@pytest.mark.asyncio
+async def test_find_proposed_datetime_conflicts_finds_appointment_whose_proposal_falls_in_range():
+    """The appointment's own datetime (08:00) sits outside the block range
+    (09:00-11:00), but its proposed reschedule (10:00) sits inside it -- the
+    finder must catch this even though find_cancelable_conflicts (which only
+    ever looks at .datetime) does not."""
+    appointment = _appointment_with_proposal(dt="2026-08-07 08:00", proposed_dt="2026-08-07 10:00")
+    service = _service(appointment_repo=FakeAppointmentRepository([appointment]))
+
+    proposed_conflicts = await service.find_proposed_datetime_conflicts(
+        1, 42, "2026-08-07 09:00", "2026-08-07 11:00",
+    )
+    cancelable_conflicts = await service.find_cancelable_conflicts(1, 42, "2026-08-07 09:00", "2026-08-07 11:00")
+
+    assert proposed_conflicts == [appointment]
+    assert cancelable_conflicts == []
+
+
+@pytest.mark.asyncio
+async def test_find_proposed_datetime_conflicts_excludes_proposal_outside_range():
+    appointment = _appointment_with_proposal(dt="2026-08-07 08:00", proposed_dt="2026-08-07 12:00")
+    service = _service(appointment_repo=FakeAppointmentRepository([appointment]))
+
+    proposed_conflicts = await service.find_proposed_datetime_conflicts(
+        1, 42, "2026-08-07 09:00", "2026-08-07 11:00",
+    )
+
+    assert proposed_conflicts == []
+
+
+@pytest.mark.asyncio
+async def test_find_proposed_datetime_conflicts_ignores_appointments_without_a_proposal():
+    appointment = _appointment(doctor_id=42, dt="2026-08-07 10:00")
+    assert appointment.proposed_datetime is None
+    service = _service(appointment_repo=FakeAppointmentRepository([appointment]))
+
+    proposed_conflicts = await service.find_proposed_datetime_conflicts(
+        1, 42, "2026-08-07 09:00", "2026-08-07 11:00",
+    )
+
+    assert proposed_conflicts == []
+
+
+@pytest.mark.asyncio
+async def test_find_proposed_datetime_conflicts_filters_out_non_cancelable_statuses():
+    """Mirrors find_cancelable_conflicts' status filter -- a proposal on a
+    COMPLETED/CANCELLED/etc. appointment is not a live conflict."""
+    completed = _appointment_with_proposal(
+        appointment_id=1, dt="2026-08-07 08:00", proposed_dt="2026-08-07 10:00", status=AppointmentStatus.COMPLETED,
+    )
+    pending = _appointment_with_proposal(
+        appointment_id=2, dt="2026-08-07 08:00", proposed_dt="2026-08-07 10:15", status=AppointmentStatus.PENDING,
+    )
+    service = _service(appointment_repo=FakeAppointmentRepository([completed, pending]))
+
+    proposed_conflicts = await service.find_proposed_datetime_conflicts(
+        1, 42, "2026-08-07 09:00", "2026-08-07 11:00",
+    )
+
+    assert proposed_conflicts == [pending]
+
+
+@pytest.mark.asyncio
+async def test_find_proposed_datetime_conflicts_slot_step_widening_catches_proposal_one_step_before(monkeypatch):
+    """Mirrors test_find_conflicts_finds_appointment_starting_before_the_block:
+    step 60, a proposal at 14:00 occupies [14:00, 15:00) and collides with a
+    14:30-15:00 block even though 14:00 itself is outside the block."""
+    monkeypatch.setattr("bot.services.appointment.slot_blocking.SLOT_STEP_MINUTES", 60)
+    appointment = _appointment_with_proposal(dt="2026-08-07 08:00", proposed_dt="2026-08-07 14:00")
+    appt_repo = FakeAppointmentRepository([appointment])
+    service = _service(appointment_repo=appt_repo)
+
+    conflicts = await service.find_proposed_datetime_conflicts(1, 42, "2026-08-07 14:30", "2026-08-07 15:00")
+
+    assert conflicts == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_find_proposed_datetime_conflicts_slot_step_widening_excludes_back_to_back_proposal(monkeypatch):
+    """A proposal at 13:00 occupies [13:00, 14:00) and merely touches a
+    14:00-14:30 block -- back-to-back is not a conflict. The widened candidate
+    query does reach it, so the empty result must come from the exact
+    post-filter, not from the appointment being unseen by the query."""
+    monkeypatch.setattr("bot.services.appointment.slot_blocking.SLOT_STEP_MINUTES", 60)
+    appointment = _appointment_with_proposal(dt="2026-08-07 08:00", proposed_dt="2026-08-07 13:00")
+    appt_repo = FakeAppointmentRepository([appointment])
+    service = _service(appointment_repo=appt_repo)
+
+    conflicts = await service.find_proposed_datetime_conflicts(1, 42, "2026-08-07 14:00", "2026-08-07 14:30")
+
+    candidates = await appt_repo.get_appointments_with_proposed_datetime_in_range(
+        1, 42, "2026-08-07 13:00", "2026-08-07 14:30",
+    )
+    assert candidates == [appointment]
+    assert conflicts == []
+
+
 # --- create_block ordering ---
 
 @pytest.mark.asyncio
@@ -725,3 +906,35 @@ async def test_create_block_does_not_cancel_appointments_when_block_insert_fails
 
     assert appt_repo.status_updates == []
     assert pending.status == AppointmentStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_create_block_does_not_cancel_or_clear_a_proposal_only_conflict():
+    """create_block only ever calls find_conflicts (keyed on .datetime), never
+    find_proposed_datetime_conflicts -- an appointment whose current time is
+    free but whose *proposed* reschedule falls inside the new block must be
+    left completely untouched: not cancelled, and its proposed_datetime not
+    cleared. The admin is only warned about it (handler-level), and the
+    appointment stays exactly where it was."""
+    admin = _admin()
+    start_raw, end_raw = _future_range()
+    start, end = await _service().validate_range(start_raw, end_raw)
+
+    proposed_dt = start  # inside [start, end) by construction
+    appointment = _appointment_with_proposal(
+        appointment_id=1, dt="2026-01-01 08:00", proposed_dt=proposed_dt, status=AppointmentStatus.PENDING,
+    )
+    appt_repo = FakeAppointmentRepository([appointment])
+    service = _service(
+        appointment_repo=appt_repo,
+        user_repo=FakeUserRepository({admin.telegram_user_id: admin}),
+    )
+
+    block, cancelled = await service.create_block(
+        admin.telegram_user_id, clinic_id=1, staff_id=42, start_raw=start_raw, end_raw=end_raw, reason="Vacation",
+    )
+
+    assert cancelled == []
+    assert appointment.status == AppointmentStatus.PENDING
+    assert appointment.proposed_datetime == proposed_dt
+    assert appt_repo.status_updates == []

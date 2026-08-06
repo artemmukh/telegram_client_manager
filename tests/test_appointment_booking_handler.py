@@ -359,3 +359,55 @@ async def test_process_complaint_with_ordinary_text_is_accepted_as_before():
 
     state.update_data.assert_awaited_once_with(complaint="Болит зуб")
     message.answer.assert_awaited_once()
+
+
+# --- pick_day: no-slots-for-day alert (shared helper) ---
+
+@pytest.mark.asyncio
+async def test_pick_day_with_no_slots_shows_generic_client_wording():
+    """Client wording ("На этот день больше нет доступных слотов.") is
+    distinct from the admin wording -- pinned via bot.messages.booking."""
+    import bot.messages.booking as msg
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_available_slots = AsyncMock(return_value=[])
+    appointment_management_service.get_day_block_reason = AsyncMock(return_value=None)
+
+    router = _build_router(appointment_management_service, MagicMock())
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+
+    await pick_day(
+        callback_query, ClientBookDayCB(week_offset=0, day_iso="2026-08-01"), state, _current_user(),
+    )
+
+    callback_query.answer.assert_called_once_with(msg.no_slots_for_day("ru"), show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_pick_day_with_blocked_day_shows_block_reason_unescaped():
+    """callback_query.answer(show_alert=True) has no parse_mode -- a reason
+    with '<' must reach it verbatim."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_available_slots = AsyncMock(return_value=[])
+    appointment_management_service.get_day_block_reason = AsyncMock(return_value="Ремонт <кабинет>")
+
+    router = _build_router(appointment_management_service, MagicMock())
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+
+    await pick_day(
+        callback_query, ClientBookDayCB(week_offset=0, day_iso="2026-08-01"), state, _current_user(),
+    )
+
+    toast_text = callback_query.answer.call_args.args[0]
+    assert "<кабинет>" in toast_text
+    assert "&lt;" not in toast_text
+    doctor_id_arg, day_arg, _now_arg = appointment_management_service.get_day_block_reason.await_args.args
+    assert doctor_id_arg == 42
+    assert day_arg.isoformat() == "2026-08-01"

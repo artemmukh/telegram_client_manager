@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery
 
 import bot.messages.booking as msg
 from bot.exceptions.exceptions import BotException
+from bot.handlers.utils.appointment_slot_helpers import answer_no_slots_for_day
 from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
 from bot.keyboards.client.appointment_history_kb import appointment_history_card_kb
 from bot.keyboards.client.appointment_manage_kb import appointment_manage_card_kb, appointment_manage_empty_kb
@@ -197,12 +198,10 @@ def create_client_reschedule_router(
         )
 
         if not slots:
-            reason = await appointment_management_service.get_day_block_reason(data["doctor_id"], day, now)
-            if reason is not None:
-                await callback_query.answer(msg.day_blocked(reason, lang), show_alert=True)
-                return
-
-            await callback_query.answer(msg.no_slots_for_day(lang), show_alert=True)
+            await answer_no_slots_for_day(
+                appointment_management_service, callback_query, data["doctor_id"], day, now,
+                msg.no_slots_for_day(lang), lang,
+            )
             return
 
         await state.update_data(day_iso=callback_data.day_iso)
