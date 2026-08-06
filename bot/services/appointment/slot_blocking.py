@@ -48,6 +48,11 @@ _INVALID_RANGE_START_TOO_OLD_MESSAGE = {
     "uz": "Bloklash boshlanishi 7 kundan ortiq o'tmishda bo'lishi mumkin emas. Yil va sanani tekshiring.",
 }
 
+_INVALID_RANGE_START_TOO_FAR_MESSAGE = {
+    "ru": "Начало блокировки не может быть более чем на 90 дней вперёд. Проверьте год и дату.",
+    "uz": "Bloklash boshlanishi 90 kundan ortiq oldinga bo'lishi mumkin emas. Yil va sanani tekshiring.",
+}
+
 _INVALID_REASON_MESSAGE = {
     "ru": "Опишите причину блокировки (от 2 до 100 символов). Например: Отпуск, Больничный.",
     "uz": "Bloklash sababini yozing (2 dan 100 belgigacha). Masalan: Ta'til, Kasallik.",
@@ -69,6 +74,7 @@ _ADMIN_NOT_FOUND_MESSAGE = {
 }
 
 _MAX_BLOCK_START_AGE = timedelta(days=7)
+_MAX_BLOCK_START_FUTURE = timedelta(days=90)
 
 
 class SlotBlockingService:
@@ -100,6 +106,10 @@ class SlotBlockingService:
         earliest_allowed_start = format_datetime_for_db(now_dt - _MAX_BLOCK_START_AGE)
         if start < earliest_allowed_start:
             raise InvalidBlockRangeError(_INVALID_RANGE_START_TOO_OLD_MESSAGE)
+
+        latest_allowed_start = format_datetime_for_db(now_dt + _MAX_BLOCK_START_FUTURE)
+        if start > latest_allowed_start:
+            raise InvalidBlockRangeError(_INVALID_RANGE_START_TOO_FAR_MESSAGE)
 
         if end <= start:
             raise InvalidBlockRangeError(_INVALID_RANGE_ORDER_MESSAGE)

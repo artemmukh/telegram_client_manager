@@ -1,4 +1,3 @@
-import html
 import logging
 from datetime import datetime
 
@@ -21,6 +20,7 @@ from bot.services.utils.date_parser import (
     format_datetime_for_display,
     reschedule_negotiation_note,
 )
+from bot.services.utils.escape_html import escape_html
 from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 
@@ -99,8 +99,8 @@ _STAFF_APPOINTMENT_DELETED = {
 }
 
 _STAFF_APPOINTMENT_CREATED = {
-    "ru": "🆕 Создана новая запись клиента {client_name} ({actor}).\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "🆕 Создана новая запись клиента {client_name} ({actor}).\n\n📱 Номер: {client_phone}\n👨‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _ADMIN_CLIENT_CHANGED_TIME = {
@@ -114,8 +114,8 @@ _ADMIN_CONFIRMATION = {
 }
 
 _ADMIN_COMPLETION_PROMPT = {
-    "ru": "Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?",
-    "uz": "Qabul yakunlangan deb belgilandi. Tahrirlash uchun yozuvni ochish (holat/xizmat/narx)?",
+    "ru": "Приём №{appointment_id} отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?",
+    "uz": "№{appointment_id} qabul yakunlangan deb belgilandi. Tahrirlash uchun yozuvni ochish (holat/xizmat/narx)?",
 }
 
 _STAFF_NEW_BOOKING_REQUEST = {
@@ -334,7 +334,7 @@ _STATUS_LINE_LABEL = {
 
 def reminder_text(phone: str, purpose: str, datetime_value: str, lang: str = "ru") -> str:
     return _REMINDER_TEXT.get(lang, _REMINDER_TEXT["ru"]).format(
-        phone=phone, purpose=purpose, datetime=datetime_value,
+        phone=phone, purpose=escape_html(purpose), datetime=datetime_value,
     )
 
 
@@ -342,18 +342,15 @@ def appointment_cancelled_by_admin_text(
     doctor_full_name: str | None, doctor_phone: str | None, lang: str = "ru", reason: str | None = None,
 ) -> str:
     text = _APPOINTMENT_CANCELLED_BY_ADMIN.get(lang, _APPOINTMENT_CANCELLED_BY_ADMIN["ru"]).format(
-        doctor_full_name=doctor_full_name or '—', doctor_phone=doctor_phone or '—',
+        doctor_full_name=escape_html(doctor_full_name) if doctor_full_name else '—', doctor_phone=doctor_phone or '—',
     )
     if reason:
         reason_template = _APPOINTMENT_CANCELLED_BY_ADMIN_REASON.get(
             lang, _APPOINTMENT_CANCELLED_BY_ADMIN_REASON["ru"]
         )
-        # Message is sent with HTML parse mode; reason is user-typed text,
-        # so it must be escaped here. quote=False: Telegram HTML only
-        # requires escaping <, >, &, and the uz locale uses apostrophes
-        # heavily (Ta'mirlash, yo'q), which quote=True would mangle into
-        # &#x27;.
-        text += reason_template.format(reason=html.escape(reason, quote=False))
+        # Message is sent with HTML parse mode; reason is user-typed text, so
+        # it must be escaped here (see escape_html's docstring for rationale).
+        text += reason_template.format(reason=escape_html(reason))
     return text
 
 
@@ -371,7 +368,8 @@ def admin_upcoming_appointment_text(
     client_name: str, client_phone: str, datetime_value: str, purpose: str, lang: str = "ru",
 ) -> str:
     return _ADMIN_UPCOMING_APPOINTMENT.get(lang, _ADMIN_UPCOMING_APPOINTMENT["ru"]).format(
-        client_name=client_name, client_phone=client_phone, datetime=datetime_value, purpose=purpose,
+        client_name=escape_html(client_name), client_phone=client_phone, datetime=datetime_value,
+        purpose=escape_html(purpose),
     )
 
 
@@ -379,7 +377,8 @@ def admin_cancellation_text(
     client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
 ) -> str:
     return _ADMIN_CANCELLATION.get(lang, _ADMIN_CANCELLATION["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value, purpose=purpose,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
+        purpose=escape_html(purpose),
     )
 
 
@@ -394,17 +393,24 @@ def staff_appointment_cancelled_text(
 ) -> str:
     template = _STAFF_APPOINTMENT_DELETED if deleted else _STAFF_APPOINTMENT_CANCELLED
     return template.get(lang, template["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', actor=actor,
-        datetime=datetime_value, purpose=purpose,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
+        datetime=datetime_value, purpose=escape_html(purpose),
     )
 
 
 def staff_appointment_created_text(
-    client_name: str, client_phone: str | None, actor: str, datetime_value: str, purpose: str, lang: str = "ru",
+    client_name: str,
+    client_phone: str | None,
+    actor: str,
+    datetime_value: str,
+    purpose: str,
+    lang: str = "ru",
+    doctor_full_name: str | None = None,
 ) -> str:
     return _STAFF_APPOINTMENT_CREATED.get(lang, _STAFF_APPOINTMENT_CREATED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', actor=actor,
-        datetime=datetime_value, purpose=purpose,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
+        doctor_full_name=escape_html(doctor_full_name) if doctor_full_name else '—',
+        datetime=datetime_value, purpose=escape_html(purpose),
     )
 
 
@@ -412,7 +418,7 @@ def admin_client_changed_time_text(
     client_name: str, client_phone: str | None, datetime_value: str, lang: str = "ru",
 ) -> str:
     return _ADMIN_CLIENT_CHANGED_TIME.get(lang, _ADMIN_CLIENT_CHANGED_TIME["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
     )
 
 
@@ -420,19 +426,23 @@ def admin_confirmation_text(
     client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
 ) -> str:
     return _ADMIN_CONFIRMATION.get(lang, _ADMIN_CONFIRMATION["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value, purpose=purpose,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
+        purpose=escape_html(purpose),
     )
 
 
-def admin_completion_prompt(lang: str = "ru") -> str:
-    return _ADMIN_COMPLETION_PROMPT.get(lang, _ADMIN_COMPLETION_PROMPT["ru"])
+def admin_completion_prompt(appointment_id: int, lang: str = "ru") -> str:
+    return _ADMIN_COMPLETION_PROMPT.get(lang, _ADMIN_COMPLETION_PROMPT["ru"]).format(
+        appointment_id=appointment_id,
+    )
 
 
 def staff_new_booking_request_text(
     client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
 ) -> str:
     return _STAFF_NEW_BOOKING_REQUEST.get(lang, _STAFF_NEW_BOOKING_REQUEST["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', datetime=datetime_value, purpose=purpose,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
+        purpose=escape_html(purpose),
     )
 
 
@@ -490,13 +500,13 @@ def stale_decision_text(
 
 def staff_proposal_accepted_text(client_name: str, client_phone: str | None, lang: str = "ru") -> str:
     return _STAFF_PROPOSAL_ACCEPTED.get(lang, _STAFF_PROPOSAL_ACCEPTED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—',
+        client_name=escape_html(client_name), client_phone=client_phone or '—',
     )
 
 
 def staff_proposal_rejected_text(client_name: str, client_phone: str | None, lang: str = "ru") -> str:
     return _STAFF_PROPOSAL_REJECTED.get(lang, _STAFF_PROPOSAL_REJECTED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—',
+        client_name=escape_html(client_name), client_phone=client_phone or '—',
     )
 
 
@@ -506,13 +516,13 @@ def admin_proposal_reminder_text(lang: str = "ru") -> str:
 
 def staff_booking_confirmed_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
     return _STAFF_BOOKING_CONFIRMED.get(lang, _STAFF_BOOKING_CONFIRMED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', actor=actor,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
     )
 
 
 def staff_booking_rejected_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
     return _STAFF_BOOKING_REJECTED.get(lang, _STAFF_BOOKING_REJECTED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', actor=actor,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
     )
 
 
@@ -520,7 +530,7 @@ def staff_reschedule_decision_accepted_text(
     client_name: str, client_phone: str | None, actor: str, lang: str = "ru",
 ) -> str:
     return _STAFF_RESCHEDULE_DECISION_ACCEPTED.get(lang, _STAFF_RESCHEDULE_DECISION_ACCEPTED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', actor=actor,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
     )
 
 
@@ -528,7 +538,7 @@ def staff_reschedule_decision_rejected_text(
     client_name: str, client_phone: str | None, actor: str, lang: str = "ru",
 ) -> str:
     return _STAFF_RESCHEDULE_DECISION_REJECTED.get(lang, _STAFF_RESCHEDULE_DECISION_REJECTED["ru"]).format(
-        client_name=client_name, client_phone=client_phone or '—', actor=actor,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
     )
 
 
@@ -536,7 +546,8 @@ def staff_reschedule_requested_text(
     client_name: str, phone: str, current: str, proposed: str, purpose: str, lang: str = "ru",
 ) -> str:
     return _STAFF_RESCHEDULE_REQUESTED.get(lang, _STAFF_RESCHEDULE_REQUESTED["ru"]).format(
-        client_name=client_name, phone=phone, current=current, proposed=proposed, purpose=purpose,
+        client_name=escape_html(client_name), phone=phone, current=current, proposed=proposed,
+        purpose=escape_html(purpose),
     )
 
 
@@ -868,7 +879,7 @@ class AppointmentNotificationService:
         lang = await self._resolve_lang(admin_telegram_id)
         return await self.notifier.send_message(
             chat_id=admin_telegram_id,
-            text=admin_completion_prompt(lang),
+            text=admin_completion_prompt(appointment.id, lang),
             reply_markup=completion_followup_kb(appointment.id),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
@@ -1248,6 +1259,7 @@ class AppointmentNotificationService:
             text=staff_appointment_created_text(
                 display_name, appointment.client_phone, actor,
                 _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                doctor_full_name=appointment.doctor_full_name,
             ),
         )
 
@@ -1400,7 +1412,7 @@ class AppointmentNotificationService:
             header=_APPOINTMENT_MESSAGE_HEADER.get(lang, _APPOINTMENT_MESSAGE_HEADER["ru"]),
             admin_info=admin_info,
             datetime=appointment.datetime,
-            purpose=appointment.purpose,
+            purpose=escape_html(appointment.purpose),
             clinic=appointment.clinic_name or _NO_CLINIC_INFO.get(lang, _NO_CLINIC_INFO["ru"]),
             last_line=last_line,
         )

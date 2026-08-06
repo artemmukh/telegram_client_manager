@@ -1,8 +1,8 @@
-import html
 import logging
 from math import ceil
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -29,12 +29,15 @@ from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.slot_blocking import SlotBlockingService
 from bot.services.utils.date_parser import format_appointment_card_datetime
+from bot.services.utils.escape_html import escape_html
 from bot.states.admin.record_management.slot_blocking_states import SlotBlockCreationStates
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
 
 _BLOCKS_PER_PAGE = 10
+# Telegram's hard cap on a single message's text length.
+_TELEGRAM_MESSAGE_LIMIT = 4096
 
 _MENU_TEXT = {
     "ru": "🚫 Блокировка слотов",
@@ -69,16 +72,26 @@ _CONFLICT_LINE_TEXT = {
     "uz": "• {datetime} — {client}",
 }
 _PROPOSED_CONFLICTS_HEADER_TEXT = {
-    "ru": "\nℹ️ У этих записей есть предложение переноса на заблокированное время. "
+    "ru": "\n\nℹ️ У этих записей есть предложение переноса на заблокированное время. "
           "Сами записи НЕ отменяются и остаются на текущем времени, но предложенный перенос "
           "принять будет нельзя:\n\n",
-    "uz": "\nℹ️ Ushbu yozuvlarda bloklanadigan vaqtga ko'chirish taklifi bor. Yozuvlarning o'zi "
+    "uz": "\n\nℹ️ Ushbu yozuvlarda bloklanadigan vaqtga ko'chirish taklifi bor. Yozuvlarning o'zi "
           "BEKOR QILINMAYDI va joriy vaqtida qoladi, lekin taklif qilingan ko'chirishni endi "
           "qabul qilib bo'lmaydi:\n\n",
 }
 _PROPOSED_CONFLICTS_FOOTER_TEXT = {
     "ru": "\nБлокировка всё равно будет создана, эти записи останутся на текущем времени.",
     "uz": "\nBloklash baribir yaratiladi, bu yozuvlar joriy vaqtida qoladi.",
+}
+_PROPOSED_CONFLICTS_COUNT_ONLY_TEXT = {
+    "ru": "Ещё {count} записей с предложенным переносом на это время — список слишком длинный, чтобы показать целиком.",
+    "uz": "Yana bu vaqtga ko'chirish taklif qilingan {count} ta yozuv bor — ro'yxat to'liq ko'rsatish uchun juda uzun.",
+}
+_CANCELABLE_CONFLICTS_TOO_LONG_TEXT = {
+    "ru": "⚠️ На этот интервал попадает слишком много записей ({count}), чтобы безопасно показать их полный список "
+          "перед отменой. Разбейте блокировку на более короткие интервалы.",
+    "uz": "⚠️ Bu oraliqqa juda ko'p yozuv ({count} ta) tushmoqda, ularni bekor qilishdan oldin to'liq ro'yxatini "
+          "xavfsiz ko'rsatib bo'lmaydi. Bloklashni qisqaroq oraliqlarga bo'ling.",
 }
 _UNKNOWN_CLIENT_LABEL = {
     "ru": "клиент не указан",
@@ -268,26 +281,41 @@ def create_admin_slot_blocking_router(
         # question still closes the message, and the no-cancelable branch
         # relies on _CONFIRM_BLOCK_TEXT's own question instead, so the admin
         # is never asked two different "continue?" questions in one message.
+        #
+        # proposed_block_short is the same block collapsed to a single count
+        # line, computed once up front so both the cancelable and
+        # no-cancelable branches below can fall back to it under the same
+        # length budget instead of duplicating the collapse logic.
         proposed_block = ""
+        proposed_block_short = ""
         if proposed_conflicts:
             proposed_lines = [
                 _CONFLICT_LINE_TEXT.get(lang, _CONFLICT_LINE_TEXT["ru"]).format(
                     datetime=format_appointment_card_datetime(appointment.proposed_datetime),
-                    client=appointment.client_full_name or _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                    client=escape_html(
+                        appointment.client_full_name or _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"])
+                    ),
                 )
                 for appointment in proposed_conflicts
             ]
-            proposed_block = (
-                _PROPOSED_CONFLICTS_HEADER_TEXT.get(lang, _PROPOSED_CONFLICTS_HEADER_TEXT["ru"])
-                + "\n".join(proposed_lines)
-                + _PROPOSED_CONFLICTS_FOOTER_TEXT.get(lang, _PROPOSED_CONFLICTS_FOOTER_TEXT["ru"])
+            proposed_header = _PROPOSED_CONFLICTS_HEADER_TEXT.get(lang, _PROPOSED_CONFLICTS_HEADER_TEXT["ru"])
+            proposed_footer = _PROPOSED_CONFLICTS_FOOTER_TEXT.get(lang, _PROPOSED_CONFLICTS_FOOTER_TEXT["ru"])
+            proposed_block = proposed_header + "\n".join(proposed_lines) + proposed_footer
+            proposed_block_short = (
+                proposed_header
+                + _PROPOSED_CONFLICTS_COUNT_ONLY_TEXT.get(
+                    lang, _PROPOSED_CONFLICTS_COUNT_ONLY_TEXT["ru"]
+                ).format(count=len(proposed_conflicts))
+                + proposed_footer
             )
 
         if cancelable_conflicts:
             lines = [
                 _CONFLICT_LINE_TEXT.get(lang, _CONFLICT_LINE_TEXT["ru"]).format(
                     datetime=format_appointment_card_datetime(appointment.datetime),
-                    client=appointment.client_full_name or _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                    client=escape_html(
+                        appointment.client_full_name or _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"])
+                    ),
                 )
                 for appointment in cancelable_conflicts
             ]
@@ -297,27 +325,72 @@ def create_admin_slot_blocking_router(
                 + proposed_block
                 + _CONFLICTS_FOOTER_TEXT.get(lang, _CONFLICTS_FOOTER_TEXT["ru"])
             )
+
+            # The cancelable list above must never be truncated -- the admin is
+            # confirming a destructive action and needs to see exactly what gets
+            # cancelled. If the message is too long, shrink the proposed-conflicts
+            # block to a count line first; if it's still too long, the cancelable
+            # list itself is the problem, and we refuse rather than send a
+            # truncated confirmation (no multi-message chunking).
+            if len(text) > _TELEGRAM_MESSAGE_LIMIT and proposed_conflicts:
+                text = (
+                    _CONFLICTS_HEADER_TEXT.get(lang, _CONFLICTS_HEADER_TEXT["ru"])
+                    + "\n".join(lines)
+                    + proposed_block_short
+                    + _CONFLICTS_FOOTER_TEXT.get(lang, _CONFLICTS_FOOTER_TEXT["ru"])
+                )
+
+            if len(text) > _TELEGRAM_MESSAGE_LIMIT:
+                await state.clear()
+                await message.answer(
+                    _CANCELABLE_CONFLICTS_TOO_LONG_TEXT.get(
+                        lang, _CANCELABLE_CONFLICTS_TOO_LONG_TEXT["ru"]
+                    ).format(count=len(cancelable_conflicts)),
+                    reply_markup=slot_blocking_menu_kb(lang=lang),
+                )
+                return
+
             # has_conflicts is driven only by cancelable_conflicts: that flag
             # controls the confirm keyboard whose copy says "these will be
             # cancelled", which is only true for cancelable_conflicts. A
             # proposal-only conflict must never flip it.
             await state.set_state(SlotBlockCreationStates.confirm_conflicts)
-            await message.answer(text, reply_markup=slot_blocking_confirm_kb(lang=lang, has_conflicts=True))
+            try:
+                await message.answer(text, reply_markup=slot_blocking_confirm_kb(lang=lang, has_conflicts=True))
+            except TelegramBadRequest as e:
+                logger.warning(f"TelegramBadRequest sending slot-block conflicts confirmation: {e}")
+                await state.clear()
+                await message.answer(
+                    _MENU_TEXT.get(lang, _MENU_TEXT["ru"]), reply_markup=slot_blocking_menu_kb(lang=lang),
+                )
             return
 
-        await state.set_state(SlotBlockCreationStates.confirm_block)
-        await message.answer(
-            _CONFIRM_BLOCK_TEXT.get(lang, _CONFIRM_BLOCK_TEXT["ru"]).format(
-                start=format_appointment_card_datetime(data["range_start"]),
-                end=format_appointment_card_datetime(data["range_end"]),
-                # Message is sent with HTML parse mode; reason is user-typed
-                # text, so it must be escaped here. quote=False: only <, >, &
-                # matter for Telegram HTML, and apostrophes are common in the
-                # uz locale.
-                reason=html.escape(reason, quote=False),
-            ) + proposed_block,
-            reply_markup=slot_blocking_confirm_kb(lang=lang, has_conflicts=False),
+        # No cancelable conflicts, but proposed-datetime-only conflicts can still
+        # be numerous enough to push this confirmation over the Telegram limit,
+        # so the same collapse-then-guard treatment applies here as above (minus
+        # the "refuse" rung -- with no destructive cancelable list to protect,
+        # the collapsed count-only block plus the fixed-size confirmation
+        # template is always well within budget).
+        confirm_text = _CONFIRM_BLOCK_TEXT.get(lang, _CONFIRM_BLOCK_TEXT["ru"]).format(
+            start=format_appointment_card_datetime(data["range_start"]),
+            end=format_appointment_card_datetime(data["range_end"]),
+            # Message is sent with HTML parse mode; reason is user-typed
+            # text, so it must be escaped here (see escape_html's docstring).
+            reason=escape_html(reason),
         )
+        text = confirm_text + proposed_block
+        if len(text) > _TELEGRAM_MESSAGE_LIMIT and proposed_conflicts:
+            text = confirm_text + proposed_block_short
+
+        await state.set_state(SlotBlockCreationStates.confirm_block)
+        try:
+            await message.answer(text, reply_markup=slot_blocking_confirm_kb(lang=lang, has_conflicts=False))
+        except TelegramBadRequest as e:
+            logger.warning(f"TelegramBadRequest sending slot-block confirmation: {e}")
+            await state.clear()
+            await message.answer(
+                _MENU_TEXT.get(lang, _MENU_TEXT["ru"]), reply_markup=slot_blocking_menu_kb(lang=lang),
+            )
 
     @router.callback_query(
         StateFilter(SlotBlockCreationStates.confirm_conflicts, SlotBlockCreationStates.confirm_block),
@@ -411,17 +484,15 @@ def create_admin_slot_blocking_router(
                         block.staff_id, _UNKNOWN_DOCTOR_LABEL.get(lang, _UNKNOWN_DOCTOR_LABEL["ru"]),
                     )
                 # Message is sent with HTML parse mode; reason and target may
-                # contain user-typed text, so they must be escaped here.
-                # quote=False: Telegram HTML only requires escaping <, >, &,
-                # and the uz locale uses apostrophes heavily (Ta'mirlash,
-                # yo'q), which quote=True would mangle into &#x27;.
+                # contain user-typed text, so they must be escaped here (see
+                # escape_html's docstring).
                 lines.append(
                     _BLOCK_LINE_TEXT.get(lang, _BLOCK_LINE_TEXT["ru"]).format(
                         id=block.id,
                         start=format_appointment_card_datetime(block.start_datetime),
                         end=format_appointment_card_datetime(block.end_datetime),
-                        target=html.escape(target, quote=False),
-                        reason=html.escape(block.reason, quote=False),
+                        target=escape_html(target),
+                        reason=escape_html(block.reason),
                     )
                 )
             header = _LIST_HEADER_TEXT.get(lang, _LIST_HEADER_TEXT["ru"]).format(current=page, total=total_pages)

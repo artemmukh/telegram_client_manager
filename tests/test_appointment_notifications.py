@@ -11,6 +11,7 @@ from bot.keyboards.client.appointment_response_kb import (
 )
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
+    admin_upcoming_appointment_text,
     appointment_cancelled_by_admin_text,
     reminder_text,
 )
@@ -144,6 +145,27 @@ async def test_notify_client_appointment_sends_message_with_buttons():
     assert "2026-07-10 14:30" in msg['text']
     assert "Консультация" in msg['text']
     assert msg['reply_markup'] is not None
+
+
+@pytest.mark.asyncio
+async def test_notify_client_appointment_with_buttons_escapes_html_special_characters_in_purpose():
+    """Client-facing end-to-end path through _build_appointment_message: the
+    message is sent with parse_mode="HTML" (bot/loader.py), so an unescaped
+    "<" in a user-typed purpose would break the whole send ("can't parse
+    entities"), not just render oddly."""
+    notifier = FakeTelegramNotifier()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.purpose = "Ремонт <кабинет> & лечение"
+
+    await service.notify_client_appointment_with_buttons(appointment)
+
+    msg = notifier.sent_messages[0]
+    assert "Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in msg['text']
+    assert "<кабинет>" not in msg['text']
 
 
 @pytest.mark.asyncio
@@ -332,7 +354,7 @@ async def test_notify_admin_completion_sends_followup_prompt_with_keyboard():
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
     assert msg['text'] == (
-        "Приём отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?"
+        "Приём №1 отмечен как завершённый. Открыть запись для правок (статус/услуга/цена)?"
     )
     assert msg['reply_markup'] is not None
 
@@ -503,6 +525,32 @@ def test_reminder_text_uz_contains_phone_purpose_and_datetime():
     assert "10 iyul 2026, 14:30" in text
     assert "📱 Raqam:" in text
     assert "🏥 Xizmat:" in text
+
+
+# --- HTML escaping: reminder_text (client-facing) and admin_upcoming_appointment_text
+# (staff-facing) are sent with parse_mode="HTML" (bot/loader.py); purpose has no
+# charset restriction (validate_purpose only enforces length), so it can
+# legitimately contain "<", which would otherwise break the whole message
+# ("can't parse entities"). client_name is set to a raw string here rather than
+# through real registration input (FULL_NAME_PATTERN is Cyrillic-only and would
+# reject "<"), which is fine since these are plain string-formatting functions.
+
+def test_reminder_text_escapes_html_special_characters_in_purpose():
+    text = reminder_text("+998901234567", "Ремонт <кабинет> & лечение", "10 июля 2026, 14:30", "ru")
+
+    assert "🏥 Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in text
+    assert "<кабинет>" not in text
+
+
+def test_admin_upcoming_appointment_text_escapes_html_special_characters_in_client_name_and_purpose():
+    text = admin_upcoming_appointment_text(
+        "Иванов <Иван>", "+998901234567", "10 июля 2026, 14:30", "Ремонт <кабинет> & лечение",
+    )
+
+    assert "👤 Клиент: Иванов &lt;Иван&gt;" in text
+    assert "🏥 Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in text
+    assert "<Иван>" not in text
+    assert "<кабинет>" not in text
 
 
 @pytest.mark.asyncio
@@ -772,6 +820,28 @@ async def test_notify_staff_new_booking_request_sends_message():
     assert "Иванов Иван" in msg['text']
     assert "2026-07-10 14:30" in msg['text']
     assert "Консультация" in msg['text']
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_new_booking_request_escapes_html_special_characters_in_client_name_and_purpose():
+    """Staff-facing path: client_name and purpose are both user-influenced
+    text, sent with parse_mode="HTML" -- both must be escaped or an unescaped
+    "<" would break delivery to staff entirely."""
+    notifier = FakeTelegramNotifier()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.purpose = "Ремонт <кабинет> & лечение"
+
+    await service.notify_staff_new_booking_request(67890, appointment, "Иванов <Иван>")
+
+    msg = notifier.sent_messages[0]
+    assert "👤 Клиент: Иванов &lt;Иван&gt;" in msg['text']
+    assert "📝 Жалоба: Ремонт &lt;кабинет&gt; &amp; лечение" in msg['text']
+    assert "<Иван>" not in msg['text']
+    assert "<кабинет>" not in msg['text']
 
 
 @pytest.mark.asyncio

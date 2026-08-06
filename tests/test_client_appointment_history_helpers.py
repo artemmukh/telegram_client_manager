@@ -192,3 +192,30 @@ def test_build_history_button_text_no_marker_when_pending_with_proposal():
     text = build_history_button_text(appointment)
 
     assert "🔁" not in text
+
+
+# --- HTML escaping: purpose has no charset restriction (validate_purpose only
+# enforces length), so it can legitimately contain "<", which would otherwise
+# break Telegram's HTML parse_mode. doctor_full_name is set directly on the
+# Appointment fixture rather than through real registration input
+# (FULL_NAME_PATTERN is Cyrillic-only and would reject "<"), which is fine
+# here since build_history_card_text only cares about the field value. ---
+
+def test_build_history_card_text_escapes_html_special_characters_in_purpose():
+    appointment = _appointment(AppointmentStatus.PENDING, purpose="Ремонт <кабинет> & лечение")
+
+    text = build_history_card_text(appointment)
+
+    assert "Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in text
+    assert "<кабинет>" not in text
+
+
+def test_build_history_card_text_escapes_html_special_characters_in_doctor_full_name():
+    appointment = _appointment(AppointmentStatus.PENDING)
+    appointment.doctor_full_name = "Петров <Петр>"
+    appointment.doctor_is_doctor = True
+
+    text = build_history_card_text(appointment)
+
+    assert "Врач: Петров &lt;Петр&gt;" in text
+    assert "<Петр>" not in text

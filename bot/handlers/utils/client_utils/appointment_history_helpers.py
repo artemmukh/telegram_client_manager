@@ -2,6 +2,7 @@ from datetime import datetime
 
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import build_reschedule_proposal_line, format_datetime_for_display
+from bot.services.utils.escape_html import escape_html
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 
 _DATETIME_LABEL = {"ru": "Дата и время: {value}", "uz": "Sana va vaqt: {value}"}
@@ -38,7 +39,7 @@ def build_history_card_text(appointment: Appointment, lang: str = "ru") -> str:
     lines = [_DATETIME_LABEL.get(lang, _DATETIME_LABEL["ru"]).format(value=display_datetime)]
 
     if appointment.purpose:
-        lines.append(_PURPOSE_LABEL.get(lang, _PURPOSE_LABEL["ru"]).format(value=appointment.purpose))
+        lines.append(_PURPOSE_LABEL.get(lang, _PURPOSE_LABEL["ru"]).format(value=escape_html(appointment.purpose)))
 
     proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.CLIENT, lang=lang)
     if proposal_line is not None:
@@ -50,7 +51,7 @@ def build_history_card_text(appointment: Appointment, lang: str = "ru") -> str:
     lines.append(_CLINIC_LABEL.get(lang, _CLINIC_LABEL["ru"]).format(value=clinic_display))
 
     if appointment.doctor_full_name and appointment.doctor_is_doctor:
-        lines.append(_DOCTOR_LABEL.get(lang, _DOCTOR_LABEL["ru"]).format(value=appointment.doctor_full_name))
+        lines.append(_DOCTOR_LABEL.get(lang, _DOCTOR_LABEL["ru"]).format(value=escape_html(appointment.doctor_full_name)))
         lines.append(
             _DOCTOR_PHONE_LABEL.get(lang, _DOCTOR_PHONE_LABEL["ru"]).format(value=appointment.doctor_phone or '—')
         )

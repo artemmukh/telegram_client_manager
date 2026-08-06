@@ -5,6 +5,7 @@ from bot.keyboards.admin.name_change_kb import name_change_approval_kb
 from bot.keyboards.common.profile_kb import personal_data_broadcast_kb
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.escape_html import escape_html
 from bot.services.utils.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,9 @@ class ClientNotificationService:
 
             message_text = _NAME_CHANGED_ON_REGISTRATION_TEXT.get(
                 admin.language, _NAME_CHANGED_ON_REGISTRATION_TEXT["ru"]
-            ).format(stored_name=stored_name, new_name=new_name, client_phone=client_phone)
+            ).format(
+                stored_name=escape_html(stored_name), new_name=escape_html(new_name), client_phone=client_phone,
+            )
 
             try:
                 await self.notifier.send_message(
@@ -100,7 +103,8 @@ class ClientNotificationService:
                 continue
 
             message_text = _NAME_CHANGE_REQUEST_TEXT.get(admin.language, _NAME_CHANGE_REQUEST_TEXT["ru"]).format(
-                current_full_name=user.full_name, new_full_name=new_full_name, phone=user.phone
+                current_full_name=escape_html(user.full_name), new_full_name=escape_html(new_full_name),
+                phone=user.phone,
             )
             reply_markup = name_change_approval_kb(user_id, lang=admin.language)
 

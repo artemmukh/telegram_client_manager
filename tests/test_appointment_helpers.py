@@ -10,6 +10,7 @@ import bot.messages.booking as booking_msg
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     answer_no_slots_for_day,
     build_appointment_card,
+    build_appointment_confirmation,
     datetime_processing,
 )
 from bot.models.appointment import Appointment
@@ -107,6 +108,50 @@ def test_build_appointment_card_omits_proposal_line_and_note_when_no_proposal():
 
     assert "предложил" not in card
     assert reschedule_negotiation_note("ru") not in card
+
+
+# --- HTML escaping: purpose has no charset restriction (validate_purpose only
+# enforces length), so it can legitimately contain "<", which would otherwise
+# break Telegram's HTML parse_mode (the whole message fails to send). Names
+# below are set directly on the Appointment dataclass fixture rather than
+# through real registration input (FULL_NAME_PATTERN is Cyrillic-only and
+# would reject "<"), which is fine since build_appointment_card only cares
+# about the field value, not how it got there. ---
+
+def test_build_appointment_card_escapes_html_special_characters_in_purpose():
+    card = build_appointment_card(_appointment(purpose="Ремонт <кабинет> & лечение"))
+
+    assert "Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in card
+    assert "<кабинет>" not in card
+
+
+def test_build_appointment_card_escapes_html_special_characters_in_client_full_name():
+    card = build_appointment_card(_appointment(client_full_name="Иванов <Иван>"))
+
+    assert "Клиент: Иванов &lt;Иван&gt;" in card
+    assert "<Иван>" not in card
+
+
+def test_build_appointment_card_escapes_html_special_characters_in_doctor_full_name():
+    card = build_appointment_card(
+        _appointment(doctor_full_name="Петров <Петр>", doctor_is_doctor=True)
+    )
+
+    assert "Врач: Петров &lt;Петр&gt;" in card
+    assert "<Петр>" not in card
+
+
+def test_build_appointment_confirmation_escapes_html_special_characters_in_purpose():
+    text = build_appointment_confirmation({
+        "clinic_name": "Клиника №1",
+        "full_name": "Иванов Иван",
+        "phone": "+998901234567",
+        "appointment_datetime_display": "16.07.2026 14:30",
+        "purpose": "Ремонт <кабинет> & лечение",
+    })
+
+    assert "Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in text
+    assert "<кабинет>" not in text
 
 
 def _message(text):

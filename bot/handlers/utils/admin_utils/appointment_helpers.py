@@ -32,6 +32,7 @@ from bot.services.utils.date_parser import (
     parse_ru_datetime,
     reschedule_negotiation_note,
 )
+from bot.services.utils.escape_html import escape_html
 from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 from bot.utils.reply_menu_labels import REPLY_MENU_TEXT_MESSAGE, is_reply_menu_label
@@ -205,7 +206,7 @@ def build_appointment_confirmation(data: dict, lang: str = "ru") -> str:
         f"{labels['client_name']}: {data.get('full_name', '')}",
         f"{labels['phone']}: {data.get('phone', '')}",
         f"{labels['datetime']}: {display_datetime}",
-        f"{labels['purpose']}: {data.get('purpose', '')}",
+        f"{labels['purpose']}: {escape_html(data.get('purpose', ''))}",
         f"{labels['status']}: {status_label(AppointmentStatus.PENDING, lang)}",
     ])
 
@@ -219,13 +220,13 @@ def build_appointment_card(appointment: Appointment, lang: str = "ru") -> str:
 
 
     if appointment.client_full_name:
-        lines.append(f"{labels['client']}: {appointment.client_full_name}")
+        lines.append(f"{labels['client']}: {escape_html(appointment.client_full_name)}")
 
     if appointment.client_phone:
         lines.append(f"{labels['phone']}: {appointment.client_phone}")
 
     if appointment.doctor_full_name and appointment.doctor_is_doctor:
-        lines.append(f"{labels['doctor']}: {appointment.doctor_full_name}")
+        lines.append(f"{labels['doctor']}: {escape_html(appointment.doctor_full_name)}")
         lines.append(f"{labels['doctor_phone']}: {appointment.doctor_phone or labels['not_specified']}")
 
     if appointment.price:
@@ -234,7 +235,7 @@ def build_appointment_card(appointment: Appointment, lang: str = "ru") -> str:
 
     lines += [
         f"{labels['time']}: {format_appointment_card_datetime(appointment.datetime)}",
-        f"{labels['purpose']}: {appointment.purpose}",
+        f"{labels['purpose']}: {escape_html(appointment.purpose)}",
         f"{labels['status']}: {status_label(appointment.status, lang)}",
     ]
 

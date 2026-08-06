@@ -11,8 +11,12 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.handlers.admin.appointment_management.slot_blocking import (
+    _CANCELABLE_CONFLICTS_TOO_LONG_TEXT,
+    _PROPOSED_CONFLICTS_COUNT_ONLY_TEXT,
+    _TELEGRAM_MESSAGE_LIMIT,
     create_admin_slot_blocking_router,
 )
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
@@ -418,3 +422,231 @@ async def test_render_blocks_list_escapes_html_special_characters_in_reason_and_
     # Guards against the target line silently falling through to the
     # unresolved-doctor fallback instead of actually resolving custom_admin's name.
     assert "Врач не найден" not in text
+
+
+# --- get_reason: 4096-char overflow ladder ---
+#
+# The cancelable list must never be truncated (it's the admin's only warning
+# before a destructive cancel-appointments action); only the proposed-datetime
+# block is allowed to collapse to a count-only line, and if that's still not
+# enough the handler must refuse outright rather than send a truncated
+# confirmation. Both the cancelable-conflicts branch and the no-cancelable
+# branch implement this independently, so each gets its own coverage.
+
+@pytest.mark.asyncio
+async def test_get_reason_under_limit_keeps_full_cancelable_and_proposed_lists():
+    """Regression: well under the 4096-char budget, both lists render in full,
+    uncollapsed -- the overflow ladder must not fire when it isn't needed."""
+    range_start, range_end = _db_range()
+    cancelable = [
+        _conflict_appointment(appointment_id=i, dt=range_start, client_full_name=f"Cancelable {i}")
+        for i in range(2)
+    ]
+    proposed_only = [
+        _conflict_appointment(
+            appointment_id=100 + i, dt="2020-01-01 08:00", proposed_dt=range_start,
+            client_full_name=f"Proposal {i}",
+        )
+        for i in range(2)
+    ]
+    router = _build_router(appt_repo=FakeAppointmentRepository(cancelable + proposed_only))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    state.set_state.assert_awaited_once_with(SlotBlockCreationStates.confirm_conflicts)
+    message.answer.assert_awaited_once()
+    text = message.answer.call_args.args[0]
+
+    assert len(text) <= _TELEGRAM_MESSAGE_LIMIT
+    for i in range(2):
+        assert f"Cancelable {i}" in text
+        assert f"Proposal {i}" in text
+
+
+@pytest.mark.asyncio
+async def test_get_reason_overflow_from_proposed_list_collapses_proposed_but_keeps_full_cancelable_list():
+    """When the proposed-datetime block alone pushes the message over 4096
+    chars, only the proposed block collapses to a count-only line -- every
+    cancelable appointment line must still be present verbatim."""
+    range_start, range_end = _db_range()
+    cancelable = [
+        _conflict_appointment(appointment_id=i, dt=range_start, client_full_name=f"Cancelable {i}")
+        for i in range(3)
+    ]
+    proposed_only = [
+        _conflict_appointment(
+            appointment_id=1000 + i, dt="2020-01-01 08:00", proposed_dt=range_start,
+            client_full_name=f"Proposal Client Number {i}",
+        )
+        for i in range(200)
+    ]
+    router = _build_router(appt_repo=FakeAppointmentRepository(cancelable + proposed_only))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    state.set_state.assert_awaited_once_with(SlotBlockCreationStates.confirm_conflicts)
+    state.clear.assert_not_called()
+    message.answer.assert_awaited_once()
+    text = message.answer.call_args.args[0]
+
+    assert len(text) <= _TELEGRAM_MESSAGE_LIMIT
+    for i in range(3):
+        assert f"Cancelable {i}" in text
+    assert "Proposal Client Number 0" not in text
+    assert _PROPOSED_CONFLICTS_COUNT_ONLY_TEXT["ru"].format(count=len(proposed_only)) in text
+
+
+@pytest.mark.asyncio
+async def test_get_reason_overflow_survives_collapse_refuses_and_clears_state():
+    """When even the cancelable list alone exceeds 4096 chars, the handler
+    must refuse rather than silently truncate a destructive confirmation:
+    state is cleared, the menu keyboard is shown, and no confirm state is
+    ever set."""
+    range_start, range_end = _db_range()
+    cancelable = [
+        _conflict_appointment(appointment_id=i, dt=range_start, client_full_name=f"Cancelable Client Number {i}")
+        for i in range(200)
+    ]
+    router = _build_router(appt_repo=FakeAppointmentRepository(cancelable))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    state.set_state.assert_not_called()
+    state.clear.assert_awaited_once()
+    message.answer.assert_awaited_once()
+    text = message.answer.call_args.args[0]
+    reply_markup = message.answer.call_args.kwargs["reply_markup"]
+
+    assert text == _CANCELABLE_CONFLICTS_TOO_LONG_TEXT["ru"].format(count=len(cancelable))
+    assert reply_markup == slot_blocking_menu_kb(lang="ru")
+
+
+@pytest.mark.asyncio
+async def test_get_reason_no_cancelable_branch_overflow_collapses_proposed_list():
+    """Mirrors the cancelable-branch overflow test above, but for the
+    confirm_block screen (no cancelable conflicts at all). This branch was
+    missed by the first implementation pass and only fixed by a later
+    review -- it needs its own regression coverage or it will regress again."""
+    range_start, range_end = _db_range()
+    proposed_only = [
+        _conflict_appointment(
+            appointment_id=1000 + i, dt="2020-01-01 08:00", proposed_dt=range_start,
+            client_full_name=f"Proposal Client Number {i}",
+        )
+        for i in range(200)
+    ]
+    router = _build_router(appt_repo=FakeAppointmentRepository(proposed_only))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    state.set_state.assert_awaited_once_with(SlotBlockCreationStates.confirm_block)
+    state.clear.assert_not_called()
+    message.answer.assert_awaited_once()
+    text = message.answer.call_args.args[0]
+
+    assert len(text) <= _TELEGRAM_MESSAGE_LIMIT
+    assert "Proposal Client Number 0" not in text
+    assert _PROPOSED_CONFLICTS_COUNT_ONLY_TEXT["ru"].format(count=len(proposed_only)) in text
+    assert "Создать блокировку с" in text
+
+
+@pytest.mark.asyncio
+async def test_get_reason_cancelable_branch_telegram_bad_request_is_caught_and_menu_shown():
+    """A send failure (e.g. the confirmation still somehow exceeds Telegram's
+    real limits) must never escape the handler -- it falls back to the
+    blocking menu with a cleared state instead of leaving the admin stuck."""
+    range_start, range_end = _db_range()
+    cancelable = [_conflict_appointment(appointment_id=1, dt=range_start)]
+    router = _build_router(appt_repo=FakeAppointmentRepository(cancelable))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    message.answer = AsyncMock(
+        side_effect=[TelegramBadRequest(method=MagicMock(), message="Bad Request: can't parse entities"), None],
+    )
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    assert message.answer.await_count == 2
+    state.clear.assert_awaited_once()
+    second_call = message.answer.await_args_list[1]
+    assert second_call.args[0] == _MENU_TEXT
+    assert second_call.kwargs["reply_markup"] == slot_blocking_menu_kb(lang="ru")
+
+
+@pytest.mark.asyncio
+async def test_get_reason_no_cancelable_branch_telegram_bad_request_is_caught_and_menu_shown():
+    """Same TelegramBadRequest guard as above, for the confirm_block (no
+    cancelable conflicts) send -- this branch has its own separate
+    try/except and must be verified independently."""
+    range_start, range_end = _db_range()
+    router = _build_router(appt_repo=FakeAppointmentRepository())
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    message.answer = AsyncMock(
+        side_effect=[TelegramBadRequest(method=MagicMock(), message="Bad Request: can't parse entities"), None],
+    )
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    assert message.answer.await_count == 2
+    state.clear.assert_awaited_once()
+    second_call = message.answer.await_args_list[1]
+    assert second_call.args[0] == _MENU_TEXT
+    assert second_call.kwargs["reply_markup"] == slot_blocking_menu_kb(lang="ru")
+
+
+# --- get_reason: blank-line separator before the proposed-conflicts block ---
+
+@pytest.mark.asyncio
+async def test_get_reason_cancelable_branch_has_blank_line_separator_before_proposed_block():
+    range_start, range_end = _db_range()
+    cancelable = _conflict_appointment(appointment_id=1, dt=range_start, client_full_name="Cancelable Client")
+    proposal_only = _conflict_appointment(
+        appointment_id=2, dt="2020-01-01 08:00", proposed_dt=range_start, client_full_name="Proposal Client",
+    )
+    router = _build_router(appt_repo=FakeAppointmentRepository([cancelable, proposal_only]))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    text = message.answer.call_args.args[0]
+    assert "\n\nℹ️" in text
+
+
+@pytest.mark.asyncio
+async def test_get_reason_no_cancelable_branch_has_blank_line_separator_before_proposed_block():
+    range_start, range_end = _db_range()
+    proposal_only = _conflict_appointment(appointment_id=1, dt="2020-01-01 08:00", proposed_dt=range_start)
+    router = _build_router(appt_repo=FakeAppointmentRepository([proposal_only]))
+    get_reason = _find_message_handler(router, "get_reason")
+
+    message = _message("Ремонт")
+    state = _state(clinic_id=CLINIC_ID, staff_id=DOCTOR_ID, range_start=range_start, range_end=range_end)
+
+    await get_reason(message, state, _admin_user())
+
+    text = message.answer.call_args.args[0]
+    assert "\n\nℹ️" in text

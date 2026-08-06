@@ -101,6 +101,53 @@ async def test_notify_admins_name_change_request_sends_with_keyboard_and_survive
 
 
 @pytest.mark.asyncio
+async def test_notify_admins_name_changed_on_registration_escapes_html_special_characters_in_names():
+    """Both stored_name and new_name are client-typed text, sent to admins
+    with parse_mode="HTML" -- an unescaped "<" would break delivery entirely
+    ("can't parse entities"), not just render oddly."""
+    admins = [_admin(telegram_user_id=100, ID=2)]
+    notifier = FakeTelegramNotifier()
+    repo = FakeUserRepo(admins)
+    service = ClientNotificationService(notifier, repo)
+
+    await service.notify_admins_name_changed_on_registration(
+        clinic_id=1, stored_name="Иванов <Иван>", new_name="Петров <Петр>", client_phone="+998901234567",
+    )
+
+    assert len(notifier.sent_messages) == 1
+    text = notifier.sent_messages[0]['text']
+    assert "Было: Иванов &lt;Иван&gt;" in text
+    assert "Стало: Петров &lt;Петр&gt;" in text
+    assert "<Иван>" not in text
+    assert "<Петр>" not in text
+
+
+@pytest.mark.asyncio
+async def test_notify_admins_name_change_request_escapes_html_special_characters_in_names():
+    admins = [_admin(telegram_user_id=100, ID=2)]
+    notifier = FakeTelegramNotifier()
+    repo = FakeUserRepo(admins)
+    service = ClientNotificationService(notifier, repo)
+    user = User(
+        ID=10,
+        full_name="Иванов <Иван>",
+        phone="+998901234567",
+        role=Role.CLIENT,
+        telegram_user_id=1001,
+        clinic_id=1,
+    )
+
+    await service.notify_admins_name_change_request(user, "Петров <Петр>", user_id=user.ID)
+
+    assert len(notifier.sent_messages) == 1
+    text = notifier.sent_messages[0]['text']
+    assert "Текущее ФИ: Иванов &lt;Иван&gt;" in text
+    assert "Новое ФИ: Петров &lt;Петр&gt;" in text
+    assert "<Иван>" not in text
+    assert "<Петр>" not in text
+
+
+@pytest.mark.asyncio
 async def test_broadcast_personal_data_request_sends_to_every_client_with_telegram_id():
     clients = [
         _client(telegram_user_id=100, ID=1),

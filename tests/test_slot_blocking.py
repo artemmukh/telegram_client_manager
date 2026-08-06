@@ -22,6 +22,7 @@ from bot.models.user import User
 from bot.services.appointment.slot_blocking import (
     _INVALID_RANGE_FULLY_PAST_MESSAGE,
     _INVALID_RANGE_ORDER_MESSAGE,
+    _INVALID_RANGE_START_TOO_FAR_MESSAGE,
     _INVALID_RANGE_START_TOO_OLD_MESSAGE,
     SlotBlockingService,
 )
@@ -276,6 +277,51 @@ async def test_validate_range_accepts_start_earlier_today_than_now():
 
     assert start < end
     assert start == format_datetime_for_db(fixed_now.replace(hour=9, minute=0))
+
+
+# --- validate_range: upper bound on how far in the future `start` may be ---
+
+@pytest.mark.asyncio
+async def test_validate_range_rejects_start_more_than_ninety_days_in_the_future():
+    service = _service()
+    fixed_now = get_current_tashkent_datetime().replace(hour=13, minute=0, second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.slot_blocking.get_current_tashkent_datetime", return_value=fixed_now,
+    ):
+        just_over = fixed_now + timedelta(days=90, minutes=1)
+        end_dt = just_over + timedelta(hours=1)
+
+        with pytest.raises(InvalidBlockRangeError) as exc_info:
+            await service.validate_range(
+                just_over.strftime("%d.%m.%Y %H:%M"), end_dt.strftime("%d.%m.%Y %H:%M"),
+            )
+
+    # Pin the specific message: without this, the too-old/order/fully-past
+    # checks could swallow this case and the test would still pass on the
+    # bare exception type.
+    assert str(exc_info.value) == _INVALID_RANGE_START_TOO_FAR_MESSAGE["ru"]
+
+
+@pytest.mark.asyncio
+async def test_validate_range_accepts_start_exactly_ninety_days_in_the_future():
+    """Boundary case: exactly 90 days ahead must be accepted -- only a start
+    STRICTLY beyond the bound is rejected."""
+    service = _service()
+    fixed_now = get_current_tashkent_datetime().replace(hour=13, minute=0, second=0, microsecond=0)
+
+    with patch(
+        "bot.services.appointment.slot_blocking.get_current_tashkent_datetime", return_value=fixed_now,
+    ):
+        ninety_days_ahead = fixed_now + timedelta(days=90)
+        end_dt = ninety_days_ahead + timedelta(hours=1)
+
+        start, end = await service.validate_range(
+            ninety_days_ahead.strftime("%d.%m.%Y %H:%M"), end_dt.strftime("%d.%m.%Y %H:%M"),
+        )
+
+    assert start < end
+    assert start == format_datetime_for_db(ninety_days_ahead)
 
 
 # --- find_conflicts ---
