@@ -213,6 +213,15 @@ _STALE_DECISION_TEXT = {
     "uz": "{label} allaqachon qaror qabul qildi: {outcome}.",
 }
 
+# Отдельный шаблон для случаев, когда заявка перестала быть актуальной БЕЗ решения
+# сотрудника (клиент отменил запись, истёк срок ожидания). _STALE_DECISION_TEXT здесь
+# не подходит: он утверждает, что кто-то «принял решение», и подставлять туда клиента
+# или систему значит приписывать действие не тому актору.
+_CLOSED_REQUEST_TEXT = {
+    "ru": "⛔️ Заявка больше не актуальна: {outcome}.",
+    "uz": "⛔️ So'rov endi dolzarb emas: {outcome}.",
+}
+
 _STAFF_PROPOSAL_ACCEPTED = {
     "ru": "✅ Клиент {client_name} согласился на предложенное время.\n\n📱 Номер: {client_phone}",
     "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.\n\n📱 Raqam: {client_phone}",
@@ -496,6 +505,10 @@ def stale_decision_text(
         text = f"{text}\n\n{appointment_summary}"
 
     return text
+
+
+def closed_request_text(outcome_text: str, lang: str = "ru") -> str:
+    return _CLOSED_REQUEST_TEXT.get(lang, _CLOSED_REQUEST_TEXT["ru"]).format(outcome=outcome_text)
 
 
 def staff_proposal_accepted_text(client_name: str, client_phone: str | None, lang: str = "ru") -> str:
@@ -1110,6 +1123,37 @@ class AppointmentNotificationService:
         ):
             logger.warning(
                 f"Failed to invalidate stale decision message {message_id} in chat {chat_id}"
+            )
+
+    async def invalidate_closed_request_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        outcome_text: dict[str, str],
+    ) -> None:
+        """Edit a staff notification whose request closed without any staff decision.
+
+        Used when the client cancelled the appointment or the request expired
+        unanswered: the inline keyboard is still live in every staff chat, but
+        pressing it can only ever produce an error popup. Unlike
+        invalidate_stale_decision_message there is no acting staff member to name,
+        so the text carries only the outcome.
+
+        outcome_text is resolved to this recipient's own language.
+
+        Never raises — a failed edit (message deleted, bot blocked) is logged and
+        swallowed so it doesn't abort a loop over several recipients.
+        """
+        lang = await self._resolve_lang(chat_id)
+        outcome = outcome_text.get(lang, outcome_text.get("ru", ""))
+        if not await self.notifier.try_edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=closed_request_text(outcome, lang),
+            reply_markup=None,
+        ):
+            logger.warning(
+                f"Failed to invalidate closed request message {message_id} in chat {chat_id}"
             )
 
     async def notify_staff_proposal_accepted(

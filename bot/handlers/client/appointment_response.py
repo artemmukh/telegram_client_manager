@@ -79,6 +79,16 @@ _UNKNOWN_CLIENT_LABEL = {
     "uz": "Noma'lum mijoz",
 }
 
+_CANCELLED_BY_CLIENT_OUTCOME = {
+    "ru": "клиент отменил запись",
+    "uz": "mijoz yozuvni bekor qildi",
+}
+
+# Клавиатуры заявок, которые отмена клиентом делает нерабочими: "booking" — кнопки
+# «Подтвердить/Отклонить» на самозаписи, "reschedule" — «Принять/Отклонить перенос».
+# Обе разом, потому что перенос мог быть запрошен по уже подтверждённой записи.
+_CLIENT_CANCELLABLE_REQUEST_KINDS = ("booking", "reschedule")
+
 _PROPOSAL_ACCEPTED = {
     "ru": "✅ Вы согласились на новое время. Запись подтверждена.",
     "uz": "✅ Siz yangi vaqtga rozi bo'ldingiz. Yozuv tasdiqlandi.",
@@ -180,6 +190,46 @@ def create_client_appointment_router(
 
     router.message.filter(RoleFilter("client"))
     router.callback_query.filter(RoleFilter("client"))
+
+    async def close_staff_request_keyboards(appointment_id: int, outcome_text: dict[str, str]) -> None:
+        """Стереть у сотрудников клавиатуры заявок, которые действие клиента сделало
+        нерабочими.
+
+        Без этого после отмены клиентом у каждого сотрудника остаётся живая кнопка
+        «Подтвердить/Отклонить»: нажатие уходит в _ensure_not_finalized и возвращает
+        popup-ошибку, но само сообщение остаётся выглядеть действующим, и сотрудник
+        жмёт его снова.
+
+        Не переиспользует invalidate_sibling_notifications: тот подписывает, КТО из
+        сотрудников принял решение, а здесь решения сотрудника нет вовсе.
+        actor_chat_id=0 — исключать некого, гасим все записанные сообщения.
+
+        Best-effort: сбой на одном получателе не должен помешать остальным.
+        """
+        if not notification_service or not appointment_management_service:
+            return
+
+        for kind in _CLIENT_CANCELLABLE_REQUEST_KINDS:
+            try:
+                targets = await appointment_management_service.get_invalidation_targets(
+                    appointment_id, kind, actor_chat_id=0
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to resolve {kind} invalidation targets for appointment {appointment_id}: {e}"
+                )
+                continue
+
+            for target in targets:
+                try:
+                    await notification_service.invalidate_closed_request_message(
+                        target.chat_id, target.message_id, outcome_text,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to close staff {kind} keyboard in chat {target.chat_id} "
+                        f"for appointment {appointment_id}: {e}"
+                    )
 
     @router.message(F.text.in_({
         "/appointments", "/book", "/history", "📋 Управление записями", "📋 Yozuvlarni boshqarish",
@@ -322,6 +372,8 @@ def create_client_appointment_router(
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
+
+                    await close_staff_request_keyboards(appointment_id, _CANCELLED_BY_CLIENT_OUTCOME)
                 except AppointmentNotFoundError:
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
                 except BotException as e:
@@ -483,6 +535,8 @@ def create_client_appointment_router(
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
 
+                    await close_staff_request_keyboards(appointment_id, _CANCELLED_BY_CLIENT_OUTCOME)
+
                     await render_history_card(callback_query, appointment_id, tab, page, state, lang)
                 except AppointmentNotFoundError:
                     await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
@@ -643,6 +697,8 @@ def create_client_appointment_router(
                             )
                         except Exception:
                             pass  # Graceful fail если не получилось отправить
+
+                await close_staff_request_keyboards(appointment_id, _CANCELLED_BY_CLIENT_OUTCOME)
 
             except AppointmentNotFoundError:
                 await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)

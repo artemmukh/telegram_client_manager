@@ -31,6 +31,57 @@ _UNKNOWN_CLIENT_LABEL = {
     "uz": "Noma'lum mijoz",
 }
 
+_PENDING_EXPIRED_OUTCOME = {
+    "ru": "истёк срок ожидания ответа",
+    "uz": "javob kutish muddati tugadi",
+}
+
+_RESCHEDULE_EXPIRED_OUTCOME = {
+    "ru": "предложенное время прошло, запись осталась в прежнее время",
+    "uz": "taklif qilingan vaqt o'tdi, yozuv avvalgi vaqtida qoldi",
+}
+
+
+async def _close_staff_request_keyboards(
+    appointment_management: AppointmentManagement,
+    notification_service: AppointmentNotificationService,
+    appointment_id: int,
+    kinds: tuple[str, ...],
+    outcome_text: dict[str, str],
+) -> None:
+    """Стереть у сотрудников клавиатуры заявок, которые истекли без их ответа.
+
+    Джобы истечения гасят протухшее сообщение клиенту
+    (close_reschedule_proposal_message), но у сотрудников клавиатура
+    «Подтвердить/Отклонить» оставалась живой навсегда — нажатие могло вернуть
+    только popup-ошибку. Это самый частый путь: истекает каждая неотвеченная заявка.
+
+    actor_chat_id=0 — исключать некого, решение не принимал никто.
+
+    Best-effort: сбой на одном получателе не должен помешать остальным.
+    """
+    for kind in kinds:
+        try:
+            targets = await appointment_management.get_invalidation_targets(
+                appointment_id, kind, actor_chat_id=0
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to resolve {kind} invalidation targets for appointment {appointment_id}: {e}"
+            )
+            continue
+
+        for target in targets:
+            try:
+                await notification_service.invalidate_closed_request_message(
+                    target.chat_id, target.message_id, outcome_text,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to close staff {kind} keyboard in chat {target.chat_id} "
+                    f"for appointment {appointment_id}: {e}"
+                )
+
 
 async def send_reminder_job(
     appointment_id: int,
@@ -301,6 +352,13 @@ async def expire_pending_request_job(appointment_id: int) -> None:
                 f"Failed to send expiry notification to client for appointment {appointment_id}: {e}"
             )
 
+        # Оба вида: "booking" — самозапись, "reschedule" — встречное время, которое
+        # клиент предложил по приглашению от админа (этот случай тоже истекает здесь).
+        await _close_staff_request_keyboards(
+            appointment_management, notification_service, appointment_id,
+            ("booking", "reschedule"), _PENDING_EXPIRED_OUTCOME,
+        )
+
         if appointment.proposed_datetime is not None:
             if appointment.proposal_message_id:
                 try:
@@ -371,6 +429,13 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
             logger.warning(
                 f"Failed to send reschedule-expiry notification for appointment {appointment_id}: {e}"
             )
+
+        # Только "reschedule": статус записи не менялся (остался CONFIRMED),
+        # погасло лишь неотвеченное предложение времени.
+        await _close_staff_request_keyboards(
+            appointment_management, notification_service, appointment_id,
+            ("reschedule",), _RESCHEDULE_EXPIRED_OUTCOME,
+        )
 
     except AppointmentNotFoundError:
         logger.warning(f"Reschedule expiry job: appointment {appointment_id} not found")
