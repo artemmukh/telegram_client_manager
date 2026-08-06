@@ -208,6 +208,22 @@ class UserRepository:
 
         return [self._row_to_user(row) for row in rows]
 
+    async def get_clinic_notification_recipients(self, clinic_id: int) -> list[User]:
+        cursor = await self.connection.execute(
+            USER_SELECT + """
+            JOIN staff s ON s.telegram_user_id = u.telegram_user_id
+            WHERE u.role = 'admin'
+            AND u.clinic_id = ?
+            AND s.clinic_id = ?
+            AND s.visibility_scope = 'clinic'
+            ORDER BY u.full_name, u.id
+            """,
+            (clinic_id, clinic_id),
+        )
+        rows = await cursor.fetchall()
+
+        return [self._row_to_user(row) for row in rows]
+
     async def get_all_users(self) -> list[User]:
         cursor = await self.connection.execute(USER_SELECT + " ORDER BY u.id")
         rows = await cursor.fetchall()

@@ -289,7 +289,7 @@ class AppointmentManagement:
         staff_records = await self.staff_repository.get_staff_by_clinic_id(clinic_id)
         is_doctor_by_telegram_id = {s.telegram_user_id: s.is_doctor for s in staff_records}
 
-        return [u for u in candidates if is_doctor_by_telegram_id.get(u.telegram_user_id, True)]
+        return [u for u in candidates if is_doctor_by_telegram_id.get(u.telegram_user_id, False)]
 
     async def list_bookable_staff(self, client_telegram_id: int) -> list[User]:
         client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
@@ -494,7 +494,7 @@ class AppointmentManagement:
             return _OTHER_STAFF_LABEL
 
         staff_record = await self.staff_repository.get_staff(user.telegram_user_id)
-        is_admin = staff_record is not None and staff_record.visibility_scope == "clinic"
+        is_admin = staff_record is not None and not staff_record.is_doctor
         role_ru = "Администратор" if is_admin else "Доктор"
         role_uz = "Administrator" if is_admin else "Shifokor"
 

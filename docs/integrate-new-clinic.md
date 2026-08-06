@@ -14,6 +14,8 @@
 - **`CLINIC_SEED_BY_INSTANCE["nc"]`** — `name` и `token` клиники.
 - **`STAFF_SEED_BY_INSTANCE["nc"]`** — telegram_id админов/врачей, которых нужно засеять при первом запуске.
   Добавление новых сотрудников позже делается так же — через этот список + рестарт процесса (отдельного admin-UI для этого нет).
+- **`STAFF_VISIBILITY_SCOPE_BY_INSTANCE["nc"]`** — явный scope каждого seeded-сотрудника (`"clinic"` для администратора клиники,
+  `"own"` для врача). Ключи должны совпадать с `STAFF_SEED_BY_INSTANCE["nc"]`.
 - **`PRICE_LIST_BY_INSTANCE["nc"]`** — пути к картинкам прайса по языкам (`ru`/`uz`). Если не добавить запись — сработает `PRICE_LIST_STUB_MESSAGE` ("прайс скоро появится").
 - **`LOCATION_BY_INSTANCE["nc"]`** — путь к картинке и подпись с адресом. Аналогично, без записи — стаб `LOCATION_STUB_MESSAGE`.
 - **`DATEPARSER_BY_INSTANCE["nc"] = "slots"`** (у обеих текущих клиник так).

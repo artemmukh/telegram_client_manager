@@ -881,6 +881,50 @@ async def test_get_staff_users_by_clinic_id_still_includes_clinic_scope_admins()
 
 
 @pytest.mark.asyncio
+async def test_get_clinic_notification_recipients_filters_by_staff_scope():
+    connection = await aiosqlite.connect(":memory:")
+    try:
+        await connection.execute(
+            "CREATE TABLE clinics(id INTEGER PRIMARY KEY, name TEXT, token TEXT)"
+        )
+        await connection.execute(
+            """
+            CREATE TABLE staff(
+                telegram_user_id INTEGER PRIMARY KEY,
+                clinic_id INTEGER NOT NULL,
+                visibility_scope TEXT,
+                is_doctor INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+        user_repo = UserRepository(connection)
+        await user_repo.init()
+        await UserSettingsRepository(connection).init()
+
+        clinic_admin = User(
+            full_name="Админ Клиники", phone="+998901111111", role=Role.ADMIN,
+            telegram_user_id=1001, clinic_id=1,
+        )
+        own_scope_staff = User(
+            full_name="Врач", phone="+998901111112", role=Role.ADMIN,
+            telegram_user_id=1002, clinic_id=1,
+        )
+        await user_repo.create_user(clinic_admin)
+        await user_repo.create_user(own_scope_staff)
+        await connection.executemany(
+            "INSERT INTO staff(telegram_user_id, clinic_id, visibility_scope) VALUES (?, 1, ?)",
+            [(1001, "clinic"), (1002, "own")],
+        )
+        await connection.commit()
+
+        recipients = await user_repo.get_clinic_notification_recipients(1)
+
+        assert [user.telegram_user_id for user in recipients] == [1001]
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_get_all_users_returns_every_user_regardless_of_role_or_clinic():
     """get_all_users() (used by scripts/refresh_command_menus.py) must return
     every row with no role/clinic filtering, unlike get_staff_users_by_clinic_id

@@ -119,3 +119,17 @@ MEDICAL_RECORD_TEMPLATE_BY_INSTANCE: dict[str, str | None] = {
     "zb": "data/history_of_illness/medical_card_wisdom_tooth.docx",
     "mm": None,  # ещё не настроено
 }
+
+# Seeded staff keep their notification visibility explicit. Existing rows are
+# left untouched by StaffRepository so manual per-user configuration survives.
+STAFF_VISIBILITY_SCOPE_BY_INSTANCE: dict[str, dict[int, str]] = {
+    "zb": {
+        685889801: "clinic",
+        226655040: "own",
+        37470594: "own",
+    },
+    "mm": {
+        1093653116: "own",
+        685889801: "clinic",
+    },
+}

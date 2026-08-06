@@ -45,6 +45,13 @@ async def test_visibility_scope_backfill_transfers_value_from_users():
         assert staff.visibility_scope == "clinic"
         assert staff.is_doctor is False
 
+        seeded_staff = await staff_repo.get_staff_by_clinic_id(1)
+        seeded_by_id = {member.telegram_user_id: member for member in seeded_staff}
+        assert seeded_by_id[226655040].visibility_scope == "own"
+        assert seeded_by_id[226655040].is_doctor is True
+        assert seeded_by_id[37470594].visibility_scope == "own"
+        assert seeded_by_id[37470594].is_doctor is True
+
         cursor = await connection.execute("PRAGMA table_info(users)")
         users_columns = {row[1] for row in await cursor.fetchall()}
         assert "visibility_scope" not in users_columns, (
@@ -55,11 +62,11 @@ async def test_visibility_scope_backfill_transfers_value_from_users():
 
 
 @pytest.mark.asyncio
-async def test_visibility_scope_backfill_leaves_null_when_telegram_id_missing_from_users():
+async def test_seed_sets_visibility_scope_when_telegram_id_missing_from_users():
     """telegram_id present only in staff, never registered as a User (the
     Artem scenario: resolved purely through the staff table for clinic lookup)
-    -- there is nothing to migrate, visibility_scope must stay NULL rather
-    than the backfill raising."""
+    -- there is nothing to backfill, but the explicit seed configuration still
+    sets the staff member's notification visibility."""
     connection = await aiosqlite.connect(":memory:")
     try:
         await connection.execute(
@@ -84,7 +91,7 @@ async def test_visibility_scope_backfill_leaves_null_when_telegram_id_missing_fr
         await staff_repo.init("zb")
 
         staff = await staff_repo.get_staff(685889801)
-        assert staff.visibility_scope is None
+        assert staff.visibility_scope == "clinic"
 
         cursor = await connection.execute("PRAGMA table_info(users)")
         users_columns = {row[1] for row in await cursor.fetchall()}

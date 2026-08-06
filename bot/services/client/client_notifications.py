@@ -68,7 +68,7 @@ class ClientNotificationService:
         """Best-effort broadcast informing admins that a client changed their name
         during registration. Never raises: a failed delivery to one admin must
         not block delivery to the others."""
-        admins = await self.user_repository.get_staff_users_by_clinic_id(clinic_id)
+        admins = await self.user_repository.get_clinic_notification_recipients(clinic_id)
 
         for admin in admins:
             if admin.telegram_user_id is None:
@@ -96,7 +96,7 @@ class ClientNotificationService:
         """Best-effort broadcast asking admins to approve/reject a client's
         name-change request. Never raises: a failed delivery to one admin must
         not block delivery to the others."""
-        admins = await self.user_repository.get_staff_users_by_clinic_id(user.clinic_id)
+        admins = await self.user_repository.get_clinic_notification_recipients(user.clinic_id)
 
         for admin in admins:
             if admin.telegram_user_id is None:

@@ -25,12 +25,16 @@ class FakeTelegramNotifier:
 
 
 class FakeUserRepo:
-    def __init__(self, staff, clients_missing_personal_data=None):
+    def __init__(self, staff, clients_missing_personal_data=None, notification_staff=None):
         self.staff = staff
         self.clients_missing_personal_data = clients_missing_personal_data or []
+        self.notification_staff = staff if notification_staff is None else notification_staff
 
     async def get_staff_users_by_clinic_id(self, clinic_id):
         return self.staff
+
+    async def get_clinic_notification_recipients(self, clinic_id):
+        return self.notification_staff
 
     async def get_clients_missing_personal_data(self):
         return self.clients_missing_personal_data
@@ -98,6 +102,24 @@ async def test_notify_admins_name_change_request_sends_with_keyboard_and_survive
     assert len(notifier.sent_messages) == 1
     assert notifier.sent_messages[0]['chat_id'] == 200
     assert isinstance(notifier.sent_messages[0]['reply_markup'], InlineKeyboardMarkup)
+
+
+@pytest.mark.asyncio
+async def test_name_change_notifications_use_only_clinic_scope_recipients():
+    clinic_admin = _admin(telegram_user_id=100, ID=2)
+    own_scope_staff = _admin(telegram_user_id=200, ID=3)
+    notifier = FakeTelegramNotifier()
+    repo = FakeUserRepo(
+        [clinic_admin, own_scope_staff],
+        notification_staff=[clinic_admin],
+    )
+    service = ClientNotificationService(notifier, repo)
+
+    await service.notify_admins_name_changed_on_registration(
+        clinic_id=1, stored_name="Иванов Иван", new_name="Петров Петр", client_phone="+998901234567",
+    )
+
+    assert [message['chat_id'] for message in notifier.sent_messages] == [100]
 
 
 @pytest.mark.asyncio

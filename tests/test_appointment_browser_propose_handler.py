@@ -393,9 +393,9 @@ async def test_approve_new_datetime_confirmed_branch_notifies_other_staff_and_ex
 
     user_repo = _RecipientAwareUserRepo(client, admin, doctor, other_admin)
     staff_repo = _RecipientAwareStaffRepo(
-        admin_staff=Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+        admin_staff=Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic", is_doctor=False),
         doctor_staff=Staff(telegram_user_id=DOCTOR_TELEGRAM_ID, clinic_id=1, visibility_scope="own"),
-        other_admin_staff=Staff(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic"),
+        other_admin_staff=Staff(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, clinic_id=1, visibility_scope="clinic", is_doctor=False),
     )
     clinic_repo = _RecipientAwareClinicRepo()
 

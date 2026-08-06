@@ -127,10 +127,10 @@ class FakeStaffRepo:
         self.by_telegram_id = {
             DOCTOR_TELEGRAM_ID: Staff(telegram_user_id=DOCTOR_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="own"),
             ACTOR_ADMIN_TELEGRAM_ID: Staff(
-                telegram_user_id=ACTOR_ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="clinic",
+                telegram_user_id=ACTOR_ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="clinic", is_doctor=False,
             ),
             OTHER_ADMIN_TELEGRAM_ID: Staff(
-                telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="clinic",
+                telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, clinic_id=CLINIC_ID, visibility_scope="clinic", is_doctor=False,
             ),
         }
 

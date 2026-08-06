@@ -1,7 +1,8 @@
 # План: видимость сотрудников и каналы уведомлений
 
-Статус: бэклог. Ничего из перечисленного ниже не реализовано — это результат анализа,
-а не одобренный план работ. Приоритеты — рекомендация, а не решение.
+Статус: бэклог. Пункты 1.2, 2.1, 2.2 и 2.3 закрыты в текущей партии; остальные
+пункты остаются результатом анализа, а не одобренным планом работ. Приоритеты —
+рекомендация, а не решение.
 
 Все фазы идут через обязательный workflow проекта (`.claude/agents/workflow.md`):
 planner → researcher → implementer → [aiogram-expert / database-expert при необходимости]
@@ -27,6 +28,17 @@ planner → researcher → implementer → [aiogram-expert / database-expert п�
 Отдельный шаблон заведён потому, что `_STALE_DECISION_TEXT` утверждает «{label} уже
 принял(а) решение», а при отмене клиентом и при истечении срока решения сотрудника
 не было вовсе.
+
+В текущей партии также закрыты пункты **1.2, 2.1, 2.2 и 2.3**:
+
+- seed сотрудников получает явный `visibility_scope` и согласованный `is_doctor`;
+- клиентские уведомления об изменении ФИ идут только clinic-scope сотрудникам через
+  scope-aware repository helper;
+- отсутствующая строка `staff` больше не трактует пользователя как врача;
+- подпись решения определяется по `staff.is_doctor`, а не по `visibility_scope`.
+
+Добавлены регрессионные тесты для чистого seed, фильтрации получателей, fail-open
+дефолта и подписей решений.
 
 ---
 
@@ -59,6 +71,8 @@ planner → researcher → implementer → [aiogram-expert / database-expert п�
 
 ### 1.2 Свежая клиника не имеет ни одного получателя-администратора
 
+**Статус: сделано.**
+
 `_seed_staff_by_clinic_token` (`bot/repositories/staff_repository.py`) вставляет только
 `(telegram_user_id, clinic_id)` → `visibility_scope = NULL`.
 
@@ -83,6 +97,8 @@ planner → researcher → implementer → [aiogram-expert / database-expert п�
 
 ### 2.1 `client_notifications.py` в обход единой точки веера
 
+**Статус: сделано.**
+
 `bot/services/client/client_notifications.py:71,99` зовёт
 `user_repository.get_staff_users_by_clinic_id(clinic_id)` напрямую, минуя
 `resolve_notification_recipients`.
@@ -104,6 +120,8 @@ planner → researcher → implementer → [aiogram-expert / database-expert п�
 
 ### 2.2 Fail-open дефолт в `list_clinic_doctors`
 
+**Статус: сделано.**
+
 `bot/services/appointment/appointment_management.py:292`:
 `is_doctor_by_telegram_id.get(u.telegram_user_id, True)`.
 
@@ -121,6 +139,8 @@ planner → researcher → implementer → [aiogram-expert / database-expert п�
 Правка — однострочник (`False`).
 
 ### 2.3 `resolve_decision_label` игнорирует `is_doctor`
+
+**Статус: сделано.**
 
 `bot/services/appointment/appointment_management.py:496-499` подписывает актора
 «Администратор»/«Доктор» по `visibility_scope`, хотя для этого есть отдельное поле

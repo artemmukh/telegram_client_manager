@@ -1,7 +1,11 @@
 import aiosqlite
 
 
-from bot.config.clinic_instances import CLINIC_SEED_BY_INSTANCE, STAFF_SEED_BY_INSTANCE
+from bot.config.clinic_instances import (
+    CLINIC_SEED_BY_INSTANCE,
+    STAFF_SEED_BY_INSTANCE,
+    STAFF_VISIBILITY_SCOPE_BY_INSTANCE,
+)
 from bot.models.staff import Staff
 
 
@@ -14,20 +18,14 @@ class StaffRepository:
             CREATE TABLE IF NOT EXISTS staff(
                 telegram_user_id INTEGER PRIMARY KEY,
                 clinic_id INTEGER NOT NULL,
+                visibility_scope TEXT DEFAULT NULL,
+                is_doctor INTEGER NOT NULL DEFAULT 1,
 
                 FOREIGN KEY(clinic_id)
                     REFERENCES clinics(id)
                     ON DELETE CASCADE
             )
         """)
-
-        # Each instance now runs its own dedicated database (one clinic per
-        # DB), so only that instance's own staff are seeded here -- not
-        # everyone from every clinic.
-        clinic_token = CLINIC_SEED_BY_INSTANCE[instance]["token"]
-        await self._seed_staff_by_clinic_token(
-            clinic_token, STAFF_SEED_BY_INSTANCE[instance]
-        )
 
         cursor = await self.connection.execute("PRAGMA table_info(staff)")
         columns = {row[1] for row in await cursor.fetchall()}
@@ -70,10 +68,22 @@ class StaffRepository:
         if "visibility_scope" in users_columns:
             await self.connection.execute("ALTER TABLE users DROP COLUMN visibility_scope")
 
+        # Each instance now runs its own dedicated database (one clinic per
+        # DB), so only that instance's own staff are seeded here.
+        clinic_token = CLINIC_SEED_BY_INSTANCE[instance]["token"]
+        await self._seed_staff_by_clinic_token(
+            clinic_token,
+            STAFF_SEED_BY_INSTANCE[instance],
+            STAFF_VISIBILITY_SCOPE_BY_INSTANCE[instance],
+        )
+
         await self.connection.commit()
 
     async def _seed_staff_by_clinic_token(
-        self, clinic_token: str, telegram_user_ids: list[int]
+        self,
+        clinic_token: str,
+        telegram_user_ids: list[int],
+        visibility_scopes: dict[int, str],
     ) -> None:
         # Seed telegram ids resolved by clinic token rather than a hardcoded
         # clinic_id: clinics.id is AUTOINCREMENT, so the numeric id a given
@@ -93,8 +103,20 @@ class StaffRepository:
         clinic_id = row[0]
 
         await self.connection.executemany(
-            "INSERT OR IGNORE INTO staff (telegram_user_id, clinic_id) VALUES (?, ?)",
-            [(telegram_user_id, clinic_id) for telegram_user_id in telegram_user_ids],
+            """
+            INSERT OR IGNORE INTO staff
+                (telegram_user_id, clinic_id, visibility_scope, is_doctor)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (
+                    telegram_user_id,
+                    clinic_id,
+                    visibility_scopes[telegram_user_id],
+                    int(visibility_scopes[telegram_user_id] != "clinic"),
+                )
+                for telegram_user_id in telegram_user_ids
+            ],
         )
 
     async def get_staff(self, telegram_user_id: int) -> Staff | None:

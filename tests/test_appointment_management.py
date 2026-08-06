@@ -509,7 +509,12 @@ async def test_list_bookable_staff_returns_clinic_staff():
     client = _booking_client()
     staff = _staff_member()
     user_repo = FakeUserRepo(client=client, staff_by_clinic={1: [staff]})
-    service = AppointmentManagement(FakeAppointmentRepository(), user_repo, FakeStaffRepo(None), _clinic_repo())
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        user_repo,
+        FakeStaffRepo(Staff(telegram_user_id=staff.telegram_user_id, clinic_id=1, is_doctor=True)),
+        _clinic_repo(),
+    )
 
     staff_list = await service.list_bookable_staff(client.telegram_user_id)
 
@@ -639,6 +644,22 @@ async def test_list_clinic_doctors_for_creation_own_scope_returns_empty():
     doctors = await service.list_clinic_doctors_for_creation(admin.telegram_user_id)
 
     assert doctors == []
+
+
+@pytest.mark.asyncio
+async def test_list_clinic_doctors_excludes_users_missing_from_staff():
+    registered_admin = _staff_member(staff_id=42, telegram_user_id=999, full_name="Артём Управляющий")
+    unseeded_user = _staff_member(staff_id=99, telegram_user_id=1000, full_name="Неизвестный Пользователь")
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(admin=registered_admin, staff_by_clinic={1: [registered_admin, unseeded_user]}),
+        FakeStaffRepo({999: Staff(telegram_user_id=999, clinic_id=1, is_doctor=True)}),
+        _clinic_repo(),
+    )
+
+    doctors = await service.list_clinic_doctors(1)
+
+    assert doctors == [registered_admin]
 
 
 @pytest.mark.asyncio
@@ -3000,6 +3021,32 @@ async def test_resolve_decision_label_falls_back_when_user_id_is_none():
     label = await service.resolve_decision_label(None)
 
     assert label == {"ru": "Другой сотрудник", "uz": "Boshqa xodim"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_decision_label_uses_is_doctor_not_visibility_scope():
+    actor = User(
+        ID=42,
+        full_name="Петров Петр",
+        phone="+998901234567",
+        role=Role.ADMIN,
+        telegram_user_id=999,
+    )
+    service = AppointmentManagement(
+        FakeAppointmentRepository(),
+        FakeUserRepo(users_by_id={actor.ID: actor}),
+        FakeStaffRepo(Staff(
+            telegram_user_id=actor.telegram_user_id,
+            clinic_id=1,
+            visibility_scope="clinic",
+            is_doctor=True,
+        )),
+        _clinic_repo(),
+    )
+
+    label = await service.resolve_decision_label(actor.ID)
+
+    assert label == {"ru": "Доктор Петров Петр", "uz": "Shifokor Петров Петр"}
 
 
 # --- Slot conflict detection ---

@@ -79,7 +79,7 @@ class FakeUserRepo:
 
 class FakeStaffRepo:
     async def get_staff(self, telegram_user_id):
-        return Staff(telegram_user_id=telegram_user_id, clinic_id=1, visibility_scope="clinic")
+        return Staff(telegram_user_id=telegram_user_id, clinic_id=1, visibility_scope="clinic", is_doctor=False)
 
 
 class FakeClinicRepo:
