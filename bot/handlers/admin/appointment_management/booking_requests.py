@@ -6,7 +6,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.config.clinic_instances import DATEPARSER_BY_INSTANCE as DATA_PARSE_MODE
-from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError, AppointmentNotFoundError
+from bot.exceptions.appointment_exceptions import (
+    AppointmentAlreadyDecidedError,
+    AppointmentAlreadyFinalizedError,
+    AppointmentNotFoundError,
+)
 from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import ValidationError
 from bot.handlers.utils.admin_utils import appointment_helpers as ah
@@ -17,6 +21,7 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
 from bot.handlers.utils.admin_utils.appointment_calendar_helpers import clamp_calendar_date, clamp_month_to_range
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     invalidate_actor_stale_message,
+    invalidate_own_stale_finalized_message,
     invalidate_sibling_notifications,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import (
@@ -53,6 +58,11 @@ _REQUEST_NOT_FOUND = {
 _REQUEST_NOT_FOUND_DOT = {
     "ru": "Заявка не найдена.",
     "uz": "Ariza topilmadi.",
+}
+
+_REQUEST_FINALIZED = {
+    "ru": "⛔️ Заявка больше не актуальна.",
+    "uz": "⛔️ Ariza endi dolzarb emas.",
 }
 
 _REQUEST_CONFIRMED = {
@@ -217,6 +227,12 @@ def create_admin_booking_requests_router(
         except AppointmentNotFoundError:
             await callback_query.answer(_REQUEST_NOT_FOUND.get(lang, _REQUEST_NOT_FOUND["ru"]), show_alert=True)
             return
+        except AppointmentAlreadyFinalizedError as e:
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await invalidate_own_stale_finalized_message(
+                callback_query, _REQUEST_FINALIZED.get(lang, _REQUEST_FINALIZED["ru"]),
+            )
+            return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
             await invalidate_own_stale_booking_message(callback_query, e, lang)
@@ -251,6 +267,12 @@ def create_admin_booking_requests_router(
             )
         except AppointmentNotFoundError:
             await callback_query.answer(_REQUEST_NOT_FOUND.get(lang, _REQUEST_NOT_FOUND["ru"]), show_alert=True)
+            return
+        except AppointmentAlreadyFinalizedError as e:
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await invalidate_own_stale_finalized_message(
+                callback_query, _REQUEST_FINALIZED.get(lang, _REQUEST_FINALIZED["ru"]),
+            )
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -471,6 +493,13 @@ def create_admin_booking_requests_router(
             )
         except AppointmentNotFoundError:
             await callback_query.answer(_REQUEST_NOT_FOUND.get(lang, _REQUEST_NOT_FOUND["ru"]), show_alert=True)
+            return
+        except AppointmentAlreadyFinalizedError as e:
+            await callback_query.answer(e.localized(lang), show_alert=True)
+            await invalidate_own_stale_finalized_message(
+                callback_query, _REQUEST_FINALIZED.get(lang, _REQUEST_FINALIZED["ru"]),
+            )
+            await state.clear()
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)

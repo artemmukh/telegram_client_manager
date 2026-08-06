@@ -81,6 +81,21 @@ async def invalidate_actor_stale_message(
     )
 
 
+async def invalidate_own_stale_finalized_message(callback_query, text: str) -> None:
+    """Remove the action keyboard when the appointment is already finalized.
+
+    This path has no deciding staff member to report, so it edits the callback
+    message directly instead of using the decision-notification invalidation.
+    Telegram can reject the edit when the message was deleted or already has
+    the same content; neither case should make the callback handler fail.
+    """
+    try:
+        await callback_query.message.edit_text(text, reply_markup=None)
+    except Exception as error:
+        if "message is not modified" not in str(error):
+            logger.warning("Failed to invalidate finalized appointment message: %s", error)
+
+
 async def notify_staff_reschedule_decision(
     notification_service: AppointmentNotificationService,
     appt_mng: AppointmentManagement,
