@@ -53,7 +53,7 @@ Workflow: planner → researcher → aiogram-expert (это `BaseMiddleware`, ai
 `bot/services/appointment/appointment_notifications.py` (749 строк) и
 `bot/services/client/client_notifications.py` (112 строк) держат объект aiogram `Bot`
 и напрямую вызывают Telegram API (`TelegramBadRequest`, `ReplyParameters`) —
-нарушение правила CLAUDE.md "Services never know about Telegram objects".
+нарушение правила AGENTS.md "Services never know about Telegram objects".
 
 Задача: создать `TelegramNotifier` (`bot/services/utils/telegram_notifier.py` или
 `bot/services/notification/`), перенести туда все прямые `Bot`-вызовы и обработку
@@ -126,7 +126,7 @@ Workflow (на каждый под-домен): planner → researcher → imple
   `bot/validators/validators.py`) остаются вне этой миграции — они уже вынесены в
   именованные константы на уровне сервисов/валидаторов, и перенос в
   `bot/messages/` (слой, используемый handlers/keyboards) размыл бы границу
-  Service/Handler из CLAUDE.md.
+  Service/Handler из AGENTS.md.
 
 ---
 

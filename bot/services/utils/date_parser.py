@@ -96,7 +96,7 @@ _MONTH_NAMES_GENITIVE_RU = {
 # apply here too. Duplicated as a literal rather than imported, since this
 # is a Service module and appointment_calendar_helpers.py is a Handler-layer
 # module -- importing it would invert the Handler -> Service dependency
-# direction mandated by CLAUDE.md.
+# direction mandated by AGENTS.md.
 _MONTH_NAMES_UZ = {
     1: "Yanvar", 2: "Fevral", 3: "Mart", 4: "Aprel",
     5: "May", 6: "Iyun", 7: "Iyul", 8: "Avgust",
