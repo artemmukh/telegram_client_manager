@@ -14,6 +14,7 @@ from bot.services.appointment.appointment_notifications import (
     admin_upcoming_appointment_text,
     appointment_cancelled_by_admin_text,
     reminder_text,
+    staff_appointment_created_text,
 )
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 from bot.utils.role import Role
@@ -551,6 +552,24 @@ def test_admin_upcoming_appointment_text_escapes_html_special_characters_in_clie
     assert "🏥 Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in text
     assert "<Иван>" not in text
     assert "<кабинет>" not in text
+
+
+def test_staff_appointment_created_text_includes_doctor_name():
+    text = staff_appointment_created_text(
+        "Иванов Иван", "+998901234567", "администратором", "10 июля 2026, 14:30", "Лечение",
+        doctor_full_name="Петров <Пётр>",
+    )
+
+    assert "👨‍⚕️ Врач: Петров &lt;Пётр&gt;" in text
+    assert "<Пётр>" not in text
+
+
+def test_staff_appointment_created_text_without_doctor_shows_dash():
+    text = staff_appointment_created_text(
+        "Иванов Иван", "+998901234567", "администратором", "10 июля 2026, 14:30", "Лечение",
+    )
+
+    assert "👨‍⚕️ Врач: —" in text
 
 
 @pytest.mark.asyncio

@@ -203,7 +203,7 @@ def build_appointment_confirmation(data: dict, lang: str = "ru") -> str:
         labels["confirm_title"],
         "",
         f"{labels['clinic']}: {data.get('clinic_name', '')}",
-        f"{labels['client_name']}: {data.get('full_name', '')}",
+        f"{labels['client_name']}: {escape_html(data.get('full_name') or '')}",
         f"{labels['phone']}: {data.get('phone', '')}",
         f"{labels['datetime']}: {display_datetime}",
         f"{labels['purpose']}: {escape_html(data.get('purpose', ''))}",

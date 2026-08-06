@@ -141,17 +141,19 @@ def test_build_appointment_card_escapes_html_special_characters_in_doctor_full_n
     assert "<Петр>" not in card
 
 
-def test_build_appointment_confirmation_escapes_html_special_characters_in_purpose():
+def test_build_appointment_confirmation_escapes_html_special_characters_in_purpose_and_client_name():
     text = build_appointment_confirmation({
         "clinic_name": "Клиника №1",
-        "full_name": "Иванов Иван",
+        "full_name": "Иванов <Иван>",
         "phone": "+998901234567",
         "appointment_datetime_display": "16.07.2026 14:30",
         "purpose": "Ремонт <кабинет> & лечение",
     })
 
     assert "Услуга: Ремонт &lt;кабинет&gt; &amp; лечение" in text
+    assert "Иванов &lt;Иван&gt;" in text
     assert "<кабинет>" not in text
+    assert "<Иван>" not in text
 
 
 def _message(text):

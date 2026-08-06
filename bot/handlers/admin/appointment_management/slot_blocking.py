@@ -84,8 +84,8 @@ _PROPOSED_CONFLICTS_FOOTER_TEXT = {
     "uz": "\nBloklash baribir yaratiladi, bu yozuvlar joriy vaqtida qoladi.",
 }
 _PROPOSED_CONFLICTS_COUNT_ONLY_TEXT = {
-    "ru": "Ещё {count} записей с предложенным переносом на это время — список слишком длинный, чтобы показать целиком.",
-    "uz": "Yana bu vaqtga ko'chirish taklif qilingan {count} ta yozuv bor — ro'yxat to'liq ko'rsatish uchun juda uzun.",
+    "ru": "Записей с предложенным переносом на это время: {count}. Список слишком длинный, чтобы показать целиком.",
+    "uz": "Bu vaqtga ko'chirish taklif qilingan yozuvlar soni: {count}. Ro'yxat to'liq ko'rsatish uchun juda uzun.",
 }
 _CANCELABLE_CONFLICTS_TOO_LONG_TEXT = {
     "ru": "⚠️ На этот интервал попадает слишком много записей ({count}), чтобы безопасно показать их полный список "

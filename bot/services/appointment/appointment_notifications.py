@@ -1395,7 +1395,7 @@ class AppointmentNotificationService:
         admin_info = ""
         if admin:
             admin_info = _APPOINTMENT_MESSAGE_ADMIN_INFO.get(lang, _APPOINTMENT_MESSAGE_ADMIN_INFO["ru"]).format(
-                full_name=admin.full_name, phone=admin.phone or '—',
+                full_name=escape_html(admin.full_name or ''), phone=admin.phone or '—',
             )
 
         if appointment.status == AppointmentStatus.PENDING:
