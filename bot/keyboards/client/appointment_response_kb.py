@@ -111,7 +111,7 @@ def appointment_reminder_with_buttons_kb(appointment_id: int, lang: str = "ru"):
 
 
 def reschedule_proposal_kb(appointment_id: int, lang: str = "ru"):
-    """Keyboard for client response to a clinic-proposed new time (Accept/Reject)."""
+    """Keyboard for client response to a clinic-proposed new time (Accept/Propose own time/Reject)."""
     builder = InlineKeyboardBuilder()
 
     builder.button(
@@ -119,11 +119,15 @@ def reschedule_proposal_kb(appointment_id: int, lang: str = "ru"):
         callback_data=ClientManageActionCB(action="accept_proposal", appointment_id=appointment_id, page=1).pack(),
     )
     builder.button(
+        text=_PROPOSE_OWN_TIME_LABEL.get(lang, _PROPOSE_OWN_TIME_LABEL["ru"]),
+        callback_data=ClientRescheduleStartCB(appointment_id=appointment_id).pack(),
+    )
+    builder.button(
         text=_REJECT_NEW_TIME_LABEL.get(lang, _REJECT_NEW_TIME_LABEL["ru"]),
         callback_data=ClientManageActionCB(action="reject_proposal", appointment_id=appointment_id, page=1).pack(),
     )
 
-    builder.adjust(1, 1)
+    builder.adjust(1, 1, 1)
 
     return builder.as_markup()
 
