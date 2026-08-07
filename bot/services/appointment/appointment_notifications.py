@@ -94,8 +94,8 @@ _STAFF_APPOINTMENT_CANCELLED = {
 }
 
 _STAFF_APPOINTMENT_DELETED = {
-    "ru": "🗑 Запись клиента {client_name} удалена ({actor}).\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "🗑 Mijoz {client_name} yozuvi o'chirildi ({actor}).\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "🗑 Запись клиента {client_name} удалена ({actor}).\n\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "🗑 Mijoz {client_name} yozuvi o'chirildi ({actor}).\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _STAFF_APPOINTMENT_CREATED = {
@@ -104,13 +104,13 @@ _STAFF_APPOINTMENT_CREATED = {
 }
 
 _ADMIN_CLIENT_CHANGED_TIME = {
-    "ru": "🕐 Клиент {client_name} изменил время заявки.\n📱 Номер: {client_phone}\n📅 Новое время: {datetime}",
-    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.\n📱 Raqam: {client_phone}\n📅 Yangi vaqt: {datetime}",
+    "ru": "🕐 Клиент {client_name} изменил время заявки.\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Новое время: {datetime}",
+    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Yangi vaqt: {datetime}",
 }
 
 _ADMIN_CONFIRMATION = {
-    "ru": "Клиент {client_name} подтвердил запись.\n\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "Mijoz {client_name} yozuvni tasdiqladi.\n\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "Клиент {client_name} подтвердил запись.\n\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
+    "uz": "Mijoz {client_name} yozuvni tasdiqladi.\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
 }
 
 _ADMIN_COMPLETION_PROMPT = {
@@ -119,8 +119,8 @@ _ADMIN_COMPLETION_PROMPT = {
 }
 
 _STAFF_NEW_BOOKING_REQUEST = {
-    "ru": "🆕 Новая заявка на запись\n\n👤 Клиент: {client_name}\n📱 Номер: {client_phone}\n📅 Дата и время: {datetime}\n📝 Жалоба: {purpose}",
-    "uz": "🆕 Yozilish uchun yangi ariza\n\n👤 Mijoz: {client_name}\n📱 Raqam: {client_phone}\n📅 Sana va vaqt: {datetime}\n📝 Shikoyat: {purpose}",
+    "ru": "🆕 Новая заявка на запись\n\n👤 Клиент: {client_name}\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅Дата и время: {datetime}\n📝 Жалоба: {purpose}",
+    "uz": "🆕 Yozilish uchun yangi ariza\n\n👤 Mijoz: {client_name}\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n📝 Shikoyat: {purpose}",
 }
 
 _CLIENT_AUTO_CONFIRMED = {
@@ -399,11 +399,13 @@ def staff_appointment_cancelled_text(
     purpose: str,
     lang: str = "ru",
     deleted: bool = False,
+    doctor_full_name: str | None = None,
 ) -> str:
     template = _STAFF_APPOINTMENT_DELETED if deleted else _STAFF_APPOINTMENT_CANCELLED
     return template.get(lang, template["ru"]).format(
         client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
         datetime=datetime_value, purpose=escape_html(purpose),
+        doctor_full_name=escape_html(doctor_full_name) if doctor_full_name else '—',
     )
 
 
@@ -425,18 +427,22 @@ def staff_appointment_created_text(
 
 def admin_client_changed_time_text(
     client_name: str, client_phone: str | None, datetime_value: str, lang: str = "ru",
+    doctor_full_name: str | None = None,
 ) -> str:
     return _ADMIN_CLIENT_CHANGED_TIME.get(lang, _ADMIN_CLIENT_CHANGED_TIME["ru"]).format(
         client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
+        doctor_full_name=escape_html(doctor_full_name) if doctor_full_name else '—',
     )
 
 
 def admin_confirmation_text(
     client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
+    doctor_full_name: str | None = None,
 ) -> str:
     return _ADMIN_CONFIRMATION.get(lang, _ADMIN_CONFIRMATION["ru"]).format(
         client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
         purpose=escape_html(purpose),
+        doctor_full_name=escape_html(doctor_full_name) if doctor_full_name else '—',
     )
 
 
@@ -448,10 +454,12 @@ def admin_completion_prompt(appointment_id: int, lang: str = "ru") -> str:
 
 def staff_new_booking_request_text(
     client_name: str, client_phone: str | None, datetime_value: str, purpose: str, lang: str = "ru",
+    doctor_full_name: str | None = None,
 ) -> str:
     return _STAFF_NEW_BOOKING_REQUEST.get(lang, _STAFF_NEW_BOOKING_REQUEST["ru"]).format(
         client_name=escape_html(client_name), client_phone=client_phone or '—', datetime=datetime_value,
         purpose=escape_html(purpose),
+        doctor_full_name=escape_html(doctor_full_name) if doctor_full_name else '—',
     )
 
 
@@ -853,13 +861,16 @@ class AppointmentNotificationService:
         admin_telegram_id: int,
         appointment: Appointment,
         client_name: str,
+        doctor_full_name: str | None = None,
     ) -> None:
         """Notify admin that the client changed the time of their own pending self-booking request."""
         lang = await self._resolve_lang(admin_telegram_id)
+        doc_name = doctor_full_name or appointment.doctor_full_name
         await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=admin_client_changed_time_text(
                 client_name, appointment.client_phone, _format_datetime_value(appointment.datetime, lang), lang,
+                doctor_full_name=doc_name,
             ),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
@@ -868,18 +879,21 @@ class AppointmentNotificationService:
         self,
         admin_telegram_id: int,
         appointment: Appointment,
-        client_name: str
+        client_name: str,
+        doctor_full_name: str | None = None,
     ) -> int | None:
         """Send confirmation notification to admin.
 
         Returns the sent message's message_id.
         """
         lang = await self._resolve_lang(admin_telegram_id)
+        doc_name = doctor_full_name or appointment.doctor_full_name
         return await self.notifier.send_message(
             chat_id=admin_telegram_id,
             text=admin_confirmation_text(
                 client_name, appointment.client_phone,
                 _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+                doctor_full_name=doc_name,
             ),
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
@@ -902,6 +916,7 @@ class AppointmentNotificationService:
         staff_telegram_id: int,
         appointment: Appointment,
         client_name: str,
+        doctor_full_name: str | None = None,
     ) -> int | None:
         """Notify the chosen staff member about a new client self-booking request.
 
@@ -910,8 +925,10 @@ class AppointmentNotificationService:
         Raises NotificationDeliveryError if the message could not be sent.
         """
         lang = await self._resolve_lang(staff_telegram_id)
+        doc_name = doctor_full_name or appointment.doctor_full_name
         message_text = staff_new_booking_request_text(
             client_name, appointment.client_phone, appointment.datetime, appointment.purpose, lang,
+            doctor_full_name=doc_name,
         )
 
         try:
@@ -1255,6 +1272,7 @@ class AppointmentNotificationService:
         actor_label: dict[str, str],
         client_name: str | None,
         deleted: bool = False,
+        doctor_full_name: str | None = None,
     ) -> int | None:
         """Notify other staff that a colleague cancelled or deleted this appointment.
 
@@ -1271,12 +1289,14 @@ class AppointmentNotificationService:
         reply_to_message_id = (
             None if deleted else await self._admin_reply_to_message_id(appointment, staff_telegram_id)
         )
+        doc_name = doctor_full_name or appointment.doctor_full_name
         return await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_appointment_cancelled_text(
                 display_name, appointment.client_phone, actor,
                 _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
                 deleted=deleted,
+                doctor_full_name=doc_name,
             ),
             reply_to_message_id=reply_to_message_id,
         )
@@ -1287,6 +1307,7 @@ class AppointmentNotificationService:
         appointment: Appointment,
         actor_label: dict[str, str],
         client_name: str | None,
+        doctor_full_name: str | None = None,
     ) -> int | None:
         """Notify other staff that a colleague created this appointment.
 
@@ -1298,12 +1319,13 @@ class AppointmentNotificationService:
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         display_name = client_name or DEFAULT_UNKNOWN_CLIENT_LABEL.get(lang, DEFAULT_UNKNOWN_CLIENT_LABEL["ru"])
+        doc_name = doctor_full_name or appointment.doctor_full_name
         return await self.notifier.send_message(
             chat_id=staff_telegram_id,
             text=staff_appointment_created_text(
                 display_name, appointment.client_phone, actor,
                 _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
-                doctor_full_name=appointment.doctor_full_name,
+                doctor_full_name=doc_name,
             ),
         )
 

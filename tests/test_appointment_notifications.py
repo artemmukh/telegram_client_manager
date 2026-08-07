@@ -11,10 +11,14 @@ from bot.keyboards.client.appointment_response_kb import (
 )
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
+    admin_client_changed_time_text,
+    admin_confirmation_text,
     admin_upcoming_appointment_text,
     appointment_cancelled_by_admin_text,
     reminder_text,
+    staff_appointment_cancelled_text,
     staff_appointment_created_text,
+    staff_new_booking_request_text,
 )
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 from bot.utils.role import Role
@@ -570,6 +574,45 @@ def test_staff_appointment_created_text_without_doctor_shows_dash():
     )
 
     assert "👨‍⚕️ Врач: —" in text
+
+
+def test_admin_confirmation_text_includes_doctor_name():
+    text = admin_confirmation_text(
+        "Иванов Иван", "+998901234567", "10 июля 2026, 14:30", "Консультация",
+        doctor_full_name="Петров <Пётр>",
+    )
+    assert "🧑‍⚕️ Врач: Петров &lt;Пётр&gt;" in text
+
+
+def test_admin_confirmation_text_without_doctor_shows_dash():
+    text = admin_confirmation_text(
+        "Иванов Иван", "+998901234567", "10 июля 2026, 14:30", "Консультация",
+    )
+    assert "🧑‍⚕️ Врач: —" in text
+
+
+def test_admin_client_changed_time_text_includes_doctor_name():
+    text = admin_client_changed_time_text(
+        "Иванов Иван", "+998901234567", "10 июля 2026, 14:30",
+        doctor_full_name="Петров Пётр",
+    )
+    assert "🧑‍⚕️ Врач: Петров Пётр" in text
+
+
+def test_staff_new_booking_request_text_includes_doctor_name():
+    text = staff_new_booking_request_text(
+        "Иванов Иван", "+998901234567", "10 июля 2026, 14:30", "Боль в зубе",
+        doctor_full_name="Петров Пётр",
+    )
+    assert "🧑‍⚕️ Врач: Петров Пётр" in text
+
+
+def test_staff_appointment_deleted_text_includes_doctor_name():
+    text = staff_appointment_cancelled_text(
+        "Иванов Иван", "+998901234567", "администратор", "10 июля 2026, 14:30", "Консультация",
+        deleted=True, doctor_full_name="Петров Пётр",
+    )
+    assert "🧑‍⚕️ Врач: Петров Пётр" in text
 
 
 @pytest.mark.asyncio
