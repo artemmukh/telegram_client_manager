@@ -39,13 +39,18 @@ def build_client_card_text(user: User, lang: str = "ru") -> str:
     birth_date = user.birth_date
 
     if birth_date is None:
-        birth_date = labels["not_specified"]
+        param = "not_specified"
+        formated_bd = labels[param]
+    else:
+        formated_bd = format_appointment_card_datetime(birth_date).split(' ')[0]
 
     lines = [
         f"{labels['full_name']}: {user.full_name}",
         f"{labels['phone']}: {user.phone}",
-        f"{labels['birth_date']}: {format_appointment_card_datetime(birth_date).split(' ')[0]}",
+        f"{labels['birth_date']}: {formated_bd}",
     ]
+
+
     if user.clinic_name:
         lines.append(f"{labels['clinic']}: {user.clinic_name}")
     return "\n".join(lines)

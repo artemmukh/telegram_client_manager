@@ -186,7 +186,7 @@ class ClientManagement:
     async def update_client_name(self, user_id: int, new_full_name: str, clinic_id: int) -> User:
         new_full_name = new_full_name.strip()
 
-        validate_full_name(new_full_name, FULL_NAME_PATTERN)
+        validate_full_name(new_full_name, SEARCH_NAME_PATTERN)
 
         user = await self._ensure_client_in_clinic(user_id, clinic_id)
 
