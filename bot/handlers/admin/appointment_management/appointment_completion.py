@@ -13,6 +13,14 @@ from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_card_kb
+from bot.keyboards.admin.record_management_kb.completion_details_cb import (
+    CompletionDetailsCB,
+    CompletionHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_details_kb import (
+    completion_details_kb,
+    completion_hide_details_kb,
+)
 from bot.keyboards.admin.record_management_kb.completion_followup_cb import CompletionFollowupCB
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
@@ -81,6 +89,7 @@ def create_admin_completion_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
+        await state.clear()
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_appointment_card(appointment, lang),
@@ -107,7 +116,9 @@ def create_admin_completion_router(
                 )
 
     @router.callback_query(CompletionFollowupCB.filter(F.action == "skip"))
-    async def skip_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB, current_user: User):
+    async def skip_edit(
+        callback_query: CallbackQuery, callback_data: CompletionFollowupCB, state: FSMContext, current_user: User,
+    ):
         lang = current_user.language
         owned_appointment = await appt_mng.get_appointment_for_admin(
             callback_data.appointment_id, callback_query.from_user.id
@@ -141,9 +152,11 @@ def create_admin_completion_router(
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
+        await state.clear()
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]), reply_markup=None,
+            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]),
+            reply_markup=completion_details_kb(appointment.id, lang),
         )
 
         if notification_service:
@@ -160,5 +173,41 @@ def create_admin_completion_router(
                 logger.warning(
                     f"Failed to invalidate sibling completion notifications for appointment {appointment.id}: {e}"
                 )
+
+    @router.callback_query(CompletionDetailsCB.filter())
+    async def show_completion_details(
+        callback_query: CallbackQuery, callback_data: CompletionDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment, lang),
+            reply_markup=completion_hide_details_kb(appointment.id, lang),
+        )
+
+    @router.callback_query(CompletionHideDetailsCB.filter())
+    async def hide_completion_details(
+        callback_query: CallbackQuery, callback_data: CompletionHideDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]),
+            reply_markup=completion_details_kb(appointment.id, lang),
+        )
 
     return router

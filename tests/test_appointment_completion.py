@@ -10,10 +10,21 @@ alert and skip their normal success rendering.
 """
 
 import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
 from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.appointment_management.appointment_completion import (
     create_admin_completion_router,
+)
+from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
+from bot.keyboards.admin.record_management_kb.completion_details_cb import (
+    CompletionDetailsCB,
+    CompletionHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_details_kb import (
+    completion_details_kb,
+    completion_hide_details_kb,
 )
 from bot.keyboards.admin.record_management_kb.completion_followup_cb import CompletionFollowupCB
 from bot.models.appointment import Appointment
@@ -21,6 +32,7 @@ from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
+from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
@@ -29,6 +41,32 @@ ADMIN_TELEGRAM_ID = 999
 OTHER_ADMIN_TELEGRAM_ID = 1000
 
 ALREADY_DECIDED_ALERT = "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»"
+
+
+@pytest.mark.parametrize(
+    ("lang", "label"),
+    [("ru", "Подробнее"), ("uz", "Batafsil")],
+)
+def test_completion_details_keyboard_uses_only_appointment_id(lang, label):
+    markup = completion_details_kb(188, lang=lang)
+    callback = CompletionDetailsCB.unpack(markup.inline_keyboard[0][0].callback_data)
+
+    assert markup.inline_keyboard[0][0].text == label
+    assert callback.appointment_id == 188
+    assert callback.model_dump() == {"appointment_id": 188}
+
+
+@pytest.mark.parametrize(
+    ("lang", "label"),
+    [("ru", "Скрыть"), ("uz", "Yopish")],
+)
+def test_completion_hide_details_keyboard_uses_only_appointment_id(lang, label):
+    markup = completion_hide_details_kb(188, lang=lang)
+    callback = CompletionHideDetailsCB.unpack(markup.inline_keyboard[0][0].callback_data)
+
+    assert markup.inline_keyboard[0][0].text == label
+    assert callback.appointment_id == 188
+    assert callback.model_dump() == {"appointment_id": 188}
 
 
 class FakeAppointmentRepository:
@@ -264,11 +302,65 @@ async def test_skip_edit_finalizes_status_as_completed():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data, _admin_user())
+    await skip_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     assert appointment_repo.appointment.status is AppointmentStatus.COMPLETED
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
-    callback_query.message.edit_text.assert_called_once_with("Приём завершён.", reply_markup=None)
+    callback_query.message.edit_text.assert_called_once_with(
+        "Приём завершён.", reply_markup=completion_details_kb(1, lang="ru"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_completion_details_edits_compact_message_to_appointment_card():
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    details = _find_handler(_router(appointment_repo), "show_completion_details")
+    callback_query = _callback_query()
+
+    await details(callback_query, CompletionDetailsCB(appointment_id=1), _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("")
+    callback_query.message.edit_text.assert_awaited_once_with(
+        build_appointment_card(appointment_repo.appointment, "ru"),
+        reply_markup=completion_hide_details_kb(1, lang="ru"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_hide_completion_details_restores_compact_message():
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    hide_details = _find_handler(_router(appointment_repo), "hide_completion_details")
+    callback_query = _callback_query()
+
+    await hide_details(callback_query, CompletionHideDetailsCB(appointment_id=1), _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("")
+    callback_query.message.edit_text.assert_awaited_once_with(
+        "Приём завершён.", reply_markup=completion_details_kb(1, lang="ru"),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "callback_data", "appointment", "telegram_user_id"),
+    [
+        ("show_completion_details", CompletionDetailsCB(appointment_id=1), None, ADMIN_TELEGRAM_ID),
+        (
+            "hide_completion_details", CompletionHideDetailsCB(appointment_id=1), _appointment(doctor_id=1),
+            OTHER_ADMIN_TELEGRAM_ID,
+        ),
+    ],
+)
+async def test_completion_details_denies_missing_or_out_of_scope_appointment(
+    handler_name, callback_data, appointment, telegram_user_id,
+):
+    handler = _find_handler(_router(FakeAppointmentRepository(appointment)), handler_name)
+    callback_query = _callback_query(telegram_user_id=telegram_user_id)
+
+    await handler(callback_query, callback_data, _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -282,7 +374,7 @@ async def test_skip_edit_resyncs_jobs_when_scheduler_provided():
     callback_query = _callback_query()
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data, _admin_user())
+    await skip_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     resynced_appointment = appointment_scheduler.resync_appointment_jobs.call_args.args[0]
@@ -298,11 +390,70 @@ async def test_skip_edit_denies_access_to_other_doctors_appointment():
     callback_query = _callback_query(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID)
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data, _admin_user())
+    await skip_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with("Запись не найдена.", show_alert=True)
     assert appointment_repo.appointment.status is AppointmentStatus.CONFIRMED
     assert appointment_repo.status_updates == []
+
+
+def _name_search_state():
+    return FSMContext(storage=MemoryStorage(), key=(ADMIN_TELEGRAM_ID, ADMIN_TELEGRAM_ID))
+
+
+@pytest.mark.asyncio
+async def test_skip_completion_clears_an_active_name_search_state():
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    skip_edit = _find_handler(_router(appointment_repo), "skip_edit")
+    callback_query = _callback_query()
+    state = _name_search_state()
+    await state.set_state(AppointmentBrowserStates.search_name)
+    await state.update_data(full_name="Draft", card_message_id=111)
+
+    await skip_edit(
+        callback_query, CompletionFollowupCB(action="skip", appointment_id=1), state, _admin_user(),
+    )
+
+    assert await state.get_state() is None
+    assert await state.get_data() == {}
+
+
+@pytest.mark.asyncio
+async def test_open_edit_clears_an_active_name_search_state_and_tracks_card():
+    appointment_repo = FakeAppointmentRepository(_appointment())
+    open_edit = _find_handler(_router(appointment_repo), "open_edit")
+    callback_query = _callback_query()
+    callback_query.message.chat.id = 333
+    callback_query.message.message_id = 444
+    state = _name_search_state()
+    await state.set_state(AppointmentBrowserStates.search_name)
+    await state.update_data(full_name="Draft", card_message_id=111)
+
+    await open_edit(
+        callback_query, CompletionFollowupCB(action="edit", appointment_id=1), state, _admin_user(),
+    )
+
+    assert await state.get_state() is None
+    assert await state.get_data() == {"card_chat_id": 333, "card_message_id": 444}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("handler_name", "action"), [("open_edit", "edit"), ("skip_edit", "skip")])
+async def test_completion_does_not_clear_name_search_state_when_already_decided(handler_name, action):
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.COMPLETED
+    handler = _find_handler(_router(FakeAppointmentRepository(appointment)), handler_name)
+    callback_query = _callback_query()
+    state = _name_search_state()
+    await state.set_state(AppointmentBrowserStates.search_name)
+    await state.update_data(full_name="Draft", card_message_id=111)
+
+    await handler(
+        callback_query, CompletionFollowupCB(action=action, appointment_id=1), state, _admin_user(),
+    )
+
+    assert await state.get_state() == AppointmentBrowserStates.search_name.state
+    assert await state.get_data() == {"full_name": "Draft", "card_message_id": 111}
 
 
 @pytest.mark.asyncio
@@ -320,7 +471,7 @@ async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided(
     callback_query.message.message_id = 222
     callback_data = CompletionFollowupCB(action="skip", appointment_id=1)
 
-    await skip_edit(callback_query, callback_data, _admin_user())
+    await skip_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
     callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
     callback_query.message.edit_text.assert_not_called()

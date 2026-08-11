@@ -242,7 +242,9 @@ async def test_skip_edit_shows_alert_and_invalidates_own_message_on_lost_race():
     skip_edit = _find_handler(router, "skip_edit")
     callback_query = _callback_query()
 
-    await skip_edit(callback_query, CompletionFollowupCB(action="skip", appointment_id=1), _admin_user())
+    await skip_edit(
+        callback_query, CompletionFollowupCB(action="skip", appointment_id=1), AsyncMock(), _admin_user(),
+    )
 
     callback_query.answer.assert_called_once_with(
         "Запись уже автозавершена, вы можете скорректировать её в «Завершённые»", show_alert=True,
