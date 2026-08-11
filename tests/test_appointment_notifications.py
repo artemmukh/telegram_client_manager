@@ -1,14 +1,25 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
-from bot.models.appointment import Appointment
-from bot.models.user import User
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    replace_completion_sibling_prompts,
+)
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_cb import (
+    CompletionSiblingDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_kb import (
+    completion_sibling_details_kb,
+)
 from bot.keyboards.client.appointment_response_kb import (
     appointment_invite_kb,
     appointment_reminder_details_kb,
     appointment_reminder_with_buttons_kb,
     reschedule_proposal_kb,
 )
+from bot.models.appointment import Appointment
+from bot.models.user import User
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
     admin_client_changed_time_text,
@@ -2001,3 +2012,41 @@ async def test_notify_client_proposal_reminder_returns_false_when_telegram_id_mi
 
     assert result is False
     assert len(notifier.sent_messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_replace_completion_sibling_prompt_edits_localized_result_without_sending():
+    notifier = FakeTelegramNotifier()
+    recipient = User(
+        full_name="Hamshira Dilnoza",
+        phone="+998901234567",
+        role=Role.ADMIN,
+        telegram_user_id=67890,
+        ID=41,
+        language="uz",
+    )
+    service = AppointmentNotificationService(
+        notifier, FakeUserRepo(recipient_by_telegram_id=recipient), FakeAppointmentRepo(),
+    )
+
+    lang = await service.resolve_recipient_language(67890)
+    appointment = MagicMock(id=188, decided_by_user_id=41)
+    appt_mng = MagicMock()
+    appt_mng.resolve_decision_label = AsyncMock(return_value={"ru": "Doctor Anna", "uz": "Doktor Anna"})
+    appt_mng.get_invalidation_targets = AsyncMock(return_value=[
+        MagicMock(chat_id=67890, message_id=777),
+    ])
+
+    await replace_completion_sibling_prompts(service, appt_mng, appointment, actor_chat_id=999)
+
+    markup = completion_sibling_details_kb(188, 41, lang)
+
+    assert notifier.sent_messages == []
+    assert notifier.edited_messages == [{
+        "chat_id": 67890,
+        "message_id": 777,
+        "text": "№188 qabul yakunlandi.\nYakunladi: Doktor Anna",
+        "reply_markup": markup,
+    }]
+    callback = CompletionSiblingDetailsCB.unpack(markup.inline_keyboard[0][0].callback_data)
+    assert callback.model_dump() == {"appointment_id": 188, "actor_user_id": 41}

@@ -20,7 +20,7 @@ from bot.exceptions.appointment_exceptions import (
     PendingRequestLimitExceededError,
     SlotUnavailableError,
 )
-from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
+from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
 from bot.models.blocked_slot import BlockedSlot
@@ -28,28 +28,36 @@ from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.blocked_slot_repository import BlockedSlotRepository
-from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
+from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.booking_day_helpers import (
+    find_first_available_week_offset as _find_first_available_week_offset,
+)
+from bot.services.utils.booking_day_helpers import (
+    generate_working_days,
+)
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import (
     datetime_ranges_overlap,
     format_datetime_for_db,
-    get_current_tashkent_time,
     get_current_tashkent_datetime,
+    get_current_tashkent_time,
     parse_db_datetime,
-)
-from bot.services.utils.booking_day_helpers import (
-    find_first_available_week_offset as _find_first_available_week_offset,
-    generate_working_days,
 )
 from bot.services.utils.slot_helpers import generate_available_slots
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, \
-    validate_phone, SEARCH_NAME_PATTERN
+from bot.validators.validators import (
+    SEARCH_NAME_PATTERN,
+    validate_datetime,
+    validate_full_name,
+    validate_phone,
+    validate_price,
+    validate_purpose,
+)
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
@@ -482,6 +490,16 @@ class AppointmentManagement:
             return None
 
         if doctor_id is not None and appointment.doctor_id != doctor_id:
+            return None
+
+        return appointment
+
+    async def get_completion_sibling_appointment_for_admin(
+        self, appointment_id: int, admin_telegram_id: int, actor_user_id: int,
+    ) -> Appointment | None:
+        """Return a sibling result only for an authorized viewer and its persisted actor."""
+        appointment = await self.get_appointment_for_admin(appointment_id, admin_telegram_id)
+        if appointment is None or appointment.decided_by_user_id != actor_user_id:
             return None
 
         return appointment

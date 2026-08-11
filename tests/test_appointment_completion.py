@@ -9,13 +9,18 @@ first (AppointmentAlreadyDecidedError), both branches show the same fixed
 alert and skip their normal success rendering.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.appointment_management.appointment_completion import (
     create_admin_completion_router,
+)
+from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    replace_completion_sibling_prompts,
+    staff_completion_result_text,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.keyboards.admin.record_management_kb.completion_details_cb import (
@@ -26,16 +31,27 @@ from bot.keyboards.admin.record_management_kb.completion_details_kb import (
     completion_details_kb,
     completion_hide_details_kb,
 )
-from bot.keyboards.admin.record_management_kb.completion_followup_cb import CompletionFollowupCB
+from bot.keyboards.admin.record_management_kb.completion_followup_cb import (
+    CompletionFollowupCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_cb import (
+    CompletionSiblingDetailsCB,
+    CompletionSiblingHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_kb import (
+    completion_sibling_details_kb,
+    completion_sibling_hide_details_kb,
+)
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
-from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
+from bot.states.admin.record_management.appointment_browser_states import (
+    AppointmentBrowserStates,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
-
 
 ADMIN_TELEGRAM_ID = 999
 OTHER_ADMIN_TELEGRAM_ID = 1000
@@ -232,7 +248,8 @@ async def test_open_edit_invalidates_sibling_notifications_on_success():
         ],
     )
     notification_service = MagicMock()
-    notification_service.invalidate_stale_decision_message = AsyncMock()
+    notification_service.resolve_recipient_language = AsyncMock(return_value="ru")
+    notification_service.notifier.try_edit_message_text = AsyncMock()
     router = _router(appointment_repo, notification_service=notification_service)
     open_edit = _find_handler(router, "open_edit")
 
@@ -241,12 +258,11 @@ async def test_open_edit_invalidates_sibling_notifications_on_success():
 
     await open_edit(callback_query, callback_data, AsyncMock(), _admin_user())
 
-    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777,
-        {"ru": "Доктор Петров Петр", "uz": "Shifokor Петров Петр"},
-        {"ru": "приём завершён", "uz": "qabul yakunlandi"},
-        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
-    )
+    notification_service.notifier.try_edit_message_text.assert_awaited_once()
+    call = notification_service.notifier.try_edit_message_text.await_args
+    assert call.kwargs["chat_id"] == 555
+    assert call.kwargs["message_id"] == 777
+    assert call.kwargs["text"] == "Приём №1 завершён.\nЗавершил(а): Доктор Петров Петр"
 
 
 @pytest.mark.asyncio
@@ -482,3 +498,179 @@ async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided(
         {"ru": "приём завершён", "uz": "qabul yakunlandi"},
         appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
     )
+
+
+@pytest.mark.parametrize(("lang", "label"), [("ru", "Подробнее"), ("uz", "Batafsil")])
+def test_completion_sibling_details_keyboard_contains_only_ids(lang, label):
+    markup = completion_sibling_details_kb(188, 41, lang)
+    callback = CompletionSiblingDetailsCB.unpack(markup.inline_keyboard[0][0].callback_data)
+
+    assert markup.inline_keyboard[0][0].text == label
+    assert callback.model_dump() == {"appointment_id": 188, "actor_user_id": 41}
+
+
+@pytest.mark.parametrize(("lang", "label"), [("ru", "Скрыть"), ("uz", "Yopish")])
+def test_completion_sibling_hide_keyboard_contains_only_ids(lang, label):
+    markup = completion_sibling_hide_details_kb(188, 41, lang)
+    callback = CompletionSiblingHideDetailsCB.unpack(markup.inline_keyboard[0][0].callback_data)
+
+    assert markup.inline_keyboard[0][0].text == label
+    assert callback.model_dump() == {"appointment_id": 188, "actor_user_id": 41}
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected"),
+    [
+        ("ru", "Приём №188 завершён.\nЗавершил(а): Доктор Анна"),
+        ("uz", "№188 qabul yakunlandi.\nYakunladi: Doktor Anna"),
+    ],
+)
+def test_staff_completion_result_text_is_localized(lang, expected):
+    assert staff_completion_result_text(188, "Доктор Анна" if lang == "ru" else "Doktor Anna", lang) == expected
+
+
+def _completed_appointment():
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.COMPLETED
+    appointment.decided_by_user_id = 1
+    return appointment
+
+
+@pytest.mark.asyncio
+async def test_completion_sibling_details_shows_authorized_appointment_card():
+    appointment_repo = FakeAppointmentRepository(_completed_appointment())
+    handler = _find_handler(_router(appointment_repo), "show_completion_sibling_details")
+    callback_query = _callback_query()
+
+    await handler(callback_query, CompletionSiblingDetailsCB(appointment_id=1, actor_user_id=1), _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("")
+    callback_query.message.edit_text.assert_awaited_once_with(
+        build_appointment_card(appointment_repo.appointment, "ru"),
+        reply_markup=completion_sibling_hide_details_kb(1, 1, "ru"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_completion_sibling_hide_restores_compact_actor_result():
+    appointment_repo = FakeAppointmentRepository(_completed_appointment())
+    handler = _find_handler(_router(appointment_repo), "hide_completion_sibling_details")
+    callback_query = _callback_query()
+
+    await handler(callback_query, CompletionSiblingHideDetailsCB(appointment_id=1, actor_user_id=1), _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("")
+    callback_query.message.edit_text.assert_awaited_once_with(
+        "Приём №1 завершён.\nЗавершил(а): Доктор Петров Петр",
+        reply_markup=completion_sibling_details_kb(1, 1, "ru"),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "callback_data"),
+    [
+        ("show_completion_sibling_details", CompletionSiblingDetailsCB(appointment_id=1, actor_user_id=2)),
+        ("hide_completion_sibling_details", CompletionSiblingHideDetailsCB(appointment_id=1, actor_user_id=2)),
+    ],
+)
+async def test_completion_sibling_callbacks_reject_forged_actor_id(handler_name, callback_data):
+    handler = _find_handler(_router(FakeAppointmentRepository(_completed_appointment())), handler_name)
+    callback_query = _callback_query()
+
+    await handler(callback_query, callback_data, _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "callback_data"),
+    [
+        ("show_completion_sibling_details", CompletionSiblingDetailsCB(appointment_id=1, actor_user_id=1)),
+        ("hide_completion_sibling_details", CompletionSiblingHideDetailsCB(appointment_id=1, actor_user_id=1)),
+    ],
+)
+async def test_completion_sibling_callbacks_reject_out_of_scope_appointment(handler_name, callback_data):
+    appointment = _completed_appointment()
+    handler = _find_handler(_router(FakeAppointmentRepository(appointment)), handler_name)
+    callback_query = _callback_query(OTHER_ADMIN_TELEGRAM_ID)
+
+    await handler(callback_query, callback_data, _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_skip_edit_replaces_sibling_before_actor_edit_failure():
+    appointment_repo = FakeAppointmentRepository(
+        _appointment(),
+        notifications=[AppointmentNotification(appointment_id=1, chat_id=555, message_id=777, kind="completion")],
+    )
+    notification_service = MagicMock()
+    notification_service.resolve_recipient_language = AsyncMock(return_value="ru")
+    notification_service.notifier.try_edit_message_text = AsyncMock()
+    handler = _find_handler(_router(appointment_repo, notification_service=notification_service), "skip_edit")
+    callback_query = _callback_query()
+    callback_query.message.edit_text.side_effect = RuntimeError("telegram unavailable")
+
+    with pytest.raises(RuntimeError, match="telegram unavailable"):
+        await handler(callback_query, CompletionFollowupCB(action="skip", appointment_id=1), AsyncMock(), _admin_user())
+
+    notification_service.notifier.try_edit_message_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_open_edit_does_not_replace_the_actor_completion_prompt():
+    appointment_repo = FakeAppointmentRepository(
+        _appointment(),
+        notifications=[AppointmentNotification(appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777, kind="completion")],
+    )
+    notification_service = MagicMock()
+    notification_service.resolve_recipient_language = AsyncMock(return_value="ru")
+    notification_service.notifier.try_edit_message_text = AsyncMock()
+    handler = _find_handler(_router(appointment_repo, notification_service=notification_service), "open_edit")
+
+    await handler(_callback_query(), CompletionFollowupCB(action="edit", appointment_id=1), AsyncMock(), _admin_user())
+
+    notification_service.notifier.try_edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_open_edit_replaces_sibling_before_actor_callback_answer_failure():
+    appointment_repo = FakeAppointmentRepository(
+        _appointment(),
+        notifications=[AppointmentNotification(appointment_id=1, chat_id=555, message_id=777, kind="completion")],
+    )
+    notification_service = MagicMock()
+    notification_service.resolve_recipient_language = AsyncMock(return_value="ru")
+    notification_service.notifier.try_edit_message_text = AsyncMock()
+    handler = _find_handler(_router(appointment_repo, notification_service=notification_service), "open_edit")
+    callback_query = _callback_query()
+    callback_query.answer.side_effect = RuntimeError("callback answer unavailable")
+
+    with pytest.raises(RuntimeError, match="callback answer unavailable"):
+        await handler(callback_query, CompletionFollowupCB(action="edit", appointment_id=1), AsyncMock(), _admin_user())
+
+    notification_service.notifier.try_edit_message_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_result", [RuntimeError("first edit failed"), False])
+async def test_completion_sibling_replacement_continues_after_failed_first_edit(first_result):
+    notification_service = MagicMock()
+    notification_service.resolve_recipient_language = AsyncMock(side_effect=["ru", "uz"])
+    notification_service.notifier.try_edit_message_text = AsyncMock(side_effect=[first_result, True])
+    appt_mng = MagicMock()
+    appt_mng.resolve_decision_label = AsyncMock(return_value={"ru": "Доктор Анна", "uz": "Doktor Anna"})
+    appt_mng.get_invalidation_targets = AsyncMock(return_value=[
+        AppointmentNotification(appointment_id=1, chat_id=555, message_id=777, kind="completion"),
+        AppointmentNotification(appointment_id=1, chat_id=556, message_id=778, kind="completion"),
+    ])
+    appointment = _completed_appointment()
+
+    await replace_completion_sibling_prompts(notification_service, appt_mng, appointment, ADMIN_TELEGRAM_ID)
+
+    assert notification_service.notifier.try_edit_message_text.await_count == 2
