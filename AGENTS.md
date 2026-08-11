@@ -82,29 +82,33 @@ python -m bot.run                        # run the bot (must run as a module fro
 Notes:
 - `pytest.ini` + `conftest.py` redirect pytest's cache/tmp dirs into `.pytest_tmp/` — don't hand-edit that directory.
 - Required runtime env vars (see `.env`, not committed): `BOT_TOKEN_MM`, `BOT_TOKEN_ZB` (two bot tokens — this repo runs more than one Telegram bot instance, one per clinic deployment), `DATA_BASE`, `DATA_BASE_MM` (per-instance SQLite paths), `MISTRAL_API_KEY`.
-- Tests use fakes/an in-memory or temp SQLite DB rather than the real `data/` database — see the `sqlite-to-postgres-step` and `repo-test-fakes` skills in `.claude/skills/` before touching repository or migration code.
+- Tests use fakes/an in-memory or temp SQLite DB rather than the real `data/` database — see the `sqlite-to-postgres-step` and `repo-test-fakes` skills in `.codex/skills/` before touching repository or migration code. Legacy Claude copies may also exist in `.claude/skills/`, but Codex should prefer `.codex/skills/`.
 
 ---
 
 # Project Instructions
 
-Follow the workflow described in:
+Follow the workflow described in this file and in the Codex project skill:
 
-.claude/agents/workflow.md
+`.codex/skills/codex-project-workflow/SKILL.md`
+
+Legacy Claude workflow notes may also exist in `.claude/agents/workflow.md`;
+use them only when maintaining Claude compatibility.
 
 All implementation tasks must use the defined agent responsibilities and workflow.
 
-Subagents are defined in .claude/agents/. Always dispatch work to the
-appropriate subagent rather than doing it inline:
+Codex subagents are defined in `.codex/agents/`. Legacy Claude subagents are
+defined in `.claude/agents/`. For Codex work, always dispatch work to the
+appropriate `.codex/agents/` subagent rather than doing it inline:
 
-- .claude/agents/planner.md        — breaks down the task, defines scope
-- .claude/agents/researcher.md     — reads existing code, finds reference implementations
-- .claude/agents/implementer.md    — writes/edits code following the plan
-- .claude/agents/aiogram-expert.md — used when Telegram/aiogram logic is affected
-- .claude/agents/database-expert.md — used when repositories or database are affected
-- .claude/agents/test-expert.md    — writes/fixes pytest coverage for the change
-- .claude/agents/routine.md        — mechanical work: formatting, renames, docs
-- .claude/agents/reviewer.md       — final check against this file's rules
+- `.codex/agents/planner.toml` — breaks down the task, defines scope
+- `.codex/agents/researcher.toml` — reads existing code, finds reference implementations
+- `.codex/agents/implementer.toml` — writes/edits code following the plan
+- `.codex/agents/aiogram-expert.toml` — used when Telegram/aiogram logic is affected
+- `.codex/agents/database-expert.toml` — used when repositories or database are affected
+- `.codex/agents/test-expert.toml` — writes/fixes pytest coverage for the change
+- `.codex/agents/routine.toml` — mechanical work: formatting, renames, docs
+- `.codex/agents/reviewer.toml` — final check against this file's rules
 
 Never skip researcher before implementer. The researcher subagent is
 responsible for finding the closest existing reference implementation
@@ -114,8 +118,9 @@ responsible for finding the closest existing reference implementation
 
 # Skills
 
-Project skills live in .claude/skills/. Subagents may not have the Skill
-tool — in that case Read the skill's SKILL.md directly before writing code.
+Codex project skills live in `.codex/skills/`. Legacy Claude copies live in
+`.claude/skills/`. Subagents may not have the Skill tool — in that case read
+the matching `.codex/skills/<skill-name>/SKILL.md` directly before writing code.
 Mandatory mapping (task → skill):
 
 - New admin/client CRUD or multi-step FSM flow → crud-flow-scaffold
@@ -123,7 +128,8 @@ Mandatory mapping (task → skill):
 - New or changed tests for services/repositories → repo-test-fakes
 - Any PostgreSQL migration work → sqlite-to-postgres-step
 - Any backend refactor or async I/O work → python-backend-guidelines
-- Non-trivial feature start-to-finish → SuperPowers (plan → spec → TDD → implement → review)
+- Non-trivial feature start-to-finish → pythonproject3-superpowers (plan → spec → TDD → implement → review)
+- Codex workflow/tooling setup → codex-project-workflow or codex-project-tooling
 
 When dispatching implementer or test-expert, include the relevant SKILL.md
 path in the subagent prompt.
