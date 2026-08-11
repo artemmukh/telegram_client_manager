@@ -393,7 +393,7 @@ async def test_appointment_lifecycle_admin_created_confirm_reschedule_cancel(e2e
 @pytest.mark.asyncio
 async def test_appointment_lifecycle_self_booking_confirm_and_reject(e2e):
     """A client books directly; the clinic accepts one request and declines
-    another (the pending-request limit forces sequential requests)."""
+    another (the same-doctor pending-request limit forces sequential requests)."""
     client_a = await _create_registered_client(e2e, "Тошева Мадина Рустамовна", "+998977002233", 700000222)
     client_b = await _create_registered_client(e2e, "Юлдашев Комрон Фарходович", "+998977003344", 700000333)
 
@@ -405,7 +405,7 @@ async def test_appointment_lifecycle_self_booking_confirm_and_reject(e2e):
     assert booking_a.created_by.value == "client"
 
     # While booking_a is still PENDING, a second self-booking from the same
-    # client must be rejected (MAX_PENDING_REQUESTS_PER_CLIENT = 1).
+    # client must be rejected by the per-doctor pending-request limit.
     with pytest.raises(PendingRequestLimitExceededError):
         await e2e.appointment_management.create_self_booking(
             client_a.telegram_user_id,

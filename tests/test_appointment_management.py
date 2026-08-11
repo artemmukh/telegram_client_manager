@@ -1205,8 +1205,9 @@ async def test_create_self_booking_succeeds_with_no_pending_requests():
 def _self_booked_appointment(
     appointment_id=1,
     client_id=7,
-    doctor_id=None,
+    *,
     status=AppointmentStatus.PENDING,
+    doctor_id=None,
     proposed_datetime=None,
     status_updated_at=None,
 ):
@@ -1267,6 +1268,7 @@ async def test_ensure_pending_limit_raises_when_proposal_outstanding():
         AppointmentStatus.CANCELLED,
         AppointmentStatus.COMPLETED,
         AppointmentStatus.EXPIRED,
+        AppointmentStatus.NO_SHOW,
     ],
 )
 async def test_ensure_pending_limit_allows_when_self_booking_is_finalized(status):
@@ -1355,8 +1357,8 @@ async def test_create_self_booking_allows_when_cancellations_below_limit():
     ):
         recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(1, client.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
@@ -1421,9 +1423,9 @@ async def test_create_self_booking_ignores_cancellation_exactly_at_window_bounda
         recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         at_boundary = (base - timedelta(minutes=CANCELLATION_COOLDOWN_WINDOW_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=at_boundary),
+            _self_booked_appointment(1, client.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, status=AppointmentStatus.CANCELLED, status_updated_at=at_boundary),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
@@ -1485,9 +1487,9 @@ async def test_create_self_booking_ignores_non_cancelled_statuses(status):
     ):
         recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, status, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, status, status_updated_at=recent),
-            _self_booked_appointment(3, client.ID, status, status_updated_at=recent),
+            _self_booked_appointment(1, client.ID, status=status, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, status=status, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, status=status, status_updated_at=recent),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
