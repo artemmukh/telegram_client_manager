@@ -1116,6 +1116,51 @@ async def test_create_self_booking_creates_pending_client_appointment():
 
 
 @pytest.mark.asyncio
+async def test_create_self_booking_allows_pending_request_for_another_doctor():
+    """A client's pending request is scoped to the selected doctor."""
+    client = _booking_client()
+    doctor_a = _staff_member(staff_id=42, telegram_user_id=420)
+    doctor_b = _staff_member(staff_id=99, telegram_user_id=990)
+    existing = _self_booked_appointment(client_id=client.ID, doctor_id=doctor_a.ID)
+    appt_repo = FakeAppointmentRepository([existing])
+    user_repo = FakeUserRepo(client=client, users_by_id={doctor_b.ID: doctor_b})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.create_self_booking(
+        client.telegram_user_id,
+        {
+            "staff_user_id": doctor_b.ID,
+            "appointment_datetime": _future_datetime(),
+            "complaint": "Р‘РѕР»РёС‚ Р·СѓР±",
+        },
+    )
+
+    assert appointment.doctor_id == doctor_b.ID
+    assert appointment.status is AppointmentStatus.PENDING
+    assert appt_repo.created == [appointment]
+
+
+@pytest.mark.asyncio
+async def test_create_self_booking_blocks_second_pending_request_for_same_doctor():
+    client = _booking_client()
+    doctor = _staff_member(staff_id=42, telegram_user_id=420)
+    existing = _self_booked_appointment(client_id=client.ID, doctor_id=doctor.ID)
+    appt_repo = FakeAppointmentRepository([existing])
+    user_repo = FakeUserRepo(client=client, users_by_id={doctor.ID: doctor})
+    service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
+
+    with pytest.raises(PendingRequestLimitExceededError):
+        await service.create_self_booking(
+            client.telegram_user_id,
+            {
+                "staff_user_id": doctor.ID,
+                "appointment_datetime": _future_datetime(),
+                "complaint": "Р‘РѕР»РёС‚ Р·СѓР±",
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_create_self_booking_raises_when_client_not_found():
     staff = _staff_member()
     user_repo = FakeUserRepo(client=None, users_by_id={staff.ID: staff})
@@ -1160,6 +1205,7 @@ async def test_create_self_booking_succeeds_with_no_pending_requests():
 def _self_booked_appointment(
     appointment_id=1,
     client_id=7,
+    doctor_id=None,
     status=AppointmentStatus.PENDING,
     proposed_datetime=None,
     status_updated_at=None,
@@ -1172,12 +1218,13 @@ def _self_booked_appointment(
         created_by=CreatedBy.CLIENT,
         status=status,
         id=appointment_id,
+        doctor_id=doctor_id,
         proposed_datetime=proposed_datetime,
         status_updated_at=status_updated_at,
     )
 
 
-def _admin_pending_appointment(appointment_id=1, client_id=7):
+def _admin_pending_appointment(appointment_id=1, client_id=7, doctor_id=None):
     return Appointment(
         clinic_id=1,
         client_id=client_id,
@@ -1186,29 +1233,30 @@ def _admin_pending_appointment(appointment_id=1, client_id=7):
         created_by=CreatedBy.ADMIN,
         status=AppointmentStatus.PENDING,
         id=appointment_id,
+        doctor_id=doctor_id,
     )
 
 
 @pytest.mark.asyncio
 async def test_ensure_pending_limit_raises_with_existing_pending_self_booking():
     client = _booking_client()
-    appt_repo = FakeAppointmentRepository([_self_booked_appointment(client_id=client.ID)])
+    appt_repo = FakeAppointmentRepository([_self_booked_appointment(client_id=client.ID, doctor_id=42)])
     service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
 
     with pytest.raises(PendingRequestLimitExceededError):
-        await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+        await service.ensure_pending_limit_not_exceeded(client.telegram_user_id, doctor_id=42)
 
 
 @pytest.mark.asyncio
 async def test_ensure_pending_limit_raises_when_proposal_outstanding():
     client = _booking_client()
     appt_repo = FakeAppointmentRepository(
-        [_self_booked_appointment(client_id=client.ID, proposed_datetime="2026-07-11 10:00")]
+        [_self_booked_appointment(client_id=client.ID, doctor_id=42, proposed_datetime="2026-07-11 10:00")]
     )
     service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
 
     with pytest.raises(PendingRequestLimitExceededError):
-        await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+        await service.ensure_pending_limit_not_exceeded(client.telegram_user_id, doctor_id=42)
 
 
 @pytest.mark.asyncio
@@ -1223,19 +1271,21 @@ async def test_ensure_pending_limit_raises_when_proposal_outstanding():
 )
 async def test_ensure_pending_limit_allows_when_self_booking_is_finalized(status):
     client = _booking_client()
-    appt_repo = FakeAppointmentRepository([_self_booked_appointment(client_id=client.ID, status=status)])
+    appt_repo = FakeAppointmentRepository(
+        [_self_booked_appointment(client_id=client.ID, doctor_id=42, status=status)]
+    )
     service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
 
-    await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+    await service.ensure_pending_limit_not_exceeded(client.telegram_user_id, doctor_id=42)
 
 
 @pytest.mark.asyncio
 async def test_ensure_pending_limit_ignores_admin_created_pending_appointment():
     client = _booking_client()
-    appt_repo = FakeAppointmentRepository([_admin_pending_appointment(client_id=client.ID)])
+    appt_repo = FakeAppointmentRepository([_admin_pending_appointment(client_id=client.ID, doctor_id=42)])
     service = AppointmentManagement(appt_repo, FakeUserRepo(client=client), FakeStaffRepo(None), _clinic_repo())
 
-    await service.ensure_pending_limit_not_exceeded(client.telegram_user_id)
+    await service.ensure_pending_limit_not_exceeded(client.telegram_user_id, doctor_id=42)
 
 
 # --- Cancellation cooldown throttle tests ---
@@ -1274,9 +1324,9 @@ async def test_create_self_booking_raises_when_cancellation_cooldown_exceeded():
     ):
         recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(1, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
@@ -1338,9 +1388,9 @@ async def test_create_self_booking_raises_when_cancellation_is_just_under_window
             base - timedelta(minutes=CANCELLATION_COOLDOWN_WINDOW_MINUTES) + timedelta(seconds=1)
         ).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=just_under_window),
+            _self_booked_appointment(1, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=just_under_window),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
@@ -1469,9 +1519,9 @@ async def test_cancellation_cooldown_also_counts_admin_rejected_requests():
     ):
         recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(1, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(2, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(3, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
@@ -1503,13 +1553,23 @@ async def test_cancellation_cooldown_skips_malformed_status_updated_at_instead_o
     ):
         recent = (base - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
         appt_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(3, client.ID, AppointmentStatus.CANCELLED, status_updated_at="not-a-date"),
+            _self_booked_appointment(
+                1, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent,
+            ),
+            _self_booked_appointment(
+                2, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent,
+            ),
+            _self_booked_appointment(
+                3, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at="not-a-date",
+            ),
         ])
         control_repo = FakeAppointmentRepository([
-            _self_booked_appointment(1, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
-            _self_booked_appointment(2, client.ID, AppointmentStatus.CANCELLED, status_updated_at=recent),
+            _self_booked_appointment(
+                1, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent,
+            ),
+            _self_booked_appointment(
+                2, client.ID, doctor_id=staff.ID, status=AppointmentStatus.CANCELLED, status_updated_at=recent,
+            ),
         ])
         user_repo = FakeUserRepo(client=client, users_by_id={staff.ID: staff})
         service = AppointmentManagement(appt_repo, user_repo, FakeStaffRepo(None), _clinic_repo())
@@ -4099,13 +4159,9 @@ async def test_create_self_booking_raises_duplicate_message_when_same_client_reb
         monkeypatch.setattr(
             "bot.services.appointment.appointment_management.MAX_BOOKINGS_PER_SLOT", max_bookings_per_slot
         )
-    # MAX_PENDING_REQUESTS_PER_CLIENT is bound by name at import time inside
-    # appointment_management (same as MAX_BOOKINGS_PER_SLOT), and its real
-    # (zb) value is 1. This test needs a 2nd create_self_booking call by the
-    # same client to actually reach _ensure_slot_available's duplicate check
-    # instead of being turned away earlier by the unrelated pending-request-
-    # limit guard, so it's raised here for both instances.
-    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_PENDING_REQUESTS_PER_CLIENT", 10)
+    # Raise the per-doctor pending cap so the second request reaches
+    # _ensure_slot_available's duplicate-slot check in both instances.
+    monkeypatch.setattr("bot.services.appointment.appointment_management.MAX_PENDING_REQUESTS_PER_DOCTOR", 10)
 
     connection, service, user_repo, doctor_telegram_id, clinic_id = await _real_service(instance, max_bookings_per_slot)
     try:

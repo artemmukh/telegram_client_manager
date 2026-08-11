@@ -5,7 +5,6 @@ from bot.config.booking_config import (
     CANCELLATION_COOLDOWN_WINDOW_MINUTES,
     MAX_BOOKINGS_PER_SLOT,
     MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
-    MAX_PENDING_REQUESTS_PER_CLIENT,
     SLOT_STEP_MINUTES,
 )
 from bot.exceptions.appointment_exceptions import (
@@ -54,6 +53,7 @@ from bot.validators.validators import validate_datetime, validate_price, validat
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
+MAX_PENDING_REQUESTS_PER_DOCTOR = 1
 SLOT_UNAVAILABLE_MESSAGE = {
     "ru": "Это время уже занято другой записью, выберите другое.",
     "uz": "Bu vaqt boshqa yozuv tomonidan band qilingan, boshqasini tanlang.",
@@ -330,12 +330,13 @@ class AppointmentManagement:
         if client is None:
             raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
 
-        await self.ensure_pending_limit_not_exceeded(client_telegram_id)
         await self.ensure_cancellation_cooldown_not_exceeded(client_telegram_id)
 
         staff = await self.user_repository.get_user_by_id(data["staff_user_id"])
         if staff is None:
             raise UserNotFoundError(_STAFF_MEMBER_NOT_FOUND_MESSAGE)
+
+        await self.ensure_pending_limit_not_exceeded(client_telegram_id, staff.ID)
 
         appointment_datetime = validate_datetime(data["appointment_datetime"])
         self._validate_min_lead_time(appointment_datetime)
@@ -357,9 +358,9 @@ class AppointmentManagement:
 
         return await self.appointment_repository.create_appointment(appointment)
 
-    async def ensure_pending_limit_not_exceeded(self, client_telegram_id: int) -> None:
-        pending_count = await self._count_pending_self_bookings(client_telegram_id)
-        if pending_count >= MAX_PENDING_REQUESTS_PER_CLIENT:
+    async def ensure_pending_limit_not_exceeded(self, client_telegram_id: int, doctor_id: int) -> None:
+        pending_count = await self._count_pending_self_bookings(client_telegram_id, doctor_id)
+        if pending_count >= MAX_PENDING_REQUESTS_PER_DOCTOR:
             raise PendingRequestLimitExceededError(_PENDING_REQUEST_LIMIT_MESSAGE)
 
     async def ensure_cancellation_cooldown_not_exceeded(self, client_telegram_id: int) -> None:
@@ -1039,11 +1040,15 @@ class AppointmentManagement:
         if target_dt - now < MIN_LEAD_TIME:
             raise BookingTooSoonError(_BOOKING_TOO_SOON_MESSAGE)
 
-    async def _count_pending_self_bookings(self, client_telegram_id: int) -> int:
+    async def _count_pending_self_bookings(self, client_telegram_id: int, doctor_id: int) -> int:
         appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)
         return sum(
             1 for a in appointments
-            if a.created_by == CreatedBy.CLIENT and a.status == AppointmentStatus.PENDING
+            if (
+                a.created_by == CreatedBy.CLIENT
+                and a.status == AppointmentStatus.PENDING
+                and a.doctor_id == doctor_id
+            )
         )
 
     async def _count_recent_client_cancellations(self, client_telegram_id: int) -> int:

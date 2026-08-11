@@ -431,6 +431,60 @@ async def test_appointment_lifecycle_self_booking_confirm_and_reject(e2e):
 
 
 @pytest.mark.asyncio
+async def test_self_booking_pending_limit_is_scoped_per_doctor(e2e):
+    """A client may keep one PENDING self-booking per doctor, but not a
+    second PENDING request for the same doctor."""
+    await e2e.user_repo.create_user(
+        User(
+            full_name="Р’СЂР°С‡ Р’С‚РѕСЂРѕР№",
+            phone="+998977009999",
+            role=Role.ADMIN,
+            clinic_id=1,
+            telegram_user_id=226655040,
+        )
+    )
+    second_doctor = await e2e.user_repo.get_user_by_telegram_id(226655040)
+    assert second_doctor is not None
+    assert second_doctor.clinic_id == 1
+
+    client = await _create_registered_client(
+        e2e, "РЎРѕР±РёСЂРѕРІР° РњР°Р»РёРєР°", "+998977009998", 700000666,
+    )
+
+    first_booking = await e2e.appointment_management.create_self_booking(
+        client.telegram_user_id,
+        {
+            "staff_user_id": e2e.admin.ID,
+            "appointment_datetime": _future_datetime(days=2),
+            "complaint": "Р‘РѕР»СЊ РІ Р·СѓР±Рµ",
+        },
+    )
+    assert first_booking.status is AppointmentStatus.PENDING
+    assert first_booking.doctor_id == e2e.admin.ID
+
+    second_booking = await e2e.appointment_management.create_self_booking(
+        client.telegram_user_id,
+        {
+            "staff_user_id": second_doctor.ID,
+            "appointment_datetime": _future_datetime(days=3),
+            "complaint": "РћСЃРјРѕС‚СЂ",
+        },
+    )
+    assert second_booking.status is AppointmentStatus.PENDING
+    assert second_booking.doctor_id == second_doctor.ID
+
+    with pytest.raises(PendingRequestLimitExceededError):
+        await e2e.appointment_management.create_self_booking(
+            client.telegram_user_id,
+            {
+                "staff_user_id": e2e.admin.ID,
+                "appointment_datetime": _future_datetime(days=4),
+                "complaint": "Р§РёСЃС‚РєР°",
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_appointment_lifecycle_self_booking_pending_direct_edit_then_confirm(e2e):
     """A client edits the datetime of their own still-PENDING self-booking request
     directly (same row, no proposal negotiation), then the clinic confirms it at
