@@ -77,6 +77,8 @@ ruff check .                             # lint (no committed ruff config -> def
 
 python -m bot.run                        # run the bot (must run as a module from repo root;
                                           # bot/run.py uses absolute `from bot...` imports)
+
+vvaharness scan --repo . --stop-after s9  # VVAH detection-only security scan
 ```
 
 Notes:
@@ -528,6 +530,12 @@ When development tools are available:
 - Prefer documentation lookup over memory.
 - Reuse existing implementations.
 - Keep edits minimal and consistent.
+- Treat VVAH scans as detection-only by default. Always pass `--stop-after s9`
+  when running `vvaharness scan` against this repository. Keep local VVAH
+  overrides in ignored `vvaharness.config.yaml`; do not commit credentials or
+  machine-specific harness settings. Do not run a plain `vvaharness scan` here
+  because the default profile can continue into remediation and edit source
+  files.
 
 Do not assume APIs or project structure without verification.
 
