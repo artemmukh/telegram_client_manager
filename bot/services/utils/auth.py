@@ -1,4 +1,5 @@
 from bot.repositories.staff_repository import StaffRepository
+from bot.models.user import User
 from bot.utils.role import Role
 
 
@@ -18,3 +19,12 @@ class AuthService:
             return Role.ADMIN
 
         return Role.CLIENT
+
+    async def resolve_current_role(self, user: User | None) -> Role | None:
+        if user is None:
+            return None
+
+        if user.telegram_user_id is None or user.clinic_id is None:
+            return Role.CLIENT
+
+        return await self.detect_role(user.telegram_user_id, user.clinic_id)

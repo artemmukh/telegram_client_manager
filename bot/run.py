@@ -51,6 +51,7 @@ from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_notifications import ClientNotificationService
 from bot.services.llm.agent import ChatLLM
 from bot.services.medical_record.medical_record_management import MedicalRecordService
+from bot.services.utils.auth import AuthService
 from bot.utils.commands import DEFAULT_COMMANDS
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ async def main():
     client_clinic_repo = ClientClinicRepository(connection)
     medical_record_repo = MedicalRecordRepository(connection)
     blocked_slot_repo = BlockedSlotRepository(connection)
+    auth_service = AuthService(staff_repo)
 
     await user_repo.init()
 
@@ -81,6 +83,7 @@ async def main():
     await blocked_slot_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
+    dp["auth_service"] = auth_service
     dp["appointment_repo"] = appointment_repo
 
     dp.message.middleware(LoggingMiddleware())
@@ -89,8 +92,8 @@ async def main():
     dp.message.middleware(ErrorMiddleware())
     dp.callback_query.middleware(ErrorMiddleware())
 
-    dp.message.middleware(UserContextMiddleware(user_repo))
-    dp.callback_query.middleware(UserContextMiddleware(user_repo))
+    dp.message.middleware(UserContextMiddleware(user_repo, auth_service))
+    dp.callback_query.middleware(UserContextMiddleware(user_repo, auth_service))
 
     # Create services
     client_management_service = ClientManagement(

@@ -1,5 +1,7 @@
 ﻿from datetime import datetime
 
+from dataclasses import replace
+
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
@@ -142,6 +144,8 @@ def create_profile_router(client_management_service: ClientManagement = None):
             except BotException as e:
                 await callback_query.answer(e.localized(current_user.language), show_alert=True)
                 return
+
+            updated_user = replace(updated_user, role=current_user.role)
 
             try:
                 await callback_query.message.edit_text(
