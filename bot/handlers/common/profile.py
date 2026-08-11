@@ -1,11 +1,15 @@
-﻿from datetime import datetime
-
-from dataclasses import replace
+﻿from dataclasses import replace
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import (
+    BotCommandScopeChat,
+    CallbackQuery,
+    InlineKeyboardButton,
+    Message,
+)
 
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.admin_utils.confirmations import GENDER_LABELS
@@ -21,7 +25,6 @@ from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.utils.commands import admin_commands, client_commands
 from bot.utils.role import Role, RoleFilter
-
 
 PROFILE_TEXTS = {
     "ru": {

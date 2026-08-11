@@ -1,8 +1,8 @@
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bot.repositories.user_repository import UserRepository

@@ -1,5 +1,5 @@
-from bot.repositories.staff_repository import StaffRepository
 from bot.models.user import User
+from bot.repositories.staff_repository import StaffRepository
 from bot.utils.role import Role
 
 

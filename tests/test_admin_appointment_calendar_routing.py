@@ -50,13 +50,19 @@ from bot.handlers.admin.appointment_management.booking_requests import (
 from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
-from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarMonthCB
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
+    ApptCalendarMonthCB,
+)
 from bot.middlewares.user import UserContextMiddleware
-from bot.models.user import User
 from bot.models.staff import Staff
+from bot.models.user import User
 from bot.services.utils.auth import AuthService
-from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
-from bot.states.admin.record_management.booking_negotiation_states import BookingNegotiationStates
+from bot.states.admin.record_management.appointment_browser_states import (
+    AppointmentBrowserStates,
+)
+from bot.states.admin.record_management.booking_negotiation_states import (
+    BookingNegotiationStates,
+)
 from bot.utils.role import Role
 
 ADMIN_TELEGRAM_ID = 999
