@@ -5,7 +5,6 @@ from bot.config.booking_config import (
     CANCELLATION_COOLDOWN_WINDOW_MINUTES,
     MAX_BOOKINGS_PER_SLOT,
     MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
-    MAX_PENDING_REQUESTS_PER_CLIENT,
     SLOT_STEP_MINUTES,
 )
 from bot.exceptions.appointment_exceptions import (
@@ -21,7 +20,7 @@ from bot.exceptions.appointment_exceptions import (
     PendingRequestLimitExceededError,
     SlotUnavailableError,
 )
-from bot.exceptions.user_exceptions import UserNotFoundError, PhoneAlreadyExistsError
+from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
 from bot.models.blocked_slot import BlockedSlot
@@ -29,31 +28,40 @@ from bot.models.clinic import Clinic
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.blocked_slot_repository import BlockedSlotRepository
-from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
+from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.utils.booking_day_helpers import (
+    find_first_available_week_offset as _find_first_available_week_offset,
+)
+from bot.services.utils.booking_day_helpers import (
+    generate_working_days,
+)
 from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import (
     datetime_ranges_overlap,
     format_datetime_for_db,
-    get_current_tashkent_time,
     get_current_tashkent_datetime,
+    get_current_tashkent_time,
     parse_db_datetime,
-)
-from bot.services.utils.booking_day_helpers import (
-    find_first_available_week_offset as _find_first_available_week_offset,
-    generate_working_days,
 )
 from bot.services.utils.slot_helpers import generate_available_slots
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
-from bot.validators.validators import validate_datetime, validate_price, validate_purpose, validate_full_name, \
-    validate_phone, SEARCH_NAME_PATTERN
+from bot.validators.validators import (
+    SEARCH_NAME_PATTERN,
+    validate_datetime,
+    validate_full_name,
+    validate_phone,
+    validate_price,
+    validate_purpose,
+)
 
 CANCELLATION_CUTOFF_HOURS = 1
 MIN_LEAD_TIME = timedelta(hours=2, minutes=30)
+MAX_PENDING_REQUESTS_PER_DOCTOR = 1
 SLOT_UNAVAILABLE_MESSAGE = {
     "ru": "Это время уже занято другой записью, выберите другое.",
     "uz": "Bu vaqt boshqa yozuv tomonidan band qilingan, boshqasini tanlang.",
@@ -330,12 +338,13 @@ class AppointmentManagement:
         if client is None:
             raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)
 
-        await self.ensure_pending_limit_not_exceeded(client_telegram_id)
         await self.ensure_cancellation_cooldown_not_exceeded(client_telegram_id)
 
         staff = await self.user_repository.get_user_by_id(data["staff_user_id"])
         if staff is None:
             raise UserNotFoundError(_STAFF_MEMBER_NOT_FOUND_MESSAGE)
+
+        await self.ensure_pending_limit_not_exceeded(client_telegram_id, staff.ID)
 
         appointment_datetime = validate_datetime(data["appointment_datetime"])
         self._validate_min_lead_time(appointment_datetime)
@@ -357,9 +366,9 @@ class AppointmentManagement:
 
         return await self.appointment_repository.create_appointment(appointment)
 
-    async def ensure_pending_limit_not_exceeded(self, client_telegram_id: int) -> None:
-        pending_count = await self._count_pending_self_bookings(client_telegram_id)
-        if pending_count >= MAX_PENDING_REQUESTS_PER_CLIENT:
+    async def ensure_pending_limit_not_exceeded(self, client_telegram_id: int, doctor_id: int) -> None:
+        pending_count = await self._count_pending_self_bookings(client_telegram_id, doctor_id)
+        if pending_count >= MAX_PENDING_REQUESTS_PER_DOCTOR:
             raise PendingRequestLimitExceededError(_PENDING_REQUEST_LIMIT_MESSAGE)
 
     async def ensure_cancellation_cooldown_not_exceeded(self, client_telegram_id: int) -> None:
@@ -481,6 +490,16 @@ class AppointmentManagement:
             return None
 
         if doctor_id is not None and appointment.doctor_id != doctor_id:
+            return None
+
+        return appointment
+
+    async def get_completion_sibling_appointment_for_admin(
+        self, appointment_id: int, admin_telegram_id: int, actor_user_id: int,
+    ) -> Appointment | None:
+        """Return a sibling result only for an authorized viewer and its persisted actor."""
+        appointment = await self.get_appointment_for_admin(appointment_id, admin_telegram_id)
+        if appointment is None or appointment.decided_by_user_id != actor_user_id:
             return None
 
         return appointment
@@ -1039,11 +1058,15 @@ class AppointmentManagement:
         if target_dt - now < MIN_LEAD_TIME:
             raise BookingTooSoonError(_BOOKING_TOO_SOON_MESSAGE)
 
-    async def _count_pending_self_bookings(self, client_telegram_id: int) -> int:
+    async def _count_pending_self_bookings(self, client_telegram_id: int, doctor_id: int) -> int:
         appointments = await self.appointment_repository.get_appointments_by_telegram_id(client_telegram_id)
         return sum(
             1 for a in appointments
-            if a.created_by == CreatedBy.CLIENT and a.status == AppointmentStatus.PENDING
+            if (
+                a.created_by == CreatedBy.CLIENT
+                and a.status == AppointmentStatus.PENDING
+                and a.doctor_id == doctor_id
+            )
         )
 
     async def _count_recent_client_cancellations(self, client_telegram_id: int) -> int:

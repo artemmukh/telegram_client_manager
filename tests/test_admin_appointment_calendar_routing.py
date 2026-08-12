@@ -50,11 +50,19 @@ from bot.handlers.admin.appointment_management.booking_requests import (
 from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
-from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarMonthCB
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
+    ApptCalendarMonthCB,
+)
 from bot.middlewares.user import UserContextMiddleware
+from bot.models.staff import Staff
 from bot.models.user import User
-from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
-from bot.states.admin.record_management.booking_negotiation_states import BookingNegotiationStates
+from bot.services.utils.auth import AuthService
+from bot.states.admin.record_management.appointment_browser_states import (
+    AppointmentBrowserStates,
+)
+from bot.states.admin.record_management.booking_negotiation_states import (
+    BookingNegotiationStates,
+)
 from bot.utils.role import Role
 
 ADMIN_TELEGRAM_ID = 999
@@ -108,6 +116,8 @@ class FakeUserRepo:
 
 class FakeStaffRepo:
     async def get_staff(self, telegram_user_id):
+        if telegram_user_id == ADMIN_TELEGRAM_ID:
+            return Staff(telegram_user_id=ADMIN_TELEGRAM_ID, clinic_id=1)
         return None
 
 
@@ -137,6 +147,7 @@ def _spy(router, handler_name: str) -> AsyncMock:
 def _build_dispatcher(storage: MemoryStorage):
     user_repo = FakeUserRepo()
     staff_repo = FakeStaffRepo()
+    auth_service = AuthService(staff_repo)
     clinic_repo = FakeClinicRepo()
     appointment_repo = FakeAppointmentRepo()
 
@@ -155,7 +166,8 @@ def _build_dispatcher(storage: MemoryStorage):
 
     dp = Dispatcher(storage=storage)
     dp["user_repo"] = user_repo
-    dp.callback_query.middleware(UserContextMiddleware(user_repo))
+    dp["auth_service"] = auth_service
+    dp.callback_query.middleware(UserContextMiddleware(user_repo, auth_service))
 
     # Mirrors bot/run.py's registration order exactly: appointment_creation
     # first, then booking_requests/reschedule_requests (whose choose_day/

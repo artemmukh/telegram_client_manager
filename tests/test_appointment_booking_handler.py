@@ -89,6 +89,33 @@ def _build_router(appointment_management_service, notification_service, appointm
 
 
 @pytest.mark.asyncio
+async def test_start_booking_does_not_apply_pending_limit_before_doctor_choice():
+    """A client may have pending requests for other doctors, so the wizard
+    must defer the per-doctor guard until a doctor is selected."""
+    appointment_management_service = MagicMock()
+    appointment_management_service.ensure_pending_limit_not_exceeded = AsyncMock()
+    appointment_management_service.list_bookable_staff = AsyncMock(
+        return_value=[_doctor(), _clinic_admin(999, 99)],
+    )
+
+    router = _build_router(appointment_management_service, MagicMock())
+    book_appointment = _get_handler_by_name(router, "book_appointment")
+
+    callback_query = _make_callback_query()
+    state = MagicMock()
+    state.clear = AsyncMock()
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    await book_appointment(callback_query, state, _current_user())
+
+    appointment_management_service.ensure_pending_limit_not_exceeded.assert_not_awaited()
+    appointment_management_service.list_bookable_staff.assert_awaited_once_with(555)
+    state.set_state.assert_awaited_once()
+    callback_query.message.edit_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_submit_booking_notifies_sole_doctor_recipient_and_persists_message_id():
     """Regression/backward-compat case: a single resolved recipient (the treating
     doctor) gets notified and their message_id is persisted via

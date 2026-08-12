@@ -6,14 +6,37 @@ from aiogram.types import CallbackQuery
 
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
 from bot.exceptions.exceptions import BotException
-from bot.handlers.utils.admin_utils.appointment_browser_helpers import remember_tracked_message
+from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
+    remember_tracked_message,
+)
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     invalidate_actor_stale_message,
-    invalidate_sibling_notifications,
+    replace_completion_sibling_prompts,
+    staff_completion_result_text,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
-from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_card_kb
-from bot.keyboards.admin.record_management_kb.completion_followup_cb import CompletionFollowupCB
+from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
+    appointment_card_kb,
+)
+from bot.keyboards.admin.record_management_kb.completion_details_cb import (
+    CompletionDetailsCB,
+    CompletionHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_details_kb import (
+    completion_details_kb,
+    completion_hide_details_kb,
+)
+from bot.keyboards.admin.record_management_kb.completion_followup_cb import (
+    CompletionFollowupCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_cb import (
+    CompletionSiblingDetailsCB,
+    CompletionSiblingHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_kb import (
+    completion_sibling_details_kb,
+    completion_sibling_hide_details_kb,
+)
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.utils.role import RoleFilter
@@ -78,9 +101,15 @@ def create_admin_completion_router(
             await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
+        if notification_service:
+            await replace_completion_sibling_prompts(
+                notification_service, appt_mng, appointment, callback_query.from_user.id,
+            )
+
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
+        await state.clear()
         await callback_query.answer('')
         await callback_query.message.edit_text(
             build_appointment_card(appointment, lang),
@@ -91,23 +120,10 @@ def create_admin_completion_router(
         )
         await remember_tracked_message(state, callback_query.message)
 
-        if notification_service:
-            try:
-                actor = await appt_mng.get_user_by_telegram_id(callback_query.from_user.id)
-                decided_by_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
-                outcome_text = appt_mng.resolve_decision_outcome_text(appointment, "completion")
-                await invalidate_sibling_notifications(
-                    notification_service, appt_mng, appointment.id, "completion",
-                    callback_query.from_user.id, decided_by_label, outcome_text,
-                    appointment=appointment, lang=lang,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to invalidate sibling completion notifications for appointment {appointment.id}: {e}"
-                )
-
     @router.callback_query(CompletionFollowupCB.filter(F.action == "skip"))
-    async def skip_edit(callback_query: CallbackQuery, callback_data: CompletionFollowupCB, current_user: User):
+    async def skip_edit(
+        callback_query: CallbackQuery, callback_data: CompletionFollowupCB, state: FSMContext, current_user: User,
+    ):
         lang = current_user.language
         owned_appointment = await appt_mng.get_appointment_for_admin(
             callback_data.appointment_id, callback_query.from_user.id
@@ -138,27 +154,98 @@ def create_admin_completion_router(
             await callback_query.answer(e.localized(lang), show_alert=True)
             return
 
+        if notification_service:
+            await replace_completion_sibling_prompts(
+                notification_service, appt_mng, appointment, callback_query.from_user.id,
+            )
+
         if appointment_scheduler:
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
+        await state.clear()
         await callback_query.answer('')
         await callback_query.message.edit_text(
-            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]), reply_markup=None,
+            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]),
+            reply_markup=completion_details_kb(appointment.id, lang),
         )
 
-        if notification_service:
-            try:
-                actor = await appt_mng.get_user_by_telegram_id(callback_query.from_user.id)
-                decided_by_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
-                outcome_text = appt_mng.resolve_decision_outcome_text(appointment, "completion")
-                await invalidate_sibling_notifications(
-                    notification_service, appt_mng, appointment.id, "completion",
-                    callback_query.from_user.id, decided_by_label, outcome_text,
-                    appointment=appointment, lang=lang,
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to invalidate sibling completion notifications for appointment {appointment.id}: {e}"
-                )
+    @router.callback_query(CompletionSiblingDetailsCB.filter())
+    async def show_completion_sibling_details(
+        callback_query: CallbackQuery, callback_data: CompletionSiblingDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_completion_sibling_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id, callback_data.actor_user_id,
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer("")
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment, lang),
+            reply_markup=completion_sibling_hide_details_kb(
+                appointment.id, callback_data.actor_user_id, lang,
+            ),
+        )
+
+    @router.callback_query(CompletionSiblingHideDetailsCB.filter())
+    async def hide_completion_sibling_details(
+        callback_query: CallbackQuery, callback_data: CompletionSiblingHideDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_completion_sibling_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id, callback_data.actor_user_id,
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        actor_label = await appt_mng.resolve_decision_label(appointment.decided_by_user_id)
+        await callback_query.answer("")
+        await callback_query.message.edit_text(
+            staff_completion_result_text(
+                appointment.id, actor_label.get(lang, actor_label["ru"]), lang,
+            ),
+            reply_markup=completion_sibling_details_kb(
+                appointment.id, callback_data.actor_user_id, lang,
+            ),
+        )
+
+    @router.callback_query(CompletionDetailsCB.filter())
+    async def show_completion_details(
+        callback_query: CallbackQuery, callback_data: CompletionDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment, lang),
+            reply_markup=completion_hide_details_kb(appointment.id, lang),
+        )
+
+    @router.callback_query(CompletionHideDetailsCB.filter())
+    async def hide_completion_details(
+        callback_query: CallbackQuery, callback_data: CompletionHideDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer('')
+        await callback_query.message.edit_text(
+            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]),
+            reply_markup=completion_details_kb(appointment.id, lang),
+        )
 
     return router

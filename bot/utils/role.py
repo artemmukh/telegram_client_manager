@@ -1,11 +1,12 @@
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from aiogram.filters import BaseFilter
 from aiogram.types import Message
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bot.repositories.user_repository import UserRepository
+    from bot.services.utils.auth import AuthService
 
 class Role(Enum):
     ADMIN = "admin"
@@ -34,15 +35,22 @@ class RoleFilter(BaseFilter):
         # "*" -> any registered role; None -> not registered; "admin"/"client" -> exact
         self.role = role
 
-    async def __call__(self, message: Message, user_repo: "UserRepository") -> bool | dict:
-        if not await user_repo.user_exists(message.from_user.id):
+    async def __call__(
+        self,
+        message: Message,
+        user_repo: "UserRepository",
+        auth_service: "AuthService",
+    ) -> bool | dict:
+        user = await user_repo.get_user_by_telegram_id(message.from_user.id)
+
+        if user is None:
             return self.role is None  # match only the "guest" branch
 
-        role = await user_repo.get_user_role(message.from_user.id)
+        role = await auth_service.resolve_current_role(user)
 
         if self.role == "*":
             return {"role": role}
-        if role == self.role:
+        if role.value == self.role:
             return {"role": role}
         return False
 

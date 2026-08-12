@@ -49,6 +49,7 @@ CLAUDE.md
 .agents/!/data/data_base.db
 .claude
 .codex
+vvaharness.config.yaml
 
 # scripts
 scripts

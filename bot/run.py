@@ -4,25 +4,49 @@ import logging
 from aiogram.types import BotCommandScopeDefault
 
 from bot.config.booking_config import MAX_BOOKINGS_PER_SLOT
+from bot.create_bot import config, db, dp
 from bot.handlers.client.geolocation import create_price_geo_router
 from bot.handlers.client.price_list import create_price_list_router
 from bot.loader import get_bot, get_notifier
-from bot.create_bot import dp, db, config
 
 bot = get_bot()
-from bot.handlers.admin.client_management.client_creation import create_admin_client_creation_router
-from bot.handlers.admin.client_management.client_menu import create_admin_client_menu_router
-from bot.handlers.admin.client_management.client_browser import create_admin_client_browser_router
-from bot.handlers.admin.client_management.name_change_approval import create_admin_name_change_router
-from bot.handlers.admin.appointment_management.record_menu import create_admin_record_router
-from bot.handlers.admin.appointment_management.appointment_completion import create_admin_completion_router
-from bot.handlers.admin.appointment_management.appointment_creation import create_admin_appointment_creation_router
-from bot.handlers.admin.appointment_management.appointment_browser import create_admin_appointment_browser_router
-from bot.handlers.admin.appointment_management.booking_requests import create_admin_booking_requests_router
-from bot.handlers.admin.appointment_management.reschedule_requests import create_admin_reschedule_requests_router
-from bot.handlers.admin.appointment_management.slot_blocking import create_admin_slot_blocking_router
+from bot.handlers.admin.appointment_management.appointment_browser import (
+    create_admin_appointment_browser_router,
+)
+from bot.handlers.admin.appointment_management.appointment_completion import (
+    create_admin_completion_router,
+)
+from bot.handlers.admin.appointment_management.appointment_creation import (
+    create_admin_appointment_creation_router,
+)
+from bot.handlers.admin.appointment_management.booking_requests import (
+    create_admin_booking_requests_router,
+)
+from bot.handlers.admin.appointment_management.record_menu import (
+    create_admin_record_router,
+)
+from bot.handlers.admin.appointment_management.reschedule_requests import (
+    create_admin_reschedule_requests_router,
+)
+from bot.handlers.admin.appointment_management.slot_blocking import (
+    create_admin_slot_blocking_router,
+)
+from bot.handlers.admin.client_management.client_browser import (
+    create_admin_client_browser_router,
+)
+from bot.handlers.admin.client_management.client_creation import (
+    create_admin_client_creation_router,
+)
+from bot.handlers.admin.client_management.client_menu import (
+    create_admin_client_menu_router,
+)
+from bot.handlers.admin.client_management.name_change_approval import (
+    create_admin_name_change_router,
+)
 from bot.handlers.client.appointment_booking import create_client_booking_router
-from bot.handlers.client.appointment_invite import create_client_appointment_invite_router
+from bot.handlers.client.appointment_invite import (
+    create_client_appointment_invite_router,
+)
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
 from bot.handlers.client.appointment_response import create_client_appointment_router
 from bot.handlers.client.name_change_request import create_name_change_request_router
@@ -31,26 +55,30 @@ from bot.handlers.common.personal_data import create_personal_data_router
 from bot.handlers.common.profile import create_profile_router
 from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
-from bot.keyboards.common.profile_kb import personal_data_broadcast_kb
 from bot.middlewares.error import ErrorMiddleware
 from bot.middlewares.logging import LoggingMiddleware
 from bot.middlewares.user import UserContextMiddleware
-from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.blocked_slot_repository import BlockedSlotRepository
-from bot.repositories.medical_record_repository import MedicalRecordRepository
-from bot.repositories.user_repository import UserRepository
-from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.client_clinic_repository import ClientClinicRepository
+from bot.repositories.clinic_repository import ClinicRepository
+from bot.repositories.medical_record_repository import MedicalRecordRepository
+from bot.repositories.staff_repository import StaffRepository
+from bot.repositories.user_repository import UserRepository
 from bot.repositories.user_settings_repository import UserSettingsRepository
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_notifications import AppointmentNotificationService
-from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
+from bot.services.appointment.appointment_notifications import (
+    AppointmentNotificationService,
+)
+from bot.services.appointment.appointment_pagination_service import (
+    AppointmentPaginationService,
+)
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_notifications import ClientNotificationService
 from bot.services.llm.agent import ChatLLM
 from bot.services.medical_record.medical_record_management import MedicalRecordService
+from bot.services.utils.auth import AuthService
 from bot.utils.commands import DEFAULT_COMMANDS
 
 logger = logging.getLogger(__name__)
@@ -67,6 +95,7 @@ async def main():
     client_clinic_repo = ClientClinicRepository(connection)
     medical_record_repo = MedicalRecordRepository(connection)
     blocked_slot_repo = BlockedSlotRepository(connection)
+    auth_service = AuthService(staff_repo)
 
     await user_repo.init()
 
@@ -81,6 +110,7 @@ async def main():
     await blocked_slot_repo.init()
 
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
+    dp["auth_service"] = auth_service
     dp["appointment_repo"] = appointment_repo
 
     dp.message.middleware(LoggingMiddleware())
@@ -89,8 +119,8 @@ async def main():
     dp.message.middleware(ErrorMiddleware())
     dp.callback_query.middleware(ErrorMiddleware())
 
-    dp.message.middleware(UserContextMiddleware(user_repo))
-    dp.callback_query.middleware(UserContextMiddleware(user_repo))
+    dp.message.middleware(UserContextMiddleware(user_repo, auth_service))
+    dp.callback_query.middleware(UserContextMiddleware(user_repo, auth_service))
 
     # Create services
     client_management_service = ClientManagement(

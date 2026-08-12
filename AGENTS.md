@@ -77,6 +77,8 @@ ruff check .                             # lint (no committed ruff config -> def
 
 python -m bot.run                        # run the bot (must run as a module from repo root;
                                           # bot/run.py uses absolute `from bot...` imports)
+
+vvaharness scan --repo . --stop-after s9  # VVAH detection-only security scan
 ```
 
 Notes:
@@ -97,6 +99,18 @@ use them only when maintaining Claude compatibility.
 
 All implementation tasks must use the defined agent responsibilities and workflow.
 
+## Primary Session Ownership
+
+The primary Codex session owns the user requirement, architecture, task
+decomposition, acceptance criteria, inspection of the actual diff, rerunning
+verification, correction decisions, and final acceptance.
+
+Subagent reports are claims, not proof. The primary session must inspect the
+working tree and verification evidence before accepting them. A fresh,
+read-only reviewer is required after meaningful implementation work. If a
+review finding is fixed, the prior review verdict is invalid and the primary
+session must obtain a new final review.
+
 Codex subagents are defined in `.codex/agents/`. Legacy Claude subagents are
 defined in `.claude/agents/`. For Codex work, always dispatch work to the
 appropriate `.codex/agents/` subagent rather than doing it inline:
@@ -113,6 +127,21 @@ appropriate `.codex/agents/` subagent rather than doing it inline:
 Never skip researcher before implementer. The researcher subagent is
 responsible for finding the closest existing reference implementation
 (e.g. a sibling *_creation.py, *_requests.py file) before any code is written.
+
+Every delegated task must define:
+
+- Objective and acceptance criteria
+- Owned files or explicitly bounded responsibility
+- Interfaces and project constraints
+- Required verification
+- Expected return format with actual evidence
+
+Tell every worker that it is not alone in the codebase: preserve concurrent
+edits, do not revert unrelated work, and surface ambiguity, scope conflicts,
+or failed verification instead of silently redesigning the task. Do not
+silently substitute a configured role, model, or reasoning effort. If the
+configured lane is unavailable or its routing cannot be observed, return that
+limitation to the primary session.
 
 ---
 
@@ -175,6 +204,10 @@ For every non-trivial feature:
 8. Always finish with reviewer.
 
 This workflow is mandatory unless explicitly overridden by the user.
+
+The primary session remains responsible for accepting the result even when a
+specialist participates. Use only the roles needed by the change; do not add
+parallel workers whose owned files or decisions overlap.
 
 # Layer Responsibilities
 
@@ -528,6 +561,12 @@ When development tools are available:
 - Prefer documentation lookup over memory.
 - Reuse existing implementations.
 - Keep edits minimal and consistent.
+- Treat VVAH scans as detection-only by default. Always pass `--stop-after s9`
+  when running `vvaharness scan` against this repository. Keep local VVAH
+  overrides in ignored `vvaharness.config.yaml`; do not commit credentials or
+  machine-specific harness settings. Do not run a plain `vvaharness scan` here
+  because the default profile can continue into remediation and edit source
+  files.
 
 Do not assume APIs or project structure without verification.
 

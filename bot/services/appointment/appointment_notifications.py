@@ -2,9 +2,15 @@ import logging
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
-from bot.keyboards.admin.record_management_kb.booking_request_kb import booking_request_kb
-from bot.keyboards.admin.record_management_kb.completion_followup_kb import completion_followup_kb
-from bot.keyboards.admin.record_management_kb.reschedule_request_kb import reschedule_request_kb
+from bot.keyboards.admin.record_management_kb.booking_request_kb import (
+    booking_request_kb,
+)
+from bot.keyboards.admin.record_management_kb.completion_followup_kb import (
+    completion_followup_kb,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_kb import (
+    reschedule_request_kb,
+)
 from bot.keyboards.client.appointment_response_kb import (
     appointment_invite_kb,
     appointment_reminder_details_kb,
@@ -622,6 +628,9 @@ class AppointmentNotificationService:
     async def _resolve_lang(self, telegram_id: int) -> str:
         user = await self.user_repo.get_user_by_telegram_id(telegram_id)
         return user.language if user is not None else "ru"
+
+    async def resolve_recipient_language(self, telegram_id: int) -> str:
+        return await self._resolve_lang(telegram_id)
 
     async def notify_client_appointment_with_buttons(
         self, appointment: Appointment, use_invite_kb: bool = True, rescheduled: bool = False

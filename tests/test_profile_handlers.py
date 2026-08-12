@@ -13,7 +13,7 @@ import bot.handlers.common.profile as profile_module
 from bot.handlers.common.profile import create_profile_router
 from bot.keyboards.utils.language_cb import LanguageCB
 from bot.models.user import User
-from bot.utils.commands import client_commands
+from bot.utils.commands import admin_commands, client_commands
 from bot.utils.role import Role
 
 
@@ -120,3 +120,21 @@ async def test_update_language_preset_persists_and_rerenders(_patch_get_bot):
     callback.answer.assert_awaited_once_with("Sozlamalar yangilandi")
 
     assert _patch_get_bot.calls == [(client_commands("uz"), 555)]
+
+
+@pytest.mark.asyncio
+async def test_update_language_preset_uses_middleware_role_for_rerender_and_commands(_patch_get_bot):
+    current_user = _client_user()
+    current_user.role = Role.ADMIN
+    persisted_user = _client_user()
+    client_management = FakeClientManagement(persisted_user)
+    router = _router(client_management)
+    update_language_preset = _get_handler(router.callback_query, "update_language_preset")
+
+    callback = _callback()
+    await update_language_preset(callback, LanguageCB(value="uz"), current_user=current_user)
+
+    rendered_profile = callback.message.edit_text.call_args.args[0]
+    assert "Foydalanuvchi turi: administrator" in rendered_profile
+    assert "Foydalanuvchi turi: mijoz" not in rendered_profile
+    assert _patch_get_bot.calls == [(admin_commands("uz"), 555)]

@@ -1,9 +1,15 @@
-﻿from datetime import datetime
+﻿from dataclasses import replace
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import (
+    BotCommandScopeChat,
+    CallbackQuery,
+    InlineKeyboardButton,
+    Message,
+)
 
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.admin_utils.confirmations import GENDER_LABELS
@@ -19,7 +25,6 @@ from bot.models.user import User
 from bot.services.client.client_management import ClientManagement
 from bot.utils.commands import admin_commands, client_commands
 from bot.utils.role import Role, RoleFilter
-
 
 PROFILE_TEXTS = {
     "ru": {
@@ -142,6 +147,8 @@ def create_profile_router(client_management_service: ClientManagement = None):
             except BotException as e:
                 await callback_query.answer(e.localized(current_user.language), show_alert=True)
                 return
+
+            updated_user = replace(updated_user, role=current_user.role)
 
             try:
                 await callback_query.message.edit_text(

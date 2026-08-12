@@ -49,7 +49,6 @@ def create_client_booking_router(
         await state.update_data(language=lang)
 
         try:
-            await appointment_management_service.ensure_pending_limit_not_exceeded(callback_query.from_user.id)
             staff_list = await appointment_management_service.list_bookable_staff(callback_query.from_user.id)
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)

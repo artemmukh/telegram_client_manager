@@ -2,6 +2,9 @@ import logging
 
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
+from bot.keyboards.admin.record_management_kb.completion_sibling_details_kb import (
+    completion_sibling_details_kb,
+)
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     DEFAULT_UNKNOWN_CLIENT_LABEL,
@@ -19,6 +22,43 @@ DEFAULT_OUTCOME_TEXT = {
     "ru": "решение принято",
     "uz": "qaror qabul qilindi",
 }
+
+
+def staff_completion_result_text(appointment_id: int, actor_label: str, lang: str) -> str:
+    if lang == "uz":
+        return f"№{appointment_id} qabul yakunlandi.\nYakunladi: {actor_label}"
+
+    return f"Приём №{appointment_id} завершён.\nЗавершил(а): {actor_label}"
+
+
+async def replace_completion_sibling_prompts(
+    notification_service: AppointmentNotificationService,
+    appt_mng: AppointmentManagement,
+    appointment,
+    actor_chat_id: int,
+) -> None:
+    """Replace stored colleague completion prompts with a compact result."""
+    try:
+        actor_label = await appt_mng.resolve_decision_label(appointment.decided_by_user_id)
+        targets = await appt_mng.get_invalidation_targets(appointment.id, "completion", actor_chat_id)
+    except Exception as error:  # noqa: BLE001 - sibling resolution must not block completion.
+        logger.warning("Failed to resolve completion sibling prompts for appointment %s: %s", appointment.id, error)
+        return
+
+    for target in targets:
+        try:
+            lang = await notification_service.resolve_recipient_language(target.chat_id)
+            label = actor_label.get(lang, actor_label["ru"])
+            await notification_service.notifier.try_edit_message_text(
+                chat_id=target.chat_id,
+                message_id=target.message_id,
+                text=staff_completion_result_text(appointment.id, label, lang),
+                reply_markup=completion_sibling_details_kb(
+                    appointment.id, appointment.decided_by_user_id, lang,
+                ),
+            )
+        except Exception as error:  # noqa: BLE001 - each sibling edit must be isolated.
+            logger.warning("Failed to replace completion sibling prompt %s: %s", target.message_id, error)
 
 
 async def invalidate_sibling_notifications(
