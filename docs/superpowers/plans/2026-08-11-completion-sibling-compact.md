@@ -1,5 +1,7 @@
 # Completion Sibling Compact Notification Implementation Plan
 
+> **Superseded:** The implemented completion-only scope is expanded by [the staff notification details plan](2026-08-11-staff-notification-details.md). This document remains the historical plan for commit `c8b7c2a`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` for this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Automatically replace a colleague's completion prompt with a compact completed-notification that names the deciding employee and retains that identity after opening and hiding details.
