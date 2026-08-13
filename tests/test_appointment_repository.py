@@ -1909,6 +1909,116 @@ async def test_add_and_get_appointment_notifications_filters_by_kind(appointment
     assert reschedule_notifications[0].message_id == 3
 
 
+@pytest.mark.asyncio
+async def test_appointment_notification_persists_compact_text_and_supports_exact_scoped_update(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    await appointment_repo.add_appointment_notification(
+        appointment_id,
+        chat_id=100,
+        message_id=1,
+        kind="completion",
+        compact_text="Delivered compact result",
+    )
+
+    notifications = await appointment_repo.get_appointment_notifications(appointment_id, "completion")
+    assert notifications[0].compact_text == "Delivered compact result"
+
+    exact = await appointment_repo.get_appointment_notification(
+        appointment_id, chat_id=100, message_id=1, kind="completion",
+    )
+    assert exact is not None
+    assert exact.compact_text == "Delivered compact result"
+
+    assert await appointment_repo.set_appointment_notification_compact_text(
+        appointment_id,
+        chat_id=100,
+        message_id=1,
+        kind="completion",
+        compact_text="Updated compact result",
+    ) is True
+    updated = await appointment_repo.get_appointment_notification(
+        appointment_id, chat_id=100, message_id=1, kind="completion",
+    )
+    assert updated is not None
+    assert updated.compact_text == "Updated compact result"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("appointment_id", "chat_id", "message_id", "kind"),
+    [
+        (999, 100, 1, "completion"),
+        (1, 999, 1, "completion"),
+        (1, 100, 999, "completion"),
+        (1, 100, 1, "booking"),
+    ],
+)
+async def test_appointment_notification_exact_lookup_and_setter_are_fully_scoped(
+    appointment_setup, appointment_id, chat_id, message_id, kind,
+):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    stored_appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.add_appointment_notification(
+        stored_appointment_id, chat_id=100, message_id=1, kind="completion", compact_text="Original",
+    )
+
+    assert await appointment_repo.get_appointment_notification(
+        appointment_id, chat_id=chat_id, message_id=message_id, kind=kind,
+    ) is None
+    assert await appointment_repo.set_appointment_notification_compact_text(
+        appointment_id, chat_id=chat_id, message_id=message_id, kind=kind, compact_text="Forged",
+    ) is False
+
+    unchanged = await appointment_repo.get_appointment_notification(
+        stored_appointment_id, chat_id=100, message_id=1, kind="completion",
+    )
+    assert unchanged is not None
+    assert unchanged.compact_text == "Original"
+
+
+@pytest.mark.asyncio
+async def test_legacy_appointment_notifications_table_migrates_nullable_compact_text(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    connection = appointment_repo.connection
+
+    await connection.execute("DROP TABLE appointment_notifications")
+    await connection.execute(
+        """
+        CREATE TABLE appointment_notifications(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            appointment_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+        )
+        """
+    )
+    await connection.execute(
+        "INSERT INTO appointment_notifications(appointment_id, chat_id, message_id, kind) VALUES (?, ?, ?, ?)",
+        (appointment_id, 321, 654, "completion"),
+    )
+    await connection.commit()
+
+    await appointment_repo.init()
+
+    columns_cursor = await connection.execute("PRAGMA table_info(appointment_notifications)")
+    columns = {row[1] for row in await columns_cursor.fetchall()}
+    assert "compact_text" in columns
+    legacy = await appointment_repo.get_appointment_notification(
+        appointment_id, chat_id=321, message_id=654, kind="completion",
+    )
+    assert legacy is not None
+    assert legacy.compact_text is None
+
+
 # --- Phase 3 (REFACTOR_DB_PROMPT.md): price-after-purpose rebuild ---
 #
 # Target column order after the rebuild in AppointmentRepository (and what a

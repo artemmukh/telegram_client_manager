@@ -1,11 +1,25 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.client.appointment_response import create_client_appointment_router
+from bot.keyboards.admin.record_management_kb.appointment_log_details_cb import (
+    AppointmentLogDetailsCB,
+    AppointmentLogHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+    appointment_log_hide_details_kb,
+)
+from bot.keyboards.client.appointment_manage_cb import ClientManageActionCB
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.user import User
+from bot.services.appointment.appointment_notifications import (
+    StaffLogDelivery,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
@@ -28,6 +42,8 @@ def _make_callback_query(data):
     callback_query = MagicMock()
     callback_query.data = data
     callback_query.from_user.id = 12345
+    callback_query.message.chat.id = 12345
+    callback_query.message.message_id = 777
     callback_query.message.edit_text = AsyncMock()
     callback_query.answer = AsyncMock()
     return callback_query
@@ -69,8 +85,9 @@ def _admin():
 
 # Fake classes for testing
 class FakeAppointmentRepo:
-    def __init__(self, appointments=None):
+    def __init__(self, appointments=None, notifications=None):
         self.appointments = list(appointments or [])
+        self.notifications = list(notifications or [])
         self.status_updates = []
 
     async def get_appointment_by_id(self, appointment_id):
@@ -82,6 +99,19 @@ class FakeAppointmentRepo:
             if appt.id == appointment_id:
                 appt.status = status
 
+    async def get_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        return next(
+            (
+                notification
+                for notification in self.notifications
+                if notification.appointment_id == appointment_id
+                and notification.chat_id == chat_id
+                and notification.message_id == message_id
+                and notification.kind == kind
+            ),
+            None,
+        )
+
 
 class FakeUserRepo:
     def __init__(self, client=None):
@@ -89,6 +119,11 @@ class FakeUserRepo:
 
     async def get_client_by_id(self, client_id):
         if self.client and self.client.ID == client_id:
+            return self.client
+        return None
+
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        if self.client and self.client.telegram_user_id == telegram_user_id:
             return self.client
         return None
 
@@ -125,6 +160,174 @@ class FakeNotificationService:
         self.cancellations.append((admin_telegram_id, appointment, client_name))
 
 
+class ProposalDetailsNotifierFake:
+    def __init__(self):
+        self.edits = []
+        self.recorded_count_at_edit = []
+        self.management = None
+
+    async def try_edit_message_text(self, **kwargs):
+        self.edits.append(kwargs)
+        self.recorded_count_at_edit.append(len(self.management.recorded_notifications))
+        return True
+
+
+class ProposalNotificationServiceFake:
+    def __init__(self, notifier, delivery):
+        self.notifier = notifier
+        self.delivery = delivery
+        self.accepted_calls = []
+        self.rejected_calls = []
+
+    async def notify_staff_proposal_accepted(self, staff_telegram_id, appointment, client_name):
+        self.accepted_calls.append((staff_telegram_id, appointment, client_name))
+        return self.delivery
+
+    async def notify_staff_proposal_rejected(self, staff_telegram_id, appointment, client_name):
+        self.rejected_calls.append((staff_telegram_id, appointment, client_name))
+        return self.delivery
+
+
+class ProposalAppointmentManagementFake:
+    def __init__(self, pre_mutation, resolved, client, recipients):
+        self.pre_mutation = pre_mutation
+        self.resolved = resolved
+        self.client = client
+        self.recipients = recipients
+        self.recorded_notifications = []
+
+    async def get_appointment_for_client(self, appointment_id, telegram_user_id):
+        assert appointment_id == self.pre_mutation.id
+        assert telegram_user_id == self.client.telegram_user_id
+        # The production service returns the pre-mutation row before its
+        # accept/reject CAS mutates a separate model instance. Preserve that
+        # distinction so the handler's log-kind lookup cannot accidentally use
+        # post-mutation fields.
+        from dataclasses import replace
+
+        return replace(self.pre_mutation)
+
+    async def accept_proposed_datetime(self, appointment_id, telegram_user_id):
+        assert appointment_id == self.resolved.id
+        assert telegram_user_id == self.client.telegram_user_id
+        return self.resolved
+
+    async def reject_proposed_datetime(self, appointment_id, telegram_user_id):
+        assert appointment_id == self.resolved.id
+        assert telegram_user_id == self.client.telegram_user_id
+        return self.resolved
+
+    async def get_appointment_with_client_info(self, appointment_id):
+        assert appointment_id == self.resolved.id
+        return self.resolved, self.client
+
+    async def resolve_notification_recipients(self, appointment):
+        assert appointment is self.resolved
+        return self.recipients
+
+    def resolve_admin_proposal_log_kind(self, appointment):
+        if appointment.status is AppointmentStatus.PENDING and appointment.proposed_by is CreatedBy.ADMIN:
+            return "booking"
+        if appointment.status is AppointmentStatus.CONFIRMED and appointment.proposed_by is CreatedBy.ADMIN:
+            return "reschedule"
+        return None
+
+    async def record_notification(self, appointment_id, chat_id, message_id, kind, compact_text=None):
+        self.recorded_notifications.append((appointment_id, chat_id, message_id, kind, compact_text))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "status", "created_by", "kind", "compact_text"),
+    [
+        (
+            "accept_proposal", AppointmentStatus.PENDING, CreatedBy.CLIENT, "booking",
+            "✅ Клиент Иванов Иван согласился на предложенное время.\n\n📱 Номер: +998901234567",
+        ),
+        (
+            "reject_proposal", AppointmentStatus.PENDING, CreatedBy.CLIENT, "booking",
+            "❌ Клиент Иванов Иван отклонил предложенное время.\n\n📱 Номер: +998901234567",
+        ),
+        (
+            "accept_proposal", AppointmentStatus.CONFIRMED, CreatedBy.ADMIN, "reschedule",
+            "✅ Клиент Иванов Иван согласился на предложенное время.\n\n📱 Номер: +998901234567",
+        ),
+        (
+            "reject_proposal", AppointmentStatus.CONFIRMED, CreatedBy.ADMIN, "reschedule",
+            "❌ Клиент Иванов Иван отклонил предложенное время.\n\n📱 Номер: +998901234567",
+        ),
+    ],
+)
+async def test_client_proposal_response_records_staff_log_before_details_attachment(
+    action, status, created_by, kind, compact_text,
+):
+    client = _client()
+    pre_mutation = _appointment()
+    pre_mutation.status = status
+    pre_mutation.created_by = created_by
+    pre_mutation.proposed_datetime = "2026-07-12 14:30"
+    pre_mutation.proposed_by = CreatedBy.ADMIN
+    pre_mutation.client_phone = client.phone
+
+    resolved = _appointment()
+    resolved.status = AppointmentStatus.CONFIRMED if action == "accept_proposal" else AppointmentStatus.CANCELLED
+    resolved.created_by = created_by
+    resolved.proposed_datetime = None
+    resolved.proposed_by = None
+    resolved.proposal_message_id = None
+    resolved.client_phone = client.phone
+
+    staff = _admin()
+    notifier = ProposalDetailsNotifierFake()
+    appointment_management = ProposalAppointmentManagementFake(
+        pre_mutation, resolved, client, [staff],
+    )
+    notifier.management = appointment_management
+    delivery = StaffLogDelivery(
+        message_id=9001, compact_text=compact_text, lang="ru", details_available=True,
+    )
+    notification_service = ProposalNotificationServiceFake(notifier, delivery)
+    router = create_client_appointment_router(
+        MagicMock(), appointment_management, notification_service, None,
+    )
+    manage_action = _get_handler_by_name(router, "manage_action")
+    callback_query = _make_callback_query(
+        ClientManageActionCB(action=action, appointment_id=1, page=1).pack()
+    )
+
+    await manage_action(
+        callback_query,
+        ClientManageActionCB(action=action, appointment_id=1, page=1),
+        MagicMock(),
+        client,
+    )
+
+    assert appointment_management.recorded_notifications == [
+        (1, staff.telegram_user_id, delivery.message_id, kind, compact_text),
+    ]
+    assert notifier.recorded_count_at_edit == [1]
+    assert notifier.edits == [
+        {
+            "chat_id": staff.telegram_user_id,
+            "message_id": delivery.message_id,
+            "text": compact_text,
+            "reply_markup": appointment_log_details_kb(1, "ru"),
+        },
+    ]
+    if action == "accept_proposal":
+        assert notification_service.accepted_calls == [
+            (staff.telegram_user_id, resolved, client.full_name),
+        ]
+        assert notification_service.rejected_calls == []
+    else:
+        assert notification_service.rejected_calls == [
+            (staff.telegram_user_id, resolved, client.full_name),
+        ]
+        assert notification_service.accepted_calls == []
+    callback_query.message.edit_text.assert_awaited_once()
+    callback_query.answer.assert_awaited_once()
+
+
 # --- show_appointment_management (text-triggered entrypoint: buttons + slash commands) ---
 
 @pytest.mark.asyncio
@@ -152,7 +355,9 @@ async def test_show_appointment_management_new_slash_commands_trigger_same_respo
     """/appointments, /book and /history must trigger the exact same
     show_appointment_management handler (and therefore the same response) as
     the pre-existing "📋 Управление записями" reply-keyboard button text."""
-    from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
+    from bot.keyboards.client.appointment_management_kb import (
+        client_appointment_management_kb,
+    )
 
     router = create_client_appointment_router(MagicMock(), MagicMock(), MagicMock(), MagicMock())
     show_appointment_management = _get_message_handler_object_by_name(
@@ -279,6 +484,147 @@ async def test_handle_appointment_details_with_malformed_id_shows_alert_and_does
     callback_query.answer.assert_awaited_once_with("Некорректная запись.", show_alert=True)
     appointment_management_service.get_appointment_for_client.assert_not_awaited()
     notification_service.notify_client_appointment_details.assert_not_awaited()
+
+
+def _client_log_router(appointment=None, notification=None):
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_appointment_for_client = AsyncMock(return_value=appointment)
+    appointment_management_service.get_notification_for_message = AsyncMock(return_value=notification)
+    return create_client_appointment_router(
+        MagicMock(), appointment_management_service, MagicMock(), MagicMock(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "expected_labels"),
+    [
+        (
+            "uz",
+            ("Yozuv №1", "Klinika:", "Sana va vaqt:", "Xizmat:", "Holat:", "Shifokor:", "Shifokor telefoni:"),
+        ),
+        (
+            "xx",
+            ("Запись №1", "Клиника:", "Дата и время:", "Услуга:", "Статус:", "Врач:", "Телефон врача:"),
+        ),
+    ],
+)
+async def test_generic_client_log_details_renders_allowed_fields_and_hides_exact_compact_text(
+    language, expected_labels,
+):
+    appointment = _appointment()
+    appointment.doctor_full_name = "Doctor Allowed"
+    appointment.doctor_phone = "DOCTOR_PHONE_ALLOWED"
+    appointment.doctor_is_doctor = True
+    appointment.doctor_id = 424242
+    appointment.client_full_name = "CLIENT_NAME_SECRET"
+    appointment.client_phone = "CLIENT_PHONE_SECRET"
+    appointment.price = 9876.54
+    appointment.decided_by_user_id = 434343
+    appointment.notification_message_id = 545454
+    appointment.proposal_message_id = 656565
+    appointment.admin_notification_message_id = 767676
+    notification = AppointmentNotification(
+        appointment_id=1,
+        chat_id=12345,
+        message_id=777,
+        kind="client_log",
+        compact_text="Исторический результат клиента",
+    )
+    router = _client_log_router(appointment, notification)
+    details = _get_handler_by_name(router, "handle_appointment_log_details")
+    hide = _get_handler_by_name(router, "handle_appointment_log_hide_details")
+    callback_query = _make_callback_query(AppointmentLogDetailsCB(appointment_id=1).pack())
+    client = _client()
+    client.language = language
+    client.phone = "CLIENT_PHONE_SECRET"
+
+    await details(callback_query, AppointmentLogDetailsCB(appointment_id=1), client)
+    callback_query.message.edit_text.assert_awaited_once()
+    expanded_text = callback_query.message.edit_text.call_args.args[0]
+    for label in expected_labels:
+        assert label in expanded_text
+    assert "Doctor Allowed" in expanded_text
+    assert "DOCTOR_PHONE_ALLOWED" in expanded_text
+    for forbidden in (
+        "9876.54", "CLIENT_NAME_SECRET", "CLIENT_PHONE_SECRET", "ACTOR_SECRET",
+        "424242", "434343", "545454", "656565", "767676",
+    ):
+        assert forbidden not in expanded_text
+    assert callback_query.message.edit_text.call_args.kwargs["reply_markup"] == appointment_log_hide_details_kb(
+        1, lang=language,
+    )
+
+    callback_query.message.edit_text.reset_mock()
+    await hide(callback_query, AppointmentLogHideDetailsCB(appointment_id=1), client)
+    callback_query.message.edit_text.assert_awaited_once_with(
+        "Исторический результат клиента",
+        reply_markup=appointment_log_details_kb(1, lang=language),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "callback_type"),
+    [
+        ("handle_appointment_log_details", AppointmentLogDetailsCB),
+        ("handle_appointment_log_hide_details", AppointmentLogHideDetailsCB),
+    ],
+)
+@pytest.mark.parametrize(
+    "appointment,notification",
+    [
+        (_appointment(), None),
+        (None, AppointmentNotification(
+            appointment_id=1, chat_id=12345, message_id=777,
+            kind="client_log", compact_text="Should not edit",
+        )),
+        (_appointment(), AppointmentNotification(
+            appointment_id=1, chat_id=12345, message_id=777,
+            kind="booking", compact_text="Wrong kind",
+        )),
+    ],
+)
+async def test_generic_client_log_details_fails_closed_without_edit_for_missing_wrong_kind_or_deleted_row(
+    handler_name, callback_type, appointment, notification,
+):
+    router = _client_log_router(appointment, notification)
+    handler = _get_handler_by_name(router, handler_name)
+    callback_query = _make_callback_query(callback_type(appointment_id=1).pack())
+
+    await handler(callback_query, callback_type(appointment_id=1), _client())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "callback_type"),
+    [
+        ("handle_appointment_log_details", AppointmentLogDetailsCB),
+        ("handle_appointment_log_hide_details", AppointmentLogHideDetailsCB),
+    ],
+)
+async def test_generic_client_log_details_fails_closed_for_foreign_appointment_without_edit(
+    handler_name, callback_type,
+):
+    foreign = _appointment()
+    foreign.client_id = 999
+    router = _client_log_router(
+        foreign,
+        AppointmentNotification(
+            appointment_id=1, chat_id=12345, message_id=777,
+            kind="client_log", compact_text="Foreign compact",
+        ),
+    )
+    handler = _get_handler_by_name(router, handler_name)
+    callback_query = _make_callback_query(callback_type(appointment_id=1).pack())
+
+    await handler(callback_query, callback_type(appointment_id=1), _client())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

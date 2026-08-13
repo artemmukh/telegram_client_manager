@@ -267,21 +267,28 @@ async def test_paginate_clients_list_mode_excludes_other_clinics():
         await connection.close()
 
 
-# --- client_card_kb: delete button removed ---
+# --- client_card_kb: delete control and layout ---
 
-def test_client_card_kb_has_no_delete_button():
+def test_client_card_kb_has_delete_button_with_scoped_callback():
     markup = client_card_kb(client_id=1, mode="list", page=1)
 
-    all_buttons = [button for row in markup.inline_keyboard for button in row]
-    assert not any("delete" in (button.callback_data or "") for button in all_buttons)
-    assert not any("Удалить" in button.text for button in all_buttons)
+    delete_button = markup.inline_keyboard[2][0]
+    callback = ClientActionCB.unpack(delete_button.callback_data)
+
+    assert callback.action == "delete"
+    assert callback.client_id == 1
+    assert callback.mode == "list"
+    assert callback.page == 1
+    assert delete_button.text
 
 
-def test_client_card_kb_adjust_layout_has_three_rows_of_buttons():
+def test_client_card_kb_adjust_layout_places_delete_before_back_row():
     markup = client_card_kb(client_id=1, mode="list", page=1)
 
     row_lengths = [len(row) for row in markup.inline_keyboard]
-    assert row_lengths == [2, 2, 1]
+    assert row_lengths == [2, 2, 1, 1]
+    assert ClientActionCB.unpack(markup.inline_keyboard[2][0].callback_data).action == "delete"
+    assert ClientPageCB.unpack(markup.inline_keyboard[3][0].callback_data).mode == "list"
 
 
 # --- start_delete: appointment-count warning ---

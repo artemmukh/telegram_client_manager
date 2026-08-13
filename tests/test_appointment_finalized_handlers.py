@@ -10,15 +10,18 @@ from bot.handlers.admin.appointment_management.booking_requests import (
 from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
-from bot.keyboards.admin.record_management_kb.booking_request_cb import BookingRequestActionCB
-from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
+from bot.keyboards.admin.record_management_kb.booking_request_cb import (
+    BookingRequestActionCB,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_cb import (
+    RescheduleRequestActionCB,
+)
 from bot.models.appointment import Appointment
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
-
 
 ADMIN_TELEGRAM_ID = 999
 
