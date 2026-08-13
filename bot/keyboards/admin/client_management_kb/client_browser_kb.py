@@ -29,6 +29,7 @@ _TEXTS = {
         "edit_full_name_card": "✏️ Изменить ФИ",
         "edit_phone_card": "📞 Изменить телефон",
         "back_to_list": "⬅️ Назад к списку",
+        "delete_client": "🗑️ Удалить клиента",
         "confirm_delete": "✅ Да, удалить",
         "confirm_unlink": "✅ Да, отвязать",
         "cancel_delete": "❌ Отмена",
@@ -52,6 +53,7 @@ _TEXTS = {
         "edit_full_name_card": "✏️ F.I.Sh.ni o'zgartirish",
         "edit_phone_card": "📞 Telefonni o'zgartirish",
         "back_to_list": "⬅️ Ro'yxatga qaytish",
+        "delete_client": "🗑️ Mijozni uzish",
         "confirm_delete": "✅ Ha, o'chirish",
         "confirm_unlink": "✅ Ha, uzish",
         "cancel_delete": "❌ Bekor qilish",
@@ -184,6 +186,11 @@ def client_card_kb(client_id: int, mode: str, page: int, lang: str = "ru") -> In
         callback_data=ClientActionCB(action="edit_phone", client_id=client_id, mode=mode, page=page).pack(),
     )
 
+    builder.button(
+        text=texts["delete_client"],
+        callback_data=ClientActionCB(action="delete", client_id=client_id, mode=mode, page=page).pack(),
+    )
+
     if mode == "direct":
         # Карточка открыта напрямую (поиск по номеру всегда даёт 0 или 1
         # совпадение) - списка, куда возвращаться, не существует.
@@ -194,7 +201,7 @@ def client_card_kb(client_id: int, mode: str, page: int, lang: str = "ru") -> In
             callback_data=ClientPageCB(mode=mode, page=page).pack(),
         )
 
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
