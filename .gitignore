@@ -63,3 +63,10 @@ mcp-servers/
 # Local data assets / backups (not part of the app, machine-specific)
 data$f
 data/*.bak*
+.codex-remote-attachments
+.pytest_tmp
+.superpowers
+.ruff_task2_cache
+.worktrees
+backup
+docs
