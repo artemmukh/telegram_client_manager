@@ -39,6 +39,9 @@ class FakeAppointmentRepository:
     async def get_appointments_by_doctor_and_date(self, doctor_id, date):
         return []
 
+    async def get_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        return None
+
     async def update_appointment_status(self, appointment_id, status, status_updated_at):
         self.appointment.status = status
         self.status_updates.append((appointment_id, status))

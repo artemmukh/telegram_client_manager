@@ -18,8 +18,12 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     edit_tracked_message,
     remember_tracked_message,
 )
-from bot.handlers.utils.admin_utils.appointment_calendar_helpers import clamp_calendar_date, clamp_month_to_range
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    clamp_calendar_date,
+    clamp_month_to_range,
+)
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    compact_decision_result,
     invalidate_actor_stale_message,
     invalidate_own_stale_finalized_message,
     invalidate_sibling_notifications,
@@ -28,9 +32,20 @@ from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
     datetime_processing,
 )
-from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarDayCB, ApptCalendarMonthCB
-from bot.keyboards.admin.record_management_kb.appointment_creation_cb import AdminOccupiedSlotCB
-from bot.keyboards.admin.record_management_kb.booking_request_cb import BookingRequestActionCB
+from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
+    ApptCalendarDayCB,
+    ApptCalendarMonthCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_creation_cb import (
+    AdminOccupiedSlotCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_hide_details_kb,
+)
+from bot.keyboards.admin.record_management_kb.booking_request_cb import (
+    BookingRequestActionCB,
+)
 from bot.keyboards.admin.record_management_kb.booking_request_kb import (
     booking_request_confirm_propose_kb,
     booking_request_kb,
@@ -44,7 +59,9 @@ from bot.services.utils.date_parser import (
     format_datetime_for_display,
     get_current_tashkent_datetime,
 )
-from bot.states.admin.record_management.booking_negotiation_states import BookingNegotiationStates
+from bot.states.admin.record_management.booking_negotiation_states import (
+    BookingNegotiationStates,
+)
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
@@ -161,19 +178,42 @@ def create_admin_booking_requests_router(
             )
 
     async def invalidate_own_stale_booking_message(
-        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError, lang: str,
+        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError, appointment_id: int, lang: str,
     ) -> None:
         if not notification_service:
             return
         try:
             await invalidate_actor_stale_message(
-                notification_service, error,
-                callback_query.message.chat.id, callback_query.message.message_id, lang,
+                notification_service, appt_mng, error, appointment_id,
+                callback_query.message.chat.id, callback_query.message.message_id, "booking", lang,
             )
         except Exception as e:
             logger.warning(
                 f"Failed to invalidate own stale booking message: {e}"
             )
+
+    async def render_booking_decision(
+        callback_query: CallbackQuery, appointment, lang: str,
+    ) -> None:
+        actor_label = await appt_mng.resolve_decision_label(appointment.decided_by_user_id)
+        outcome_text = appt_mng.resolve_decision_outcome_text(appointment, "booking")
+        _, compact_text_stored = await compact_decision_result(
+            appt_mng,
+            appointment.id,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            "booking",
+            actor_label,
+            outcome_text,
+            lang,
+        )
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment, lang),
+            reply_markup=(
+                appointment_log_hide_details_kb(appointment.id, lang)
+                if compact_text_stored is True else None
+            ),
+        )
 
     async def notify_staff_booking_decision(
         callback_query: CallbackQuery, appointment, confirmed: bool, lang: str,
@@ -197,13 +237,21 @@ def create_admin_booking_requests_router(
                 continue
             try:
                 if confirmed:
-                    await notification_service.notify_staff_booking_confirmed(
+                    delivery = await notification_service.notify_staff_booking_confirmed(
                         recipient.telegram_user_id, appointment, actor_label, client_name,
                     )
                 else:
-                    await notification_service.notify_staff_booking_rejected(
+                    delivery = await notification_service.notify_staff_booking_rejected(
                         recipient.telegram_user_id, appointment, actor_label, client_name,
                     )
+                await record_staff_log_delivery(
+                    appt_mng,
+                    notification_service.notifier,
+                    appointment_id=appointment.id,
+                    chat_id=recipient.telegram_user_id,
+                    kind="booking",
+                    delivery=delivery,
+                )
             except Exception as e:
                 logger.warning(
                     f"Failed to notify staff {recipient.telegram_user_id} about booking decision "
@@ -235,7 +283,7 @@ def create_admin_booking_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_booking_message(callback_query, e, lang)
+            await invalidate_own_stale_booking_message(callback_query, e, callback_data.appointment_id, lang)
             return
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -247,7 +295,7 @@ def create_admin_booking_requests_router(
         await notify_client_confirmed(appointment)
 
         await callback_query.answer(_REQUEST_CONFIRMED.get(lang, _REQUEST_CONFIRMED["ru"]))
-        await callback_query.message.edit_text(build_appointment_card(appointment, lang))
+        await render_booking_decision(callback_query, appointment, lang)
         await invalidate_booking_siblings(callback_query, appointment, lang)
         await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
 
@@ -276,7 +324,7 @@ def create_admin_booking_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_booking_message(callback_query, e, lang)
+            await invalidate_own_stale_booking_message(callback_query, e, callback_data.appointment_id, lang)
             return
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -294,7 +342,7 @@ def create_admin_booking_requests_router(
                 )
 
         await callback_query.answer(_REQUEST_REJECTED.get(lang, _REQUEST_REJECTED["ru"]))
-        await callback_query.message.edit_text(build_appointment_card(appointment, lang))
+        await render_booking_decision(callback_query, appointment, lang)
         await invalidate_booking_siblings(callback_query, appointment, lang)
         await notify_staff_booking_decision(callback_query, appointment, confirmed=False, lang=lang)
 
@@ -503,7 +551,7 @@ def create_admin_booking_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_booking_message(callback_query, e, lang)
+            await invalidate_own_stale_booking_message(callback_query, e, callback_data.appointment_id, lang)
             await state.clear()
             return
         except ValidationError as e:
@@ -518,11 +566,7 @@ def create_admin_booking_requests_router(
 
         if appointment.status == AppointmentStatus.CONFIRMED:
             await callback_query.answer(_TIME_CHANGED.get(lang, _TIME_CHANGED["ru"]))
-            await callback_query.message.edit_text(
-                _TIME_CHANGED_TO.get(lang, _TIME_CHANGED_TO["ru"]).format(
-                    value=_format_datetime_value(appointment.datetime, lang),
-                )
-            )
+            await render_booking_decision(callback_query, appointment, lang)
             await invalidate_booking_siblings(callback_query, appointment, lang)
             await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
             await state.clear()
@@ -541,11 +585,7 @@ def create_admin_booking_requests_router(
                 )
 
         await callback_query.answer(_TIME_CHANGED_AND_NOTIFIED.get(lang, _TIME_CHANGED_AND_NOTIFIED["ru"]))
-        await callback_query.message.edit_text(
-            _NEW_TIME_ASSIGNED.get(lang, _NEW_TIME_ASSIGNED["ru"]).format(
-                value=_format_datetime_value(appointment.datetime, lang),
-            )
-        )
+        await render_booking_decision(callback_query, appointment, lang)
         await invalidate_booking_siblings(callback_query, appointment, lang)
         await state.clear()
 

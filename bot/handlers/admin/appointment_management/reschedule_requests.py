@@ -18,17 +18,34 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     edit_tracked_message,
     remember_tracked_message,
 )
-from bot.handlers.utils.admin_utils.appointment_calendar_helpers import clamp_calendar_date, clamp_month_to_range
+from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
+    clamp_calendar_date,
+    clamp_month_to_range,
+)
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    compact_decision_result,
     invalidate_actor_stale_message,
     invalidate_own_stale_finalized_message,
     invalidate_sibling_notifications,
     notify_staff_reschedule_decision,
 )
-from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card, datetime_processing
-from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptCalendarDayCB, ApptCalendarMonthCB
-from bot.keyboards.admin.record_management_kb.appointment_creation_cb import AdminOccupiedSlotCB
-from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
+from bot.handlers.utils.admin_utils.appointment_helpers import (
+    build_appointment_card,
+    datetime_processing,
+)
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
+    ApptCalendarDayCB,
+    ApptCalendarMonthCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_creation_cb import (
+    AdminOccupiedSlotCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_hide_details_kb,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_cb import (
+    RescheduleRequestActionCB,
+)
 from bot.keyboards.admin.record_management_kb.reschedule_request_kb import (
     reschedule_request_confirm_propose_kb,
     reschedule_request_kb,
@@ -41,7 +58,9 @@ from bot.services.utils.date_parser import (
     format_datetime_for_db,
     get_current_tashkent_datetime,
 )
-from bot.states.admin.record_management.reschedule_request_states import RescheduleRequestStates
+from bot.states.admin.record_management.reschedule_request_states import (
+    RescheduleRequestStates,
+)
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 
@@ -146,19 +165,42 @@ def create_admin_reschedule_requests_router(
             )
 
     async def invalidate_own_stale_reschedule_message(
-        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError, lang: str,
+        callback_query: CallbackQuery, error: AppointmentAlreadyDecidedError, appointment_id: int, lang: str,
     ) -> None:
         if not notification_service:
             return
         try:
             await invalidate_actor_stale_message(
-                notification_service, error,
-                callback_query.message.chat.id, callback_query.message.message_id, lang,
+                notification_service, appt_mng, error, appointment_id,
+                callback_query.message.chat.id, callback_query.message.message_id, "reschedule", lang,
             )
         except Exception as e:
             logger.warning(
                 f"Failed to invalidate own stale reschedule message: {e}"
             )
+
+    async def render_reschedule_decision(
+        callback_query: CallbackQuery, appointment, lang: str,
+    ) -> None:
+        actor_label = await appt_mng.resolve_decision_label(appointment.decided_by_user_id)
+        outcome_text = appt_mng.resolve_decision_outcome_text(appointment, "reschedule")
+        _, compact_text_stored = await compact_decision_result(
+            appt_mng,
+            appointment.id,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            "reschedule",
+            actor_label,
+            outcome_text,
+            lang,
+        )
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment, lang),
+            reply_markup=(
+                appointment_log_hide_details_kb(appointment.id, lang)
+                if compact_text_stored is True else None
+            ),
+        )
 
     @router.callback_query(RescheduleRequestActionCB.filter(F.action == "accept"))
     async def accept_reschedule(
@@ -187,7 +229,7 @@ def create_admin_reschedule_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_reschedule_message(callback_query, e, lang)
+            await invalidate_own_stale_reschedule_message(callback_query, e, callback_data.appointment_id, lang)
             return
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -206,7 +248,7 @@ def create_admin_reschedule_requests_router(
                 )
 
         await callback_query.answer(_RESCHEDULE_ACCEPTED.get(lang, _RESCHEDULE_ACCEPTED["ru"]))
-        await callback_query.message.edit_text(build_appointment_card(appointment, lang))
+        await render_reschedule_decision(callback_query, appointment, lang)
         await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await notify_staff_reschedule_decision(
             notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
@@ -239,7 +281,7 @@ def create_admin_reschedule_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_reschedule_message(callback_query, e, lang)
+            await invalidate_own_stale_reschedule_message(callback_query, e, callback_data.appointment_id, lang)
             return
         except BotException as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
@@ -258,7 +300,7 @@ def create_admin_reschedule_requests_router(
                 )
 
         await callback_query.answer(_RESCHEDULE_REJECTED.get(lang, _RESCHEDULE_REJECTED["ru"]))
-        await callback_query.message.edit_text(build_appointment_card(appointment, lang))
+        await render_reschedule_decision(callback_query, appointment, lang)
         await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await notify_staff_reschedule_decision(
             notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=False, lang=lang,
@@ -473,7 +515,7 @@ def create_admin_reschedule_requests_router(
             return
         except AppointmentAlreadyDecidedError as e:
             await callback_query.answer(e.localized(lang), show_alert=True)
-            await invalidate_own_stale_reschedule_message(callback_query, e, lang)
+            await invalidate_own_stale_reschedule_message(callback_query, e, callback_data.appointment_id, lang)
             await state.clear()
             return
         except ValidationError as e:
@@ -488,11 +530,7 @@ def create_admin_reschedule_requests_router(
 
         if appointment.status == AppointmentStatus.CONFIRMED:
             await callback_query.answer(_TIME_CHANGED.get(lang, _TIME_CHANGED["ru"]))
-            await callback_query.message.edit_text(
-                _TIME_CHANGED_TO.get(lang, _TIME_CHANGED_TO["ru"]).format(
-                    value=data.get('appointment_datetime_display'),
-                )
-            )
+            await render_reschedule_decision(callback_query, appointment, lang)
             await invalidate_reschedule_siblings(callback_query, appointment, lang)
             await notify_staff_reschedule_decision(
                 notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
@@ -514,11 +552,7 @@ def create_admin_reschedule_requests_router(
                 )
 
         await callback_query.answer(_TIME_CHANGED_AND_NOTIFIED.get(lang, _TIME_CHANGED_AND_NOTIFIED["ru"]))
-        await callback_query.message.edit_text(
-            _NEW_TIME_ASSIGNED.get(lang, _NEW_TIME_ASSIGNED["ru"]).format(
-                value=data.get('appointment_datetime_display'),
-            )
-        )
+        await render_reschedule_decision(callback_query, appointment, lang)
         await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await state.clear()
 

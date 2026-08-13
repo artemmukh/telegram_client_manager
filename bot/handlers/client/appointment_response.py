@@ -1,14 +1,31 @@
 import logging
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException, PaginationError
-from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
-from bot.handlers.utils.medical_record_delivery import add_medical_record_document, deliver_medical_record
+from bot.handlers.utils.client_utils.appointment_history_helpers import (
+    build_history_card_text,
+)
+from bot.handlers.utils.client_utils.appointment_log_details_helpers import (
+    build_client_appointment_log_details,
+)
+from bot.handlers.utils.medical_record_delivery import (
+    add_medical_record_document,
+    deliver_medical_record,
+)
+from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
+from bot.keyboards.admin.record_management_kb.appointment_log_details_cb import (
+    AppointmentLogDetailsCB,
+    AppointmentLogHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+    appointment_log_hide_details_kb,
+)
 from bot.keyboards.client.appointment_history_cb import (
     ClientHistoryActionCB,
     ClientHistoryCardCB,
@@ -28,7 +45,9 @@ from bot.keyboards.client.appointment_manage_kb import (
     appointment_manage_empty_kb,
     appointment_manage_list_kb,
 )
-from bot.keyboards.client.appointment_management_kb import client_appointment_management_kb
+from bot.keyboards.client.appointment_management_kb import (
+    client_appointment_management_kb,
+)
 from bot.keyboards.client.appointment_response_kb import (
     appointment_response_kb,
     cancel_confirmation_kb,
@@ -38,8 +57,13 @@ from bot.services.appointment.appointment_management import AppointmentManagemen
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
-from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
-from bot.services.utils.date_parser import get_current_tashkent_datetime, is_appointment_upcoming
+from bot.services.appointment.appointment_pagination_service import (
+    AppointmentPaginationService,
+)
+from bot.services.utils.date_parser import (
+    get_current_tashkent_datetime,
+    is_appointment_upcoming,
+)
 from bot.states.client.appointment_states import AppointmentResponseStates
 from bot.utils.appointment_enums import (
     APPOINTMENT_TAB_ORDER,
@@ -272,6 +296,85 @@ def create_client_appointment_router(
     async def noop_button(callback_query: CallbackQuery):
         await callback_query.answer()
 
+    if appointment_management_service:
+        @router.callback_query(AppointmentLogDetailsCB.filter())
+        async def handle_appointment_log_details(
+            callback_query: CallbackQuery, callback_data: AppointmentLogDetailsCB, current_user: User,
+        ):
+            lang = current_user.language
+            appointment = await appointment_management_service.get_appointment_for_client(
+                callback_data.appointment_id, callback_query.from_user.id,
+            )
+            if appointment is None or appointment.client_id != current_user.ID:
+                await callback_query.answer(
+                    _APPOINTMENT_NOT_FOUND_DOT.get(lang, _APPOINTMENT_NOT_FOUND_DOT["ru"]), show_alert=True,
+                )
+                return
+
+            notification = await appointment_management_service.get_notification_for_message(
+                appointment.id,
+                callback_query.message.chat.id,
+                callback_query.message.message_id,
+                "client_log",
+            )
+            if (
+                notification is None
+                or notification.appointment_id != appointment.id
+                or notification.chat_id != callback_query.message.chat.id
+                or notification.message_id != callback_query.message.message_id
+                or notification.kind != "client_log"
+                or notification.compact_text is None
+            ):
+                await callback_query.answer(
+                    _APPOINTMENT_NOT_FOUND_DOT.get(lang, _APPOINTMENT_NOT_FOUND_DOT["ru"]), show_alert=True,
+                )
+                return
+
+            await callback_query.answer("")
+            await callback_query.message.edit_text(
+                build_client_appointment_log_details(appointment, lang),
+                reply_markup=appointment_log_hide_details_kb(appointment.id, lang),
+            )
+
+        @router.callback_query(AppointmentLogHideDetailsCB.filter())
+        async def handle_appointment_log_hide_details(
+            callback_query: CallbackQuery, callback_data: AppointmentLogHideDetailsCB, current_user: User,
+        ):
+            lang = current_user.language
+            appointment = await appointment_management_service.get_appointment_for_client(
+                callback_data.appointment_id, callback_query.from_user.id,
+            )
+            if appointment is None or appointment.client_id != current_user.ID:
+                await callback_query.answer(
+                    _APPOINTMENT_NOT_FOUND_DOT.get(lang, _APPOINTMENT_NOT_FOUND_DOT["ru"]), show_alert=True,
+                )
+                return
+
+            notification = await appointment_management_service.get_notification_for_message(
+                appointment.id,
+                callback_query.message.chat.id,
+                callback_query.message.message_id,
+                "client_log",
+            )
+            if (
+                notification is None
+                or notification.appointment_id != appointment.id
+                or notification.chat_id != callback_query.message.chat.id
+                or notification.message_id != callback_query.message.message_id
+                or notification.kind != "client_log"
+                or notification.compact_text is None
+            ):
+                await callback_query.answer(
+                    _APPOINTMENT_NOT_FOUND_DOT.get(lang, _APPOINTMENT_NOT_FOUND_DOT["ru"]), show_alert=True,
+                )
+                return
+
+            await callback_query.answer("")
+            await callback_query.message.edit_text(
+                notification.compact_text,
+                reply_markup=appointment_log_details_kb(appointment.id, lang),
+            )
+
     # Handler for appointment confirmation
     if appointment_management_service and notification_service:
         @router.callback_query(F.data == "client_manage_appointment")
@@ -365,10 +468,18 @@ def create_client_appointment_router(
                             recipients = []
                         for recipient in recipients:
                             try:
-                                await notification_service.notify_admin_cancellation(
+                                delivery = await notification_service.notify_admin_cancellation(
                                     recipient.telegram_user_id,
                                     appointment,
                                     client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                                )
+                                await record_staff_log_delivery(
+                                    appointment_management_service,
+                                    notification_service.notifier,
+                                    appointment_id=appointment.id,
+                                    chat_id=recipient.telegram_user_id,
+                                    kind="cancellation",
+                                    delivery=delivery,
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
@@ -386,6 +497,9 @@ def create_client_appointment_router(
 
             if callback_data.action == "accept_proposal":
                 try:
+                    pre_mutation_appointment = await appointment_management_service.get_appointment_for_client(
+                        appointment_id, callback_query.from_user.id,
+                    )
                     appointment = await appointment_management_service.accept_proposed_datetime(
                         appointment_id, callback_query.from_user.id
                     )
@@ -417,13 +531,29 @@ def create_client_appointment_router(
                             )
                         except Exception:
                             recipients = []
+                        kind = (
+                            appointment_management_service.resolve_admin_proposal_log_kind(
+                                pre_mutation_appointment,
+                            )
+                            if pre_mutation_appointment
+                            else None
+                        )
                         for recipient in recipients:
                             try:
-                                await notification_service.notify_staff_proposal_accepted(
+                                delivery = await notification_service.notify_staff_proposal_accepted(
                                     recipient.telegram_user_id,
                                     appointment,
                                     client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                                 )
+                                if kind:
+                                    await record_staff_log_delivery(
+                                        appointment_management_service,
+                                        notification_service.notifier,
+                                        appointment_id=appointment.id,
+                                        chat_id=recipient.telegram_user_id,
+                                        kind=kind,
+                                        delivery=delivery,
+                                    )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
                 except AppointmentNotFoundError:
@@ -434,6 +564,9 @@ def create_client_appointment_router(
 
             if callback_data.action == "reject_proposal":
                 try:
+                    pre_mutation_appointment = await appointment_management_service.get_appointment_for_client(
+                        appointment_id, callback_query.from_user.id,
+                    )
                     appointment = await appointment_management_service.reject_proposed_datetime(
                         appointment_id, callback_query.from_user.id
                     )
@@ -465,13 +598,29 @@ def create_client_appointment_router(
                             )
                         except Exception:
                             recipients = []
+                        kind = (
+                            appointment_management_service.resolve_admin_proposal_log_kind(
+                                pre_mutation_appointment,
+                            )
+                            if pre_mutation_appointment
+                            else None
+                        )
                         for recipient in recipients:
                             try:
-                                await notification_service.notify_staff_proposal_rejected(
+                                delivery = await notification_service.notify_staff_proposal_rejected(
                                     recipient.telegram_user_id,
                                     appointment,
                                     client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
                                 )
+                                if kind:
+                                    await record_staff_log_delivery(
+                                        appointment_management_service,
+                                        notification_service.notifier,
+                                        appointment_id=appointment.id,
+                                        chat_id=recipient.telegram_user_id,
+                                        kind=kind,
+                                        delivery=delivery,
+                                    )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
                 except AppointmentNotFoundError:
@@ -527,10 +676,18 @@ def create_client_appointment_router(
                             recipients = []
                         for recipient in recipients:
                             try:
-                                await notification_service.notify_admin_cancellation(
+                                delivery = await notification_service.notify_admin_cancellation(
                                     recipient.telegram_user_id,
                                     appointment,
                                     client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                                )
+                                await record_staff_log_delivery(
+                                    appointment_management_service,
+                                    notification_service.notifier,
+                                    appointment_id=appointment.id,
+                                    chat_id=recipient.telegram_user_id,
+                                    kind="cancellation",
+                                    delivery=delivery,
                                 )
                             except Exception:
                                 pass  # Graceful fail если не получилось отправить
@@ -690,10 +847,18 @@ def create_client_appointment_router(
                         recipients = []
                     for recipient in recipients:
                         try:
-                            await notification_service.notify_admin_cancellation(
+                            delivery = await notification_service.notify_admin_cancellation(
                                 recipient.telegram_user_id,
                                 appointment,
                                 client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                            )
+                            await record_staff_log_delivery(
+                                appointment_management_service,
+                                notification_service.notifier,
+                                appointment_id=appointment.id,
+                                chat_id=recipient.telegram_user_id,
+                                kind="cancellation",
+                                delivery=delivery,
                             )
                         except Exception:
                             pass  # Graceful fail если не получилось отправить

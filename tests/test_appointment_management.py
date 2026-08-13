@@ -5,6 +5,11 @@ from unittest.mock import patch
 import aiosqlite
 import pytest
 
+from bot.config.booking_config import (
+    CANCELLATION_COOLDOWN_WINDOW_MINUTES,
+    MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
+)
+from bot.config.clinic_instances import STAFF_SEED_BY_INSTANCE
 from bot.exceptions.appointment_exceptions import (
     AppointmentAlreadyDecidedError,
     AppointmentAlreadyFinalizedError,
@@ -18,11 +23,6 @@ from bot.exceptions.appointment_exceptions import (
     PendingRequestLimitExceededError,
     SlotUnavailableError,
 )
-from bot.config.booking_config import (
-    CANCELLATION_COOLDOWN_WINDOW_MINUTES,
-    MAX_CANCELLATIONS_PER_COOLDOWN_WINDOW,
-)
-from bot.config.clinic_instances import STAFF_SEED_BY_INSTANCE
 from bot.exceptions.user_exceptions import RoleError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
@@ -41,11 +41,13 @@ from bot.services.appointment.appointment_management import (
     AppointmentManagement,
 )
 from bot.services.client.client_management import ClientManagement
-from bot.services.utils.date_parser import format_datetime_for_db, get_current_tashkent_datetime
+from bot.services.utils.date_parser import (
+    format_datetime_for_db,
+    get_current_tashkent_datetime,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 from tests.conftest import FakeBlockedSlotRepository
-
 
 FINALIZED_STATUSES = {
     AppointmentStatus.CANCELLED,
@@ -270,6 +272,28 @@ class FakeAppointmentRepository:
         return [n for n in self.notifications if n.appointment_id == appointment_id and n.kind == kind]
 
 
+class LegacyNotificationRepository:
+    """Legacy repository contract that predates ``compact_text``."""
+
+    def __init__(self):
+        self.notification_calls = []
+
+    async def add_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        self.notification_calls.append((appointment_id, chat_id, message_id, kind))
+
+
+class CompactNotificationRepository:
+    """Repository contract used when persisting notification display details."""
+
+    def __init__(self):
+        self.notification_calls = []
+
+    async def add_appointment_notification(
+        self, appointment_id, chat_id, message_id, kind, compact_text=None,
+    ):
+        self.notification_calls.append((appointment_id, chat_id, message_id, kind, compact_text))
+
+
 class FakeUserRepo:
     def __init__(self, client=None, admin=None, staff_by_clinic=None, users_by_id=None):
         self.client = client
@@ -383,6 +407,49 @@ def _appointment(appointment_id=1, client_id=7):
         status=AppointmentStatus.PENDING,
         id=appointment_id,
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "created_by", "proposed_by", "expected_kind"),
+    [
+        (AppointmentStatus.PENDING, CreatedBy.CLIENT, CreatedBy.ADMIN, "booking"),
+        (AppointmentStatus.PENDING, CreatedBy.ADMIN, CreatedBy.ADMIN, "booking"),
+        (AppointmentStatus.CONFIRMED, CreatedBy.CLIENT, CreatedBy.ADMIN, "reschedule"),
+        (AppointmentStatus.CONFIRMED, CreatedBy.ADMIN, CreatedBy.ADMIN, "reschedule"),
+        (AppointmentStatus.PENDING, CreatedBy.CLIENT, CreatedBy.CLIENT, None),
+        (AppointmentStatus.CONFIRMED, CreatedBy.CLIENT, None, None),
+        (AppointmentStatus.CANCELLED, CreatedBy.ADMIN, CreatedBy.ADMIN, None),
+    ],
+)
+def test_resolve_admin_proposal_log_kind(status, created_by, proposed_by, expected_kind):
+    service = AppointmentManagement(FakeAppointmentRepository(), None, None, None)
+    appointment = _appointment()
+    appointment.status = status
+    appointment.created_by = created_by
+    appointment.proposed_datetime = "2026-07-12 14:30" if proposed_by else None
+    appointment.proposed_by = proposed_by
+
+    assert service.resolve_admin_proposal_log_kind(appointment) == expected_kind
+
+
+@pytest.mark.asyncio
+async def test_record_notification_keeps_legacy_four_argument_repository_compatible():
+    repository = LegacyNotificationRepository()
+    service = AppointmentManagement(repository, None, None, None)
+
+    await service.record_notification(12, 1001, 55, "client")
+
+    assert repository.notification_calls == [(12, 1001, 55, "client")]
+
+
+@pytest.mark.asyncio
+async def test_record_notification_forwards_compact_text_to_repository():
+    repository = CompactNotificationRepository()
+    service = AppointmentManagement(repository, None, None, None)
+
+    await service.record_notification(12, 1001, 55, "client", compact_text="compact details")
+
+    assert repository.notification_calls == [(12, 1001, 55, "client", "compact details")]
 
 
 @pytest.mark.asyncio
@@ -4692,5 +4759,4 @@ async def test_get_day_block_reason_returns_first_slots_block_when_two_blocks_to
 
     assert await service._get_day_blocks(doctor_id, day) == [morning_block, afternoon_block]
     assert await service.get_day_block_reason(doctor_id, day, now) == "Утро"
-
 

@@ -14,6 +14,14 @@ SLOT_UNAVAILABLE_MESSAGE = {
     "uz": "Bu vaqt boshqa yozuv tomonidan band qilingan, boshqasini tanlang.",
 }
 
+STAFF_LOG_NOTIFICATION_KINDS = (
+    "completion",
+    "booking",
+    "reschedule",
+    "creation",
+    "cancellation",
+)
+
 APPOINTMENT_SELECT = """
 SELECT
     a.id,
@@ -173,6 +181,7 @@ class AppointmentRepository:
                 chat_id INTEGER NOT NULL,
                 message_id INTEGER NOT NULL,
                 kind TEXT NOT NULL,
+                compact_text TEXT NULL DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                 FOREIGN KEY(appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
@@ -182,6 +191,12 @@ class AppointmentRepository:
             CREATE INDEX IF NOT EXISTS idx_appointment_notifications_appt_kind
             ON appointment_notifications(appointment_id, kind)
         """)
+        cursor = await self.connection.execute("PRAGMA table_info(appointment_notifications)")
+        notification_columns = {row[1] for row in await cursor.fetchall()}
+        if "compact_text" not in notification_columns:
+            await self.connection.execute(
+                "ALTER TABLE appointment_notifications ADD COLUMN compact_text TEXT NULL DEFAULT NULL"
+            )
 
         if max_bookings_per_slot is None or max_bookings_per_slot == 1:
             # Drop the old (pre-widening) index name unconditionally, before the
@@ -726,14 +741,21 @@ class AppointmentRepository:
         return cursor.rowcount > 0
 
     async def add_appointment_notification(
-        self, appointment_id: int, chat_id: int, message_id: int, kind: str
+        self,
+        appointment_id: int,
+        chat_id: int,
+        message_id: int,
+        kind: str,
+        compact_text: str | None = None,
     ) -> None:
         await self.connection.execute(
             """
-            INSERT INTO appointment_notifications(appointment_id, chat_id, message_id, kind)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO appointment_notifications(
+                appointment_id, chat_id, message_id, kind, compact_text
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (appointment_id, chat_id, message_id, kind),
+            (appointment_id, chat_id, message_id, kind, compact_text),
         )
         await self.connection.commit()
 
@@ -742,7 +764,7 @@ class AppointmentRepository:
     ) -> list[AppointmentNotification]:
         cursor = await self.connection.execute(
             """
-            SELECT id, appointment_id, chat_id, message_id, kind, created_at
+            SELECT id, appointment_id, chat_id, message_id, kind, created_at, compact_text
             FROM appointment_notifications
             WHERE appointment_id = ? AND kind = ?
             ORDER BY id ASC
@@ -758,9 +780,87 @@ class AppointmentRepository:
                 message_id=row[3],
                 kind=row[4],
                 created_at=row[5],
+                compact_text=row[6],
             )
             for row in rows
         ]
+
+    async def get_appointment_notification(
+        self, appointment_id: int, chat_id: int, message_id: int, kind: str,
+    ) -> AppointmentNotification | None:
+        cursor = await self.connection.execute(
+            """
+            SELECT id, appointment_id, chat_id, message_id, kind, created_at, compact_text
+            FROM appointment_notifications
+            WHERE appointment_id = ? AND chat_id = ? AND message_id = ? AND kind = ?
+            """,
+            (appointment_id, chat_id, message_id, kind),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return AppointmentNotification(
+            id=row[0],
+            appointment_id=row[1],
+            chat_id=row[2],
+            message_id=row[3],
+            kind=row[4],
+            created_at=row[5],
+            compact_text=row[6],
+        )
+
+    async def get_staff_appointment_notification_for_message(
+        self, appointment_id: int, chat_id: int, message_id: int,
+    ) -> AppointmentNotification | None:
+        """Return the one staff activity log for a Telegram message, if unambiguous.
+
+        The callback contains only an appointment ID, so the Telegram chat/message
+        pair must identify exactly one supported staff log.  Do not choose an
+        arbitrary first row if legacy or malformed data contains duplicates.
+        """
+        kinds = ", ".join("?" for _ in STAFF_LOG_NOTIFICATION_KINDS)
+        cursor = await self.connection.execute(
+            f"""
+            SELECT id, appointment_id, chat_id, message_id, kind, created_at, compact_text
+            FROM appointment_notifications
+            WHERE appointment_id = ? AND chat_id = ? AND message_id = ?
+              AND kind IN ({kinds})
+            """,
+            (appointment_id, chat_id, message_id, *STAFF_LOG_NOTIFICATION_KINDS),
+        )
+        rows = await cursor.fetchall()
+        if len(rows) != 1:
+            return None
+
+        row = rows[0]
+        return AppointmentNotification(
+            id=row[0],
+            appointment_id=row[1],
+            chat_id=row[2],
+            message_id=row[3],
+            kind=row[4],
+            created_at=row[5],
+            compact_text=row[6],
+        )
+
+    async def set_appointment_notification_compact_text(
+        self,
+        appointment_id: int,
+        chat_id: int,
+        message_id: int,
+        kind: str,
+        compact_text: str,
+    ) -> bool:
+        cursor = await self.connection.execute(
+            """
+            UPDATE appointment_notifications
+            SET compact_text = ?
+            WHERE appointment_id = ? AND chat_id = ? AND message_id = ? AND kind = ?
+            """,
+            (compact_text, appointment_id, chat_id, message_id, kind),
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
 
     async def get_latest_notification_message_id(self, appointment_id: int, chat_id: int) -> int | None:
         cursor = await self.connection.execute(

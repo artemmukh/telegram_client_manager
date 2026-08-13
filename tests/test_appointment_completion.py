@@ -15,6 +15,9 @@ import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from bot.handlers.admin.appointment_management.appointment_browser import (
+    create_admin_appointment_browser_router,
+)
 from bot.handlers.admin.appointment_management.appointment_completion import (
     create_admin_completion_router,
 )
@@ -23,6 +26,15 @@ from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     staff_completion_result_text,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
+from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptActionCB
+from bot.keyboards.admin.record_management_kb.appointment_log_details_cb import (
+    AppointmentLogDetailsCB,
+    AppointmentLogHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+    appointment_log_hide_details_kb,
+)
 from bot.keyboards.admin.record_management_kb.completion_details_cb import (
     CompletionDetailsCB,
     CompletionHideDetailsCB,
@@ -85,6 +97,36 @@ def test_completion_hide_details_keyboard_uses_only_appointment_id(lang, label):
     assert callback.model_dump() == {"appointment_id": 188}
 
 
+@pytest.mark.parametrize(
+    ("builder", "callback_type", "lang", "label"),
+    [
+        (appointment_log_details_kb, AppointmentLogDetailsCB, "ru", "Подробнее"),
+        (appointment_log_details_kb, AppointmentLogDetailsCB, "uz", "Batafsil"),
+        (appointment_log_details_kb, AppointmentLogDetailsCB, "xx", "Подробнее"),
+        (appointment_log_hide_details_kb, AppointmentLogHideDetailsCB, "ru", "Скрыть"),
+        (appointment_log_hide_details_kb, AppointmentLogHideDetailsCB, "uz", "Yopish"),
+        (appointment_log_hide_details_kb, AppointmentLogHideDetailsCB, "xx", "Скрыть"),
+    ],
+)
+def test_generic_appointment_log_keyboard_has_one_appointment_only_button(
+    builder, callback_type, lang, label,
+):
+    markup = builder(188, lang=lang)
+    button = markup.inline_keyboard[0][0]
+    callback = callback_type.unpack(button.callback_data)
+
+    assert button.text == label
+    assert callback.model_dump() == {"appointment_id": 188}
+
+
+def test_generic_appointment_log_callbacks_have_distinct_prefixes():
+    details = AppointmentLogDetailsCB(appointment_id=188).pack()
+    hide = AppointmentLogHideDetailsCB(appointment_id=188).pack()
+
+    assert details != hide
+    assert details.split(":", 1)[0] != hide.split(":", 1)[0]
+
+
 class FakeAppointmentRepository:
     def __init__(self, appointment, notifications=None):
         self.appointment = appointment
@@ -120,6 +162,44 @@ class FakeAppointmentRepository:
 
     async def get_appointment_notifications(self, appointment_id, kind):
         return self.notifications
+
+    async def get_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        return next(
+            (
+                notification
+                for notification in self.notifications
+                if notification.appointment_id == appointment_id
+                and notification.chat_id == chat_id
+                and notification.message_id == message_id
+                and notification.kind == kind
+            ),
+            None,
+        )
+
+    async def get_staff_appointment_notification_for_message(
+        self, appointment_id, chat_id, message_id,
+    ):
+        supported_kinds = {"booking", "reschedule", "creation", "cancellation", "completion"}
+        matches = [
+            notification
+            for notification in self.notifications
+            if notification.appointment_id == appointment_id
+            and notification.chat_id == chat_id
+            and notification.message_id == message_id
+            and notification.kind in supported_kinds
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    async def set_appointment_notification_compact_text(
+        self, appointment_id, chat_id, message_id, kind, compact_text,
+    ):
+        notification = await self.get_appointment_notification(
+            appointment_id, chat_id, message_id, kind,
+        )
+        if notification is None:
+            return False
+        notification.compact_text = compact_text
+        return True
 
 
 class FakeUserRepo:
@@ -170,8 +250,11 @@ def _find_handler(router, name):
     raise AssertionError(f"handler {name} not found")
 
 
-def _admin_user():
-    return User(full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN, telegram_user_id=ADMIN_TELEGRAM_ID, ID=1)
+def _admin_user(language="ru"):
+    return User(
+        full_name="Петров Петр", phone="+998907654321", role=Role.ADMIN,
+        telegram_user_id=ADMIN_TELEGRAM_ID, ID=1, language=language,
+    )
 
 
 def _appointment(doctor_id=1):
@@ -192,6 +275,8 @@ def _callback_query(telegram_user_id=ADMIN_TELEGRAM_ID):
     callback_query.from_user.id = telegram_user_id
     callback_query.answer = AsyncMock()
     callback_query.message.edit_text = AsyncMock()
+    callback_query.message.chat.id = telegram_user_id
+    callback_query.message.message_id = 777
     return callback_query
 
 
@@ -269,9 +354,12 @@ async def test_open_edit_invalidates_sibling_notifications_on_success():
 async def test_open_edit_shows_alert_and_does_not_render_card_when_already_decided():
     appointment = _appointment()
     appointment.status = AppointmentStatus.COMPLETED
-    appointment_repo = FakeAppointmentRepository(appointment)
+    appointment_repo = FakeAppointmentRepository(
+        appointment,
+        notifications=[AppointmentNotification(1, 111, 222, "completion")],
+    )
     notification_service = MagicMock()
-    notification_service.invalidate_stale_decision_message = AsyncMock()
+    notification_service.notifier.try_edit_message_text = AsyncMock(return_value=True)
     router = _router(appointment_repo, notification_service=notification_service)
     open_edit = _find_handler(router, "open_edit")
 
@@ -285,12 +373,12 @@ async def test_open_edit_shows_alert_and_does_not_render_card_when_already_decid
     callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
     callback_query.message.edit_text.assert_not_called()
     assert appointment_repo.status_updates == []
-    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        111, 222,
-        {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
-        {"ru": "приём завершён", "uz": "qabul yakunlandi"},
-        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
-    )
+    notification_service.notifier.try_edit_message_text.assert_awaited_once()
+    stale_edit = notification_service.notifier.try_edit_message_text.call_args.kwargs
+    assert stale_edit["chat_id"] == 111
+    assert stale_edit["message_id"] == 222
+    assert appointment_repo.notifications[0].compact_text == stale_edit["text"]
+    assert stale_edit["reply_markup"] == appointment_log_details_kb(1, "ru")
 
 
 @pytest.mark.asyncio
@@ -311,7 +399,11 @@ async def test_open_edit_denies_access_to_other_doctors_appointment():
 
 @pytest.mark.asyncio
 async def test_skip_edit_finalizes_status_as_completed():
-    appointment_repo = FakeAppointmentRepository(_appointment())
+    notification = AppointmentNotification(
+        appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+        kind="completion",
+    )
+    appointment_repo = FakeAppointmentRepository(_appointment(), notifications=[notification])
     router = _router(appointment_repo)
     skip_edit = _find_handler(router, "skip_edit")
 
@@ -322,8 +414,119 @@ async def test_skip_edit_finalizes_status_as_completed():
 
     assert appointment_repo.appointment.status is AppointmentStatus.COMPLETED
     assert appointment_repo.status_updates == [(1, AppointmentStatus.COMPLETED)]
+    expected = staff_completion_result_text(1, "Доктор Петров Петр", "ru")
+    assert notification.compact_text == expected
     callback_query.message.edit_text.assert_called_once_with(
-        "Приём завершён.", reply_markup=completion_details_kb(1, lang="ru"),
+        expected, reply_markup=appointment_log_details_kb(1, lang="ru"),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["ru", "uz", "xx"])
+async def test_skip_edit_persists_actor_localized_compact_log_and_generic_details(lang):
+    """The actor's own completion prompt must use the shared activity-log contract.
+
+    The compact wording is persisted on the exact origin notification row so a later
+    Details/Hide round trip cannot recompute a different actor label. Unknown
+    languages intentionally fall back to Russian text and keyboard labels.
+    """
+    notification = AppointmentNotification(
+        appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+        kind="completion",
+    )
+    appointment_repo = FakeAppointmentRepository(_appointment(), notifications=[notification])
+    router = _router(appointment_repo)
+    skip_edit = _find_handler(router, "skip_edit")
+    callback_query = _callback_query()
+
+    await skip_edit(
+        callback_query, CompletionFollowupCB(action="skip", appointment_id=1),
+        AsyncMock(), _admin_user(language=lang),
+    )
+
+    expected = staff_completion_result_text(
+        1, "Доктор Петров Петр" if lang != "uz" else "Shifokor Петров Петр",
+        lang,
+    )
+    assert notification.compact_text == expected
+    callback_query.message.edit_text.assert_called_once_with(
+        expected,
+        reply_markup=appointment_log_details_kb(1, lang=lang),
+    )
+
+
+class _CompactPersistenceFailureRepository(FakeAppointmentRepository):
+    def __init__(self, appointment, result):
+        super().__init__(appointment, notifications=[
+            AppointmentNotification(
+                appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+                kind="completion",
+            ),
+        ])
+        self.result = result
+
+    async def set_appointment_notification_compact_text(
+        self, appointment_id, chat_id, message_id, kind, compact_text,
+    ):
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [False, RuntimeError("storage unavailable")])
+async def test_skip_edit_removes_action_keyboard_when_compact_persistence_fails(failure):
+    repository = _CompactPersistenceFailureRepository(_appointment(), failure)
+    router = _router(repository)
+    skip_edit = _find_handler(router, "skip_edit")
+    callback_query = _callback_query()
+
+    await skip_edit(
+        callback_query, CompletionFollowupCB(action="skip", appointment_id=1),
+        AsyncMock(), _admin_user(),
+    )
+
+    expected = staff_completion_result_text(1, "Доктор Петров Петр", "ru")
+    callback_query.message.edit_text.assert_called_once_with(expected, reply_markup=None)
+    assert repository.notifications[0].compact_text is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lang", ["ru", "uz", "xx"])
+async def test_finish_appointment_replaces_origin_completion_prompt_with_persisted_compact_log(lang):
+    """Finishing the correction card must resolve the original follow-up too.
+
+    ``finish_appointment`` runs in the appointment-browser router, but the
+    callback message is still the completion prompt's original Telegram message.
+    It therefore must persist the localized compact result on that row and expose
+    the same generic Details button used by every staff activity log.
+    """
+    notification = AppointmentNotification(
+        appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+        kind="completion",
+    )
+    appointment_repo = FakeAppointmentRepository(_completed_appointment(), notifications=[notification])
+    router = create_admin_appointment_browser_router(
+        "zb", appointment_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
+    )
+    finish_appointment = _find_handler(router, "finish_appointment")
+    callback_query = _callback_query()
+    state = AsyncMock()
+    callback_data = ApptActionCB(
+        action="finish_appointment", appointment_id=1, mode="list", page=1,
+        value="completed",
+    )
+
+    await finish_appointment(callback_query, callback_data, state, _admin_user(language=lang))
+
+    expected = staff_completion_result_text(
+        1, "Доктор Петров Петр" if lang != "uz" else "Shifokor Петров Петр",
+        lang,
+    )
+    assert notification.compact_text == expected
+    callback_query.message.edit_text.assert_called_once_with(
+        expected,
+        reply_markup=appointment_log_details_kb(1, lang=lang),
     )
 
 
@@ -340,6 +543,148 @@ async def test_completion_details_edits_compact_message_to_appointment_card():
         build_appointment_card(appointment_repo.appointment, "ru"),
         reply_markup=completion_hide_details_kb(1, lang="ru"),
     )
+
+
+@pytest.mark.asyncio
+async def test_generic_staff_log_details_requires_scoped_completion_row_and_hides_to_stored_text():
+    appointment = _completed_appointment()
+    notification = AppointmentNotification(
+        appointment_id=1,
+        chat_id=ADMIN_TELEGRAM_ID,
+        message_id=777,
+        kind="completion",
+        compact_text="Delivered completion wording",
+    )
+    appointment_repo = FakeAppointmentRepository(appointment, notifications=[notification])
+    router = _router(appointment_repo)
+    details = _find_handler(router, "show_appointment_log_details")
+    hide = _find_handler(router, "hide_appointment_log_details")
+
+    callback_query = _callback_query()
+    await details(callback_query, AppointmentLogDetailsCB(appointment_id=1), _admin_user())
+    callback_query.message.edit_text.assert_awaited_once_with(
+        build_appointment_card(appointment, "ru"),
+        reply_markup=appointment_log_hide_details_kb(1, lang="ru"),
+    )
+
+    callback_query.message.edit_text.reset_mock()
+    await hide(callback_query, AppointmentLogHideDetailsCB(appointment_id=1), _admin_user())
+    callback_query.message.edit_text.assert_awaited_once_with(
+        "Delivered completion wording",
+        reply_markup=appointment_log_details_kb(1, lang="ru"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_staff_log_details_and_hide_support_booking_kind():
+    appointment = _completed_appointment()
+    notification = AppointmentNotification(
+        appointment_id=1,
+        chat_id=ADMIN_TELEGRAM_ID,
+        message_id=777,
+        kind="booking",
+        compact_text="Booking result delivered in Russian",
+    )
+    appointment_repo = FakeAppointmentRepository(appointment, notifications=[notification])
+    router = _router(appointment_repo)
+    details = _find_handler(router, "show_appointment_log_details")
+    hide = _find_handler(router, "hide_appointment_log_details")
+    callback_query = _callback_query()
+
+    await details(callback_query, AppointmentLogDetailsCB(appointment_id=1), _admin_user())
+    callback_query.message.edit_text.assert_awaited_once_with(
+        build_appointment_card(appointment, "ru"),
+        reply_markup=appointment_log_hide_details_kb(1, lang="ru"),
+    )
+
+    callback_query.message.edit_text.reset_mock()
+    await hide(callback_query, AppointmentLogHideDetailsCB(appointment_id=1), _admin_user())
+    callback_query.message.edit_text.assert_awaited_once_with(
+        "Booking result delivered in Russian",
+        reply_markup=appointment_log_details_kb(1, lang="ru"),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "notification",
+    [
+        None,
+        AppointmentNotification(
+            appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+            kind="client_log", compact_text="Unsupported kind",
+        ),
+        AppointmentNotification(
+            appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+            kind="completion", compact_text=None,
+        ),
+    ],
+)
+async def test_generic_staff_log_details_fails_closed_without_matching_compact_completion_row(notification):
+    appointment_repo = FakeAppointmentRepository(
+        _completed_appointment(), notifications=[] if notification is None else [notification],
+    )
+    handler = _find_handler(_router(appointment_repo), "show_appointment_log_details")
+    callback_query = _callback_query()
+
+    await handler(callback_query, AppointmentLogDetailsCB(appointment_id=1), _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_generic_staff_log_details_fails_closed_for_ambiguous_supported_rows():
+    notifications = [
+        AppointmentNotification(
+            appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+            kind="booking", compact_text="Booking result",
+        ),
+        AppointmentNotification(
+            appointment_id=1, chat_id=ADMIN_TELEGRAM_ID, message_id=777,
+            kind="reschedule", compact_text="Reschedule result",
+        ),
+    ]
+    handler = _find_handler(
+        _router(FakeAppointmentRepository(_completed_appointment(), notifications=notifications)),
+        "show_appointment_log_details",
+    )
+    callback_query = _callback_query()
+
+    await handler(callback_query, AppointmentLogDetailsCB(appointment_id=1), _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "callback_data"),
+    [
+        ("show_appointment_log_details", AppointmentLogDetailsCB(appointment_id=1)),
+        ("hide_appointment_log_details", AppointmentLogHideDetailsCB(appointment_id=1)),
+    ],
+)
+async def test_generic_staff_log_callbacks_fail_closed_for_out_of_scope_appointment(
+    handler_name, callback_data,
+):
+    notification = AppointmentNotification(
+        appointment_id=1,
+        chat_id=OTHER_ADMIN_TELEGRAM_ID,
+        message_id=777,
+        kind="completion",
+        compact_text="Stored completion wording",
+    )
+    handler = _find_handler(
+        _router(FakeAppointmentRepository(_completed_appointment(), notifications=[notification])),
+        handler_name,
+    )
+    callback_query = _callback_query(telegram_user_id=OTHER_ADMIN_TELEGRAM_ID)
+
+    await handler(callback_query, callback_data, _admin_user())
+
+    callback_query.answer.assert_awaited_once_with("Запись не найдена.", show_alert=True)
+    callback_query.message.edit_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -476,9 +821,12 @@ async def test_completion_does_not_clear_name_search_state_when_already_decided(
 async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided():
     appointment = _appointment()
     appointment.status = AppointmentStatus.COMPLETED
-    appointment_repo = FakeAppointmentRepository(appointment)
+    appointment_repo = FakeAppointmentRepository(
+        appointment,
+        notifications=[AppointmentNotification(1, 111, 222, "completion")],
+    )
     notification_service = MagicMock()
-    notification_service.invalidate_stale_decision_message = AsyncMock()
+    notification_service.notifier.try_edit_message_text = AsyncMock(return_value=True)
     router = _router(appointment_repo, notification_service=notification_service)
     skip_edit = _find_handler(router, "skip_edit")
 
@@ -492,12 +840,12 @@ async def test_skip_edit_shows_alert_and_does_not_finalize_when_already_decided(
     callback_query.answer.assert_called_once_with(ALREADY_DECIDED_ALERT, show_alert=True)
     callback_query.message.edit_text.assert_not_called()
     assert appointment_repo.status_updates == []
-    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        111, 222,
-        {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
-        {"ru": "приём завершён", "uz": "qabul yakunlandi"},
-        appointment_summary="Запись №1\nВремя: 10.07.2026 10:00\nУслуга: Консультация\nСтатус: ✔️ завершена",
-    )
+    notification_service.notifier.try_edit_message_text.assert_awaited_once()
+    stale_edit = notification_service.notifier.try_edit_message_text.call_args.kwargs
+    assert stale_edit["chat_id"] == 111
+    assert stale_edit["message_id"] == 222
+    assert appointment_repo.notifications[0].compact_text == stale_edit["text"]
+    assert stale_edit["reply_markup"] == appointment_log_details_kb(1, "ru")
 
 
 @pytest.mark.parametrize(("lang", "label"), [("ru", "Подробнее"), ("uz", "Batafsil")])
@@ -620,6 +968,27 @@ async def test_skip_edit_replaces_sibling_before_actor_edit_failure():
         await handler(callback_query, CompletionFollowupCB(action="skip", appointment_id=1), AsyncMock(), _admin_user())
 
     notification_service.notifier.try_edit_message_text.assert_awaited_once()
+    edit_call = notification_service.notifier.try_edit_message_text.await_args
+    details_markup = edit_call.kwargs["reply_markup"]
+    details_callback = AppointmentLogDetailsCB.unpack(
+        details_markup.inline_keyboard[0][0].callback_data,
+    )
+    assert details_callback.model_dump() == {"appointment_id": 1}
+    assert appointment_repo.notifications[0].compact_text == edit_call.kwargs["text"]
+
+    # The generic Hide route reads the exact row just updated above, rather
+    # than recomputing the actor label from mutable user/staff data.
+    target_callback = _callback_query()
+    target_callback.message.chat.id = 555
+    hide = _find_handler(
+        _router(appointment_repo, notification_service=notification_service),
+        "hide_appointment_log_details",
+    )
+    await hide(target_callback, AppointmentLogHideDetailsCB(appointment_id=1), _admin_user())
+    target_callback.message.edit_text.assert_awaited_once_with(
+        appointment_repo.notifications[0].compact_text,
+        reply_markup=appointment_log_details_kb(1, lang="ru"),
+    )
 
 
 @pytest.mark.asyncio

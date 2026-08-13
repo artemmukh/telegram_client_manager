@@ -1,14 +1,15 @@
 import logging
 
 from bot.exceptions.appointment_exceptions import AppointmentAlreadyDecidedError
-from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
-from bot.keyboards.admin.record_management_kb.completion_sibling_details_kb import (
-    completion_sibling_details_kb,
+from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     DEFAULT_UNKNOWN_CLIENT_LABEL,
     AppointmentNotificationService,
+    stale_decision_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,67 @@ def staff_completion_result_text(appointment_id: int, actor_label: str, lang: st
     return f"Приём №{appointment_id} завершён.\nЗавершил(а): {actor_label}"
 
 
+async def persist_compact_notification_text(
+    appt_mng: AppointmentManagement,
+    appointment_id: int,
+    chat_id: int,
+    message_id: int,
+    kind: str,
+    compact_text: str,
+) -> bool:
+    """Persist text only on the callback message's exact notification row."""
+    try:
+        return await appt_mng.set_notification_compact_text(
+            appointment_id, chat_id, message_id, kind, compact_text,
+        )
+    except Exception as error:  # noqa: BLE001 - UI must fail closed on storage errors.
+        logger.warning(
+            "Failed to store compact %s text for notification %s: %s",
+            kind,
+            message_id,
+            error,
+        )
+        return False
+
+
+async def compact_completion_result(
+    appt_mng: AppointmentManagement,
+    appointment,
+    chat_id: int,
+    message_id: int,
+    lang: str,
+) -> tuple[str, bool]:
+    actor_label = await appt_mng.resolve_decision_label(appointment.decided_by_user_id)
+    compact_text = staff_completion_result_text(
+        appointment.id, actor_label.get(lang, actor_label["ru"]), lang,
+    )
+    stored = await persist_compact_notification_text(
+        appt_mng, appointment.id, chat_id, message_id, "completion", compact_text,
+    )
+    return compact_text, stored
+
+
+async def compact_decision_result(
+    appt_mng: AppointmentManagement,
+    appointment_id: int,
+    chat_id: int,
+    message_id: int,
+    kind: str,
+    decided_by_label: dict[str, str],
+    outcome_text: dict[str, str],
+    lang: str,
+) -> tuple[str, bool]:
+    compact_text = stale_decision_text(
+        decided_by_label.get(lang, decided_by_label["ru"]),
+        outcome_text.get(lang, outcome_text["ru"]),
+        lang,
+    )
+    stored = await persist_compact_notification_text(
+        appt_mng, appointment_id, chat_id, message_id, kind, compact_text,
+    )
+    return compact_text, stored
+
+
 async def replace_completion_sibling_prompts(
     notification_service: AppointmentNotificationService,
     appt_mng: AppointmentManagement,
@@ -49,12 +111,17 @@ async def replace_completion_sibling_prompts(
         try:
             lang = await notification_service.resolve_recipient_language(target.chat_id)
             label = actor_label.get(lang, actor_label["ru"])
+            compact_text = staff_completion_result_text(appointment.id, label, lang)
+            compact_text_stored = await persist_compact_notification_text(
+                appt_mng, appointment.id, target.chat_id, target.message_id, "completion", compact_text,
+            )
             await notification_service.notifier.try_edit_message_text(
                 chat_id=target.chat_id,
                 message_id=target.message_id,
-                text=staff_completion_result_text(appointment.id, label, lang),
-                reply_markup=completion_sibling_details_kb(
-                    appointment.id, appointment.decided_by_user_id, lang,
+                text=compact_text,
+                reply_markup=(
+                    appointment_log_details_kb(appointment.id, lang)
+                    if compact_text_stored is True else None
                 ),
             )
         except Exception as error:  # noqa: BLE001 - each sibling edit must be isolated.
@@ -85,20 +152,34 @@ async def invalidate_sibling_notifications(
     invalidate_actor_stale_message does for the acting user's own message.
     """
     targets = await appt_mng.get_invalidation_targets(appointment_id, kind, actor_chat_id)
-    appointment_summary = build_appointment_card(appointment, lang) if appointment else None
-
     for target in targets:
-        await notification_service.invalidate_stale_decision_message(
-            target.chat_id, target.message_id, decided_by_label, outcome_text,
-            appointment_summary=appointment_summary,
-        )
+        try:
+            target_lang = await notification_service.resolve_recipient_language(target.chat_id)
+            compact_text, compact_text_stored = await compact_decision_result(
+                appt_mng, appointment_id, target.chat_id, target.message_id, kind,
+                decided_by_label, outcome_text, target_lang,
+            )
+            await notification_service.notifier.try_edit_message_text(
+                chat_id=target.chat_id,
+                message_id=target.message_id,
+                text=compact_text,
+                reply_markup=(
+                    appointment_log_details_kb(appointment_id, target_lang)
+                    if compact_text_stored is True else None
+                ),
+            )
+        except Exception as error:  # noqa: BLE001 - each sibling edit must be isolated.
+            logger.warning("Failed to replace stale %s notification %s: %s", kind, target.message_id, error)
 
 
 async def invalidate_actor_stale_message(
     notification_service: AppointmentNotificationService,
+    appt_mng: AppointmentManagement,
     error: AppointmentAlreadyDecidedError,
+    appointment_id: int,
     chat_id: int,
     message_id: int,
+    kind: str,
     lang: str,
 ) -> None:
     """Стереть клавиатуру у собственного сообщения действующего сотрудника.
@@ -113,11 +194,17 @@ async def invalidate_actor_stale_message(
     """
     decided_by_label = error.decided_by_label or DEFAULT_DECIDED_BY_LABEL
     outcome_text = error.outcome_text or DEFAULT_OUTCOME_TEXT
-    appointment_summary = build_appointment_card(error.appointment, lang) if error.appointment else None
-
-    await notification_service.invalidate_stale_decision_message(
-        chat_id, message_id, decided_by_label, outcome_text,
-        appointment_summary=appointment_summary,
+    compact_text, compact_text_stored = await compact_decision_result(
+        appt_mng, appointment_id, chat_id, message_id, kind, decided_by_label, outcome_text, lang,
+    )
+    await notification_service.notifier.try_edit_message_text(
+        chat_id=chat_id,
+        message_id=message_id,
+        text=compact_text,
+        reply_markup=(
+            appointment_log_details_kb(appointment_id, lang)
+            if compact_text_stored is True else None
+        ),
     )
 
 
@@ -168,13 +255,21 @@ async def notify_staff_reschedule_decision(
             continue
         try:
             if accepted:
-                await notification_service.notify_staff_reschedule_decision_accepted(
+                delivery = await notification_service.notify_staff_reschedule_decision_accepted(
                     recipient.telegram_user_id, appointment, actor_label, client_name,
                 )
             else:
-                await notification_service.notify_staff_reschedule_decision_rejected(
+                delivery = await notification_service.notify_staff_reschedule_decision_rejected(
                     recipient.telegram_user_id, appointment, actor_label, client_name,
                 )
+            await record_staff_log_delivery(
+                appt_mng,
+                notification_service.notifier,
+                appointment_id=appointment.id,
+                chat_id=recipient.telegram_user_id,
+                kind="reschedule",
+                delivery=delivery,
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to notify staff {recipient.telegram_user_id} about reschedule decision "
@@ -218,12 +313,17 @@ async def notify_staff_appointment_cancellation(
         if recipient.telegram_user_id == actor_telegram_id:
             continue
         try:
-            message_id = await notification_service.notify_staff_appointment_cancelled(
+            delivery = await notification_service.notify_staff_appointment_cancelled(
                 recipient.telegram_user_id, appointment, actor_label, client_name, deleted=deleted,
             )
-            if message_id and record:
-                await appt_mng.record_notification(
-                    appointment.id, recipient.telegram_user_id, message_id, kind="cancellation",
+            if record:
+                await record_staff_log_delivery(
+                    appt_mng,
+                    notification_service.notifier,
+                    appointment_id=appointment.id,
+                    chat_id=recipient.telegram_user_id,
+                    kind="cancellation",
+                    delivery=delivery,
                 )
         except Exception as e:
             logger.warning(
@@ -261,13 +361,17 @@ async def notify_staff_appointment_creation(
         if recipient.telegram_user_id == actor_telegram_id:
             continue
         try:
-            message_id = await notification_service.notify_staff_appointment_created(
+            delivery = await notification_service.notify_staff_appointment_created(
                 recipient.telegram_user_id, appointment, actor_label, client_name,
             )
-            if message_id:
-                await appt_mng.record_notification(
-                    appointment.id, recipient.telegram_user_id, message_id, kind="creation",
-                )
+            await record_staff_log_delivery(
+                appt_mng,
+                notification_service.notifier,
+                appointment_id=appointment.id,
+                chat_id=recipient.telegram_user_id,
+                kind="creation",
+                delivery=delivery,
+            )
         except Exception as e:
             logger.warning(
                 f"Failed to notify staff {recipient.telegram_user_id} about new appointment "

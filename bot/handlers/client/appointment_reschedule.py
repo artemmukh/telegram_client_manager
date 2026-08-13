@@ -8,9 +8,15 @@ from aiogram.types import CallbackQuery
 import bot.messages.booking as msg
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.appointment_slot_helpers import answer_no_slots_for_day
-from bot.handlers.utils.client_utils.appointment_history_helpers import build_history_card_text
+from bot.handlers.utils.client_utils.appointment_history_helpers import (
+    build_history_card_text,
+)
+from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
 from bot.keyboards.client.appointment_history_kb import appointment_history_card_kb
-from bot.keyboards.client.appointment_manage_kb import appointment_manage_card_kb, appointment_manage_empty_kb
+from bot.keyboards.client.appointment_manage_kb import (
+    appointment_manage_card_kb,
+    appointment_manage_empty_kb,
+)
 from bot.keyboards.client.reschedule_cb import (
     ClientRescheduleCancelCB,
     ClientRescheduleDayCB,
@@ -26,7 +32,9 @@ from bot.keyboards.client.reschedule_kb import (
 )
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+from bot.services.appointment.appointment_notifications import (
+    AppointmentNotificationService,
+)
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.utils.date_parser import (
     format_datetime_for_display,
@@ -287,10 +295,18 @@ def create_client_reschedule_router(
             for recipient in recipients:
                 try:
                     if is_direct_edit:
-                        await notification_service.notify_admin_client_changed_time(
+                        delivery = await notification_service.notify_admin_client_changed_time(
                             recipient.telegram_user_id,
                             appointment,
                             current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                        )
+                        await record_staff_log_delivery(
+                            appointment_management_service,
+                            notification_service.notifier,
+                            appointment_id=appointment.id,
+                            chat_id=recipient.telegram_user_id,
+                            kind="booking",
+                            delivery=delivery,
                         )
                     else:
                         message_id = await notification_service.notify_staff_reschedule_requested(
