@@ -1,6 +1,6 @@
 ﻿import logging
 from datetime import date, datetime
-from bot.handlers.utils.admin_utils.calendar import show_calendar
+
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
@@ -25,6 +25,7 @@ from bot.handlers.utils.admin_utils.appointment_calendar_helpers import (
     format_month_label,
 )
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    compact_completion_result,
     notify_staff_appointment_cancellation,
     notify_staff_reschedule_decision,
 )
@@ -34,6 +35,7 @@ from bot.handlers.utils.admin_utils.appointment_helpers import (
     price_processing,
     purpose_processing,
 )
+from bot.handlers.utils.admin_utils.calendar import show_calendar
 from bot.handlers.utils.admin_utils.confirmations import show_confirmation
 from bot.handlers.utils.admin_utils.input_helpers import (
     ask_full_name,
@@ -43,7 +45,10 @@ from bot.handlers.utils.admin_utils.input_helpers import (
     full_name_processing,
     phone_processing,
 )
-from bot.handlers.utils.medical_record_delivery import add_medical_record_document, deliver_medical_record
+from bot.handlers.utils.medical_record_delivery import (
+    add_medical_record_document,
+    deliver_medical_record,
+)
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import (
     ApptActionCB,
     ApptCalendarDayCB,
@@ -70,18 +75,30 @@ from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_list_kb,
     appointment_status_menu_kb,
 )
-from bot.keyboards.admin.record_management_kb.appointment_creation_cb import AdminOccupiedSlotCB
-from bot.keyboards.admin.record_management_kb.appointment_slot_kb import appointment_slot_grid_kb, occupied_slot_card_kb
+from bot.keyboards.admin.record_management_kb.appointment_creation_cb import (
+    AdminOccupiedSlotCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+)
+from bot.keyboards.admin.record_management_kb.appointment_slot_kb import (
+    appointment_slot_grid_kb,
+    occupied_slot_card_kb,
+)
 from bot.keyboards.client.booking_cb import ClientBookSlotCB
+from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_pagination_service import AppointmentPaginationService
+from bot.services.appointment.appointment_pagination_service import (
+    AppointmentPaginationService,
+)
 from bot.services.utils.date_parser import (
     format_datetime_for_confirmation,
     format_datetime_for_db,
     get_current_tashkent_datetime,
 )
-from bot.models.user import User
-from bot.states.admin.record_management.appointment_browser_states import AppointmentBrowserStates
+from bot.states.admin.record_management.appointment_browser_states import (
+    AppointmentBrowserStates,
+)
 from bot.utils.appointment_enums import AppointmentStatus
 from bot.utils.role import RoleFilter
 from bot.validators.validators import SEARCH_NAME_PATTERN
@@ -1191,6 +1208,26 @@ def create_admin_appointment_browser_router(
             await appointment_scheduler.resync_appointment_jobs(appointment)
 
         await callback_query.answer(_STATUS_UPDATED_TEXT.get(lang, _STATUS_UPDATED_TEXT["ru"]))
+        completion_notification = await appt_mng.get_notification_for_message(
+            appointment.id,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            "completion",
+        )
+        if completion_notification is not None:
+            compact_text, compact_text_stored = await compact_completion_result(
+                appt_mng,
+                appointment,
+                callback_query.message.chat.id,
+                callback_query.message.message_id,
+                lang,
+            )
+            await callback_query.message.edit_text(
+                compact_text,
+                reply_markup=appointment_log_details_kb(appointment.id, lang) if compact_text_stored is True else None,
+            )
+            return
+
         await callback_query.message.edit_text(
             build_appointment_card(appointment, lang),
             reply_markup=appointment_card_kb(

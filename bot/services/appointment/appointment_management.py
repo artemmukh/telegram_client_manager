@@ -753,6 +753,21 @@ class AppointmentManagement:
 
         return appointment
 
+    def resolve_admin_proposal_log_kind(self, appointment: Appointment) -> str | None:
+        if (
+            appointment.status == AppointmentStatus.PENDING
+            and appointment.proposed_by == CreatedBy.ADMIN
+        ):
+            return "booking"
+
+        if (
+            appointment.status == AppointmentStatus.CONFIRMED
+            and appointment.proposed_by == CreatedBy.ADMIN
+        ):
+            return "reschedule"
+
+        return None
+
     async def request_reschedule_by_client(
         self, appointment_id: int, telegram_user_id: int, new_datetime: str
     ) -> Appointment:
@@ -866,8 +881,50 @@ class AppointmentManagement:
     async def update_proposal_message_id(self, appointment_id: int, message_id: int | None) -> None:
         await self.appointment_repository.update_proposal_message_id(appointment_id, message_id)
 
-    async def record_notification(self, appointment_id: int, chat_id: int, message_id: int, kind: str) -> None:
-        await self.appointment_repository.add_appointment_notification(appointment_id, chat_id, message_id, kind)
+    async def record_notification(
+        self,
+        appointment_id: int,
+        chat_id: int,
+        message_id: int,
+        kind: str,
+        compact_text: str | None = None,
+    ) -> None:
+        if compact_text is None:
+            await self.appointment_repository.add_appointment_notification(
+                appointment_id, chat_id, message_id, kind,
+            )
+            return
+
+        await self.appointment_repository.add_appointment_notification(
+            appointment_id, chat_id, message_id, kind, compact_text,
+        )
+
+    async def get_notification_for_message(
+        self, appointment_id: int, chat_id: int, message_id: int, kind: str,
+    ) -> AppointmentNotification | None:
+        return await self.appointment_repository.get_appointment_notification(
+            appointment_id, chat_id, message_id, kind,
+        )
+
+    async def get_staff_notification_for_message(
+        self, appointment_id: int, chat_id: int, message_id: int,
+    ) -> AppointmentNotification | None:
+        """Resolve an unambiguous supported staff activity log for a callback message."""
+        return await self.appointment_repository.get_staff_appointment_notification_for_message(
+            appointment_id, chat_id, message_id,
+        )
+
+    async def set_notification_compact_text(
+        self,
+        appointment_id: int,
+        chat_id: int,
+        message_id: int,
+        kind: str,
+        compact_text: str,
+    ) -> bool:
+        return await self.appointment_repository.set_appointment_notification_compact_text(
+            appointment_id, chat_id, message_id, kind, compact_text,
+        )
 
     async def get_invalidation_targets(
         self, appointment_id: int, kind: str, actor_chat_id: int

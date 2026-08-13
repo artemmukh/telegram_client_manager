@@ -22,9 +22,10 @@ Follows the direct-callback-invocation pattern established in
 test_booking_requests_ownership.py / test_appointment_decision_conflicts.py.
 """
 from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from bot.handlers.admin.appointment_management.appointment_browser import (
     create_admin_appointment_browser_router,
@@ -35,13 +36,17 @@ from bot.handlers.admin.appointment_management.appointment_creation import (
 from bot.handlers.admin.appointment_management.booking_requests import (
     create_admin_booking_requests_router,
 )
-from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptActionCB
-from bot.keyboards.admin.record_management_kb.booking_request_cb import BookingRequestActionCB
-from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import appointment_log_details_kb
+from bot.keyboards.admin.record_management_kb.booking_request_cb import (
+    BookingRequestActionCB,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_cb import (
+    RescheduleRequestActionCB,
+)
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
@@ -85,6 +90,7 @@ def _other_admin():
     return User(
         full_name="Ivanova Irina", phone="+998901112233", role=Role.ADMIN,
         telegram_user_id=OTHER_ADMIN_TELEGRAM_ID, ID=OTHER_ADMIN_ID, clinic_id=CLINIC_ID, clinic_name="Zub Mudrosti",
+        language="uz",
     )
 
 
@@ -155,6 +161,7 @@ class FakeAppointmentRepository:
         self.fail_delete = False
         self.deleted_ids = []
         self.recorded_notifications = []
+        self.recorded_notification_details = []
 
     async def get_appointment_by_id(self, appointment_id):
         return self.appointment
@@ -186,6 +193,29 @@ class FakeAppointmentRepository:
     async def get_appointment_notifications(self, appointment_id, kind):
         return [n for n in self.notifications if n.appointment_id == appointment_id and n.kind == kind]
 
+    async def get_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        return next(
+            (
+                n for n in self.notifications
+                if n.appointment_id == appointment_id
+                and n.chat_id == chat_id
+                and n.message_id == message_id
+                and n.kind == kind
+            ),
+            None,
+        )
+
+    async def set_appointment_notification_compact_text(
+        self, appointment_id, chat_id, message_id, kind, compact_text,
+    ):
+        notification = await self.get_appointment_notification(
+            appointment_id, chat_id, message_id, kind,
+        )
+        if notification is None:
+            return False
+        notification.compact_text = compact_text
+        return True
+
     async def update_appointment_status(self, appointment_id, status, status_updated_at):
         self.appointment.status = status
 
@@ -196,9 +226,12 @@ class FakeAppointmentRepository:
         self.call_order.append("delete")
         self.deleted_ids.append(appointment_id)
 
-    async def add_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+    async def add_appointment_notification(self, appointment_id, chat_id, message_id, kind, compact_text=None):
         self.call_order.append("record")
         self.recorded_notifications.append((appointment_id, chat_id, message_id, kind))
+        self.recorded_notification_details.append(
+            (appointment_id, chat_id, message_id, kind, compact_text),
+        )
 
     async def count_appointments_by_status(self, status, clinic_id, doctor_id=None, tab_bucket=False):
         return 0
@@ -229,7 +262,20 @@ class FakeNotificationService:
         self.staff_appointment_cancelled_calls = []
         self.staff_appointment_created_calls = []
         self.invalidate_stale_decision_message = AsyncMock()
+        self.resolve_recipient_language = AsyncMock(return_value="ru")
+        self.notifier = SimpleNamespace(try_edit_message_text=AsyncMock(return_value=True))
         self.call_order = call_order if call_order is not None else []
+        self.delivered_staff_text = {}
+
+    def _staff_delivery(self, staff_telegram_id, event):
+        delivery = SimpleNamespace(
+            message_id=200000 + staff_telegram_id,
+            compact_text=f"{event}:{staff_telegram_id}",
+            lang="ru",
+            details_available=True,
+        )
+        self.delivered_staff_text[(staff_telegram_id, delivery.message_id)] = delivery.compact_text
+        return delivery
 
     async def notify_client_appointment_with_buttons(self, appointment, use_invite_kb=True, rescheduled=False):
         self.client_with_buttons_calls.append((appointment.id, use_invite_kb, rescheduled))
@@ -249,15 +295,19 @@ class FakeNotificationService:
 
     async def notify_staff_booking_confirmed(self, staff_telegram_id, appointment, actor_label, client_name):
         self.staff_booking_confirmed_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+        return self._staff_delivery(staff_telegram_id, "booking-confirmed")
 
     async def notify_staff_booking_rejected(self, staff_telegram_id, appointment, actor_label, client_name):
         self.staff_booking_rejected_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+        return self._staff_delivery(staff_telegram_id, "booking-rejected")
 
     async def notify_staff_reschedule_decision_accepted(self, staff_telegram_id, appointment, actor_label, client_name):
         self.staff_reschedule_accepted_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+        return self._staff_delivery(staff_telegram_id, "reschedule-accepted")
 
     async def notify_staff_reschedule_decision_rejected(self, staff_telegram_id, appointment, actor_label, client_name):
         self.staff_reschedule_rejected_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+        return self._staff_delivery(staff_telegram_id, "reschedule-rejected")
 
     async def notify_client_appointment_cancelled_by_admin(self, appointment):
         self.call_order.append("notify_client")
@@ -269,13 +319,15 @@ class FakeNotificationService:
         self.staff_appointment_cancelled_calls.append(
             (staff_telegram_id, appointment.id, actor_label, client_name, deleted)
         )
-        return 222
+        delivery = self._staff_delivery(staff_telegram_id, "cancellation")
+        delivery.details_available = not deleted
+        return delivery
 
     async def notify_staff_appointment_created(self, staff_telegram_id, appointment, actor_label, client_name):
         self.staff_appointment_created_calls.append(
             (staff_telegram_id, appointment.id, actor_label, client_name)
         )
-        return 333
+        return self._staff_delivery(staff_telegram_id, "creation")
 
 
 def _callback_query():
@@ -304,6 +356,36 @@ def _state(**data):
     return state
 
 
+def _assert_exact_staff_compact_text(appt_repo, notification_service, kind, recipient_ids):
+    records = {
+        row[1]: row
+        for row in appt_repo.recorded_notification_details
+        if row[3] == kind and row[1] in recipient_ids
+    }
+    assert set(records) == set(recipient_ids)
+    for chat_id, (_, _, message_id, _, compact_text) in records.items():
+        delivery_id = getattr(message_id, "message_id", message_id)
+        assert delivery_id == 200000 + chat_id
+        assert compact_text == notification_service.delivered_staff_text[(chat_id, delivery_id)]
+
+
+def _assert_staff_details_edits(notification_service, recipient_ids, appointment_id):
+    edits = [
+        call.kwargs
+        for call in notification_service.notifier.try_edit_message_text.await_args_list
+        if call.kwargs.get("chat_id") in recipient_ids
+    ]
+    assert len(edits) == len(recipient_ids)
+    assert {(edit["chat_id"], edit["message_id"]) for edit in edits} == {
+        (chat_id, 200000 + chat_id) for chat_id in recipient_ids
+    }
+    for edit in edits:
+        chat_id = edit["chat_id"]
+        assert edit["message_id"] == 200000 + chat_id
+        assert edit["text"] == notification_service.delivered_staff_text[(chat_id, edit["message_id"])]
+        assert edit["reply_markup"] == appointment_log_details_kb(appointment_id, "ru")
+
+
 # --- booking_requests.py: confirm_request / reject_request ---
 
 @pytest.mark.asyncio
@@ -330,6 +412,12 @@ async def test_confirm_request_notifies_doctor_and_other_admin_but_not_actor():
     assert notification_service.staff_booking_rejected_calls == []
     actor_notified = any(call[0] == ACTOR_ADMIN_TELEGRAM_ID for call in notification_service.staff_booking_confirmed_calls)
     assert actor_notified is False
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "booking", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    _assert_staff_details_edits(
+        notification_service, {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID}, appointment.id,
+    )
 
 
 @pytest.mark.asyncio
@@ -356,6 +444,12 @@ async def test_reject_request_notifies_doctor_and_other_admin_but_not_actor():
     assert notification_service.staff_booking_confirmed_calls == []
     actor_notified = any(call[0] == ACTOR_ADMIN_TELEGRAM_ID for call in notification_service.staff_booking_rejected_calls)
     assert actor_notified is False
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "booking", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    _assert_staff_details_edits(
+        notification_service, {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID}, appointment.id,
+    )
 
 
 @pytest.mark.asyncio
@@ -376,11 +470,34 @@ async def test_confirm_request_invalidates_sibling_notifications_with_appointmen
 
     await confirm_request(callback_query, BookingRequestActionCB(action="confirm", appointment_id=1), _actor_admin())
 
-    expected_summary = build_appointment_card(appt_repo.appointment, _actor_admin().language)
-    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        OTHER_ADMIN_TELEGRAM_ID, 42, ACTOR_LABEL, {"ru": "подтверждена", "uz": "tasdiqlandi"},
-        appointment_summary=expected_summary,
-    )
+    edits = notification_service.notifier.try_edit_message_text.await_args_list
+    assert len(edits) == 3
+
+    sibling_edits = [
+        call.kwargs
+        for call in edits
+        if call.kwargs["message_id"] == sibling_notification.message_id
+    ]
+    assert len(sibling_edits) == 1
+    sibling_edit = sibling_edits[0]
+    assert sibling_edit["chat_id"] == sibling_notification.chat_id
+    assert sibling_notification.compact_text == sibling_edit["text"]
+    assert sibling_edit["reply_markup"] == appointment_log_details_kb(appointment.id, "ru")
+
+    details_edits = [
+        call.kwargs
+        for call in edits
+        if call.kwargs["message_id"] != sibling_notification.message_id
+    ]
+    assert {(edit["chat_id"], edit["message_id"]) for edit in details_edits} == {
+        (DOCTOR_TELEGRAM_ID, 200000 + DOCTOR_TELEGRAM_ID),
+        (OTHER_ADMIN_TELEGRAM_ID, 200000 + OTHER_ADMIN_TELEGRAM_ID),
+    }
+    for edit in details_edits:
+        chat_id = edit["chat_id"]
+        message_id = edit["message_id"]
+        assert edit["text"] == notification_service.delivered_staff_text[(chat_id, message_id)]
+        assert edit["reply_markup"] == appointment_log_details_kb(appointment.id, "ru")
 
 
 # --- booking_requests.py: approve_propose_datetime (CONFIRMED branch) ---
@@ -450,6 +567,12 @@ async def test_accept_reschedule_notifies_doctor_and_other_admin_but_not_actor()
         call[0] == ACTOR_ADMIN_TELEGRAM_ID for call in notification_service.staff_reschedule_accepted_calls
     )
     assert actor_notified is False
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "reschedule", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    _assert_staff_details_edits(
+        notification_service, {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID}, appointment.id,
+    )
 
 
 @pytest.mark.asyncio
@@ -505,6 +628,9 @@ async def test_approve_propose_datetime_confirmed_branch_notifies_other_staff_in
         (DOCTOR_TELEGRAM_ID, 2, ACTOR_LABEL, CLIENT_NAME),
         (OTHER_ADMIN_TELEGRAM_ID, 2, ACTOR_LABEL, CLIENT_NAME),
     ]
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "reschedule", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
     state.clear.assert_awaited_once()
 
 
@@ -540,6 +666,12 @@ async def test_finish_notifies_doctor_and_other_admin_but_not_actor():
         (DOCTOR_TELEGRAM_ID, "creation"),
         (OTHER_ADMIN_TELEGRAM_ID, "creation"),
     }
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "creation", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    _assert_staff_details_edits(
+        notification_service, {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID}, appt_repo.appointment.id,
+    )
 
 
 # --- appointment_browser.py: set_status(CANCELLED) staff fan-out ---
@@ -582,6 +714,12 @@ async def test_set_status_cancelled_notifies_staff_with_cancelled_wording_and_re
         (DOCTOR_TELEGRAM_ID, "cancellation"),
         (OTHER_ADMIN_TELEGRAM_ID, "cancellation"),
     }
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "cancellation", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    _assert_staff_details_edits(
+        notification_service, {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID}, appt_repo.appointment.id,
+    )
 
 
 # --- appointment_browser.py: finish_delete() staff fan-out and delete-then-notify ordering ---
@@ -615,6 +753,7 @@ async def test_finish_delete_notifies_staff_with_deleted_wording_after_delete_an
 
     # deleted=True must skip recording (the appointments row's FK is gone).
     assert appt_repo.recorded_notifications == []
+    assert notification_service.notifier.try_edit_message_text.await_count == 0
 
     # delete must happen before any notification is sent.
     assert call_order[0] == "delete"
@@ -645,3 +784,93 @@ async def test_finish_delete_sends_no_notifications_when_delete_fails():
     assert appt_repo.deleted_ids == []
     assert notification_service.client_cancelled_by_admin_calls == []
     assert notification_service.staff_appointment_cancelled_calls == []
+
+
+@pytest.mark.asyncio
+async def test_record_staff_log_delivery_records_exact_text_before_attaching_details():
+    """The handler adapter must persist the service delivery before editing markup.
+
+    Keeping this contract at the boundary prevents a Details button from being
+    shown when the exact notification row cannot be recorded.
+    """
+    from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
+
+    events = []
+
+    class FakeAppointmentManagement:
+        async def record_notification(self, appointment_id, chat_id, message_id, *, kind, compact_text):
+            events.append(("record", appointment_id, chat_id, message_id, kind, compact_text))
+
+    notifier = MagicMock()
+    notifier.try_edit_message_text = AsyncMock(side_effect=lambda **kwargs: events.append(("edit", kwargs)))
+    delivery = SimpleNamespace(
+        message_id=444,
+        compact_text="exact compact result",
+        lang="uz",
+        details_available=True,
+    )
+
+    await record_staff_log_delivery(
+        FakeAppointmentManagement(), notifier,
+        appointment_id=9, chat_id=77, kind="booking", delivery=delivery,
+    )
+
+    assert events[0] == ("record", 9, 77, 444, "booking", "exact compact result")
+    assert events[1][0] == "edit"
+    edit = events[1][1]
+    assert edit["chat_id"] == 77
+    assert edit["message_id"] == 444
+    assert edit["text"] == "exact compact result"
+    assert edit["reply_markup"] == appointment_log_details_kb(9, "uz")
+
+
+@pytest.mark.asyncio
+async def test_record_staff_log_delivery_does_not_attach_details_when_record_fails():
+    from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
+
+    class FailingAppointmentManagement:
+        async def record_notification(self, *args, **kwargs):
+            raise RuntimeError("database unavailable")
+
+    notifier = MagicMock()
+    notifier.try_edit_message_text = AsyncMock()
+    delivery = SimpleNamespace(
+        message_id=444,
+        compact_text="exact compact result",
+        lang="ru",
+        details_available=True,
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await record_staff_log_delivery(
+            FailingAppointmentManagement(), notifier,
+            appointment_id=9, chat_id=77, kind="booking", delivery=delivery,
+        )
+
+    notifier.try_edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_record_staff_log_delivery_skips_details_for_deleted_delivery():
+    from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
+
+    appt_mng = MagicMock()
+    appt_mng.record_notification = AsyncMock()
+    notifier = MagicMock()
+    notifier.try_edit_message_text = AsyncMock()
+    delivery = SimpleNamespace(
+        message_id=444,
+        compact_text="deleted result",
+        lang="ru",
+        details_available=False,
+    )
+
+    await record_staff_log_delivery(
+        appt_mng, notifier,
+        appointment_id=9, chat_id=77, kind="cancellation", delivery=delivery,
+    )
+
+    appt_mng.record_notification.assert_awaited_once_with(
+        9, 77, 444, kind="cancellation", compact_text="deleted result",
+    )
+    notifier.try_edit_message_text.assert_not_awaited()

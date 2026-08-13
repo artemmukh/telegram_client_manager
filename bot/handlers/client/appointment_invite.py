@@ -6,11 +6,17 @@ from aiogram.types import CallbackQuery
 
 from bot.exceptions.appointment_exceptions import AppointmentNotFoundError
 from bot.exceptions.exceptions import BotException
+from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
 from bot.keyboards.client.appointment_invite_cb import AppointmentInviteActionCB
-from bot.keyboards.client.appointment_response_kb import appointment_invite_kb, cancel_confirmation_kb
+from bot.keyboards.client.appointment_response_kb import (
+    appointment_invite_kb,
+    cancel_confirmation_kb,
+)
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+from bot.services.appointment.appointment_notifications import (
+    AppointmentNotificationService,
+)
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.client.appointment_states import AppointmentResponseStates
 from bot.utils.role import RoleFilter
@@ -85,10 +91,18 @@ def create_client_appointment_invite_router(
                     recipients = []
                 for recipient in recipients:
                     try:
-                        await notification_service.notify_admin_confirmation(
+                        delivery = await notification_service.notify_admin_confirmation(
                             recipient.telegram_user_id,
                             appointment,
                             client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                        )
+                        await record_staff_log_delivery(
+                            appointment_management_service,
+                            notification_service.notifier,
+                            appointment_id=appointment.id,
+                            chat_id=recipient.telegram_user_id,
+                            kind="booking",
+                            delivery=delivery,
                         )
                     except Exception:
                         pass  # Graceful fail если не получилось отправить
@@ -145,10 +159,18 @@ def create_client_appointment_invite_router(
                     recipients = []
                 for recipient in recipients:
                     try:
-                        await notification_service.notify_admin_cancellation(
+                        delivery = await notification_service.notify_admin_cancellation(
                             recipient.telegram_user_id,
                             appointment,
                             client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                        )
+                        await record_staff_log_delivery(
+                            appointment_management_service,
+                            notification_service.notifier,
+                            appointment_id=appointment.id,
+                            chat_id=recipient.telegram_user_id,
+                            kind="cancellation",
+                            delivery=delivery,
                         )
                     except Exception:
                         pass  # Graceful fail если не получилось отправить

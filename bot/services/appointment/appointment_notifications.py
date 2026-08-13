@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
@@ -31,6 +32,16 @@ from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StaffLogDelivery:
+    """The immutable staff-log facts needed for later Details/Hide rendering."""
+
+    message_id: int
+    compact_text: str
+    lang: str
+    details_available: bool = True
 
 _REMINDER_TEXT = {
     "ru": (
@@ -627,7 +638,7 @@ class AppointmentNotificationService:
 
     async def _resolve_lang(self, telegram_id: int) -> str:
         user = await self.user_repo.get_user_by_telegram_id(telegram_id)
-        return user.language if user is not None else "ru"
+        return user.language if user is not None and user.language in {"ru", "uz"} else "ru"
 
     async def resolve_recipient_language(self, telegram_id: int) -> str:
         return await self._resolve_lang(telegram_id)
@@ -831,6 +842,29 @@ class AppointmentNotificationService:
         """
         return await self.appointment_repo.get_latest_notification_message_id(appointment.id, chat_id)
 
+    async def _send_staff_log(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        compact_text: str,
+        *,
+        lang: str,
+        reply_to_message_id: int | None = None,
+        with_details: bool = True,
+    ) -> StaffLogDelivery:
+        message_id = await self.notifier.send_message(
+            chat_id=staff_telegram_id,
+            text=compact_text,
+            reply_markup=None,
+            reply_to_message_id=reply_to_message_id,
+        )
+        return StaffLogDelivery(
+            message_id=message_id,
+            compact_text=compact_text,
+            lang=lang,
+            details_available=with_details,
+        )
+
     async def notify_admin_upcoming_appointment(
         self,
         admin_telegram_id: int,
@@ -869,20 +903,21 @@ class AppointmentNotificationService:
         appointment: Appointment,
         client_name: str,
         doctor_full_name: str | None = None,
-    ) -> int | None:
+    ) -> StaffLogDelivery:
         """Send cancellation notification to admin.
 
         Returns the sent message's message_id.
         """
         lang = await self._resolve_lang(admin_telegram_id)
         doc_name = doctor_full_name or appointment.doctor_full_name
-        return await self.notifier.send_message(
-            chat_id=admin_telegram_id,
-            text=admin_cancellation_text(
-                client_name, appointment.client_phone,
-                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
-                doctor_full_name=doc_name,
-            ),
+        compact_text = admin_cancellation_text(
+            client_name, appointment.client_phone,
+            _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            doctor_full_name=doc_name,
+        )
+        return await self._send_staff_log(
+            admin_telegram_id, appointment, compact_text,
+            lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
@@ -892,16 +927,17 @@ class AppointmentNotificationService:
         appointment: Appointment,
         client_name: str,
         doctor_full_name: str | None = None,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify admin that the client changed the time of their own pending self-booking request."""
         lang = await self._resolve_lang(admin_telegram_id)
         doc_name = doctor_full_name or appointment.doctor_full_name
-        await self.notifier.send_message(
-            chat_id=admin_telegram_id,
-            text=admin_client_changed_time_text(
-                client_name, appointment.client_phone, _format_datetime_value(appointment.datetime, lang), lang,
-                doctor_full_name=doc_name,
-            ),
+        compact_text = admin_client_changed_time_text(
+            client_name, appointment.client_phone, _format_datetime_value(appointment.datetime, lang), lang,
+            doctor_full_name=doc_name,
+        )
+        return await self._send_staff_log(
+            admin_telegram_id, appointment, compact_text,
+            lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
@@ -911,20 +947,21 @@ class AppointmentNotificationService:
         appointment: Appointment,
         client_name: str,
         doctor_full_name: str | None = None,
-    ) -> int | None:
+    ) -> StaffLogDelivery:
         """Send confirmation notification to admin.
 
         Returns the sent message's message_id.
         """
         lang = await self._resolve_lang(admin_telegram_id)
         doc_name = doctor_full_name or appointment.doctor_full_name
-        return await self.notifier.send_message(
-            chat_id=admin_telegram_id,
-            text=admin_confirmation_text(
-                client_name, appointment.client_phone,
-                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
-                doctor_full_name=doc_name,
-            ),
+        compact_text = admin_confirmation_text(
+            client_name, appointment.client_phone,
+            _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            doctor_full_name=doc_name,
+        )
+        return await self._send_staff_log(
+            admin_telegram_id, appointment, compact_text,
+            lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, admin_telegram_id),
         )
 
@@ -1208,12 +1245,12 @@ class AppointmentNotificationService:
         staff_telegram_id: int,
         appointment: Appointment,
         client_name: str,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify staff that the client accepted the proposed new time."""
         lang = await self._resolve_lang(staff_telegram_id)
-        await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_proposal_accepted_text(client_name, appointment.client_phone, lang),
+        compact_text = staff_proposal_accepted_text(client_name, appointment.client_phone, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1222,12 +1259,12 @@ class AppointmentNotificationService:
         staff_telegram_id: int,
         appointment: Appointment,
         client_name: str,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify staff that the client rejected the proposed new time."""
         lang = await self._resolve_lang(staff_telegram_id)
-        await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_proposal_rejected_text(client_name, appointment.client_phone, lang),
+        compact_text = staff_proposal_rejected_text(client_name, appointment.client_phone, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1237,13 +1274,13 @@ class AppointmentNotificationService:
         appointment: Appointment,
         actor_label: dict[str, str],
         client_name: str,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify other staff that a colleague confirmed a client's booking request."""
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
-        await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_booking_confirmed_text(client_name, appointment.client_phone, actor, lang),
+        compact_text = staff_booking_confirmed_text(client_name, appointment.client_phone, actor, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1253,13 +1290,13 @@ class AppointmentNotificationService:
         appointment: Appointment,
         actor_label: dict[str, str],
         client_name: str,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify other staff that a colleague rejected a client's booking request."""
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
-        await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_booking_rejected_text(client_name, appointment.client_phone, actor, lang),
+        compact_text = staff_booking_rejected_text(client_name, appointment.client_phone, actor, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1269,13 +1306,13 @@ class AppointmentNotificationService:
         appointment: Appointment,
         actor_label: dict[str, str],
         client_name: str,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify other staff that a colleague accepted a client's reschedule request."""
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
-        await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_reschedule_decision_accepted_text(client_name, appointment.client_phone, actor, lang),
+        compact_text = staff_reschedule_decision_accepted_text(client_name, appointment.client_phone, actor, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1285,13 +1322,13 @@ class AppointmentNotificationService:
         appointment: Appointment,
         actor_label: dict[str, str],
         client_name: str,
-    ) -> None:
+    ) -> StaffLogDelivery:
         """Notify other staff that a colleague rejected a client's reschedule request."""
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
-        await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_reschedule_decision_rejected_text(client_name, appointment.client_phone, actor, lang),
+        compact_text = staff_reschedule_decision_rejected_text(client_name, appointment.client_phone, actor, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
@@ -1303,7 +1340,7 @@ class AppointmentNotificationService:
         client_name: str | None,
         deleted: bool = False,
         doctor_full_name: str | None = None,
-    ) -> int | None:
+    ) -> StaffLogDelivery:
         """Notify other staff that a colleague cancelled or deleted this appointment.
 
         client_name is the client's full name, or None if the client record could
@@ -1320,15 +1357,15 @@ class AppointmentNotificationService:
             None if deleted else await self._admin_reply_to_message_id(appointment, staff_telegram_id)
         )
         doc_name = doctor_full_name or appointment.doctor_full_name
-        return await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_appointment_cancelled_text(
-                display_name, appointment.client_phone, actor,
-                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
-                deleted=deleted,
-                doctor_full_name=doc_name,
-            ),
-            reply_to_message_id=reply_to_message_id,
+        compact_text = staff_appointment_cancelled_text(
+            display_name, appointment.client_phone, actor,
+            _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            deleted=deleted,
+            doctor_full_name=doc_name,
+        )
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
+            reply_to_message_id=reply_to_message_id, with_details=not deleted,
         )
 
     async def notify_staff_appointment_created(
@@ -1338,7 +1375,7 @@ class AppointmentNotificationService:
         actor_label: dict[str, str],
         client_name: str | None,
         doctor_full_name: str | None = None,
-    ) -> int | None:
+    ) -> StaffLogDelivery:
         """Notify other staff that a colleague created this appointment.
 
         client_name is the client's full name, or None if the client record could
@@ -1350,13 +1387,13 @@ class AppointmentNotificationService:
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         display_name = client_name or DEFAULT_UNKNOWN_CLIENT_LABEL.get(lang, DEFAULT_UNKNOWN_CLIENT_LABEL["ru"])
         doc_name = doctor_full_name or appointment.doctor_full_name
-        return await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=staff_appointment_created_text(
-                display_name, appointment.client_phone, actor,
-                _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
-                doctor_full_name=doc_name,
-            ),
+        compact_text = staff_appointment_created_text(
+            display_name, appointment.client_phone, actor,
+            _format_datetime_value(appointment.datetime, lang), appointment.purpose, lang,
+            doctor_full_name=doc_name,
+        )
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
         )
 
     async def notify_admin_proposal_reminder(self, telegram_id: int, appointment: Appointment) -> None:

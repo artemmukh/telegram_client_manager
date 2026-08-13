@@ -9,3 +9,4 @@ class AppointmentNotification:
     kind: str
     id: int | None = None
     created_at: str | None = None
+    compact_text: str | None = None

@@ -61,6 +61,9 @@ class FakeAppointmentRepository:
             if a.doctor_id == doctor_id and a.datetime.startswith(date) and a.status == AppointmentStatus.CONFIRMED
         ]
 
+    async def get_appointment_notification(self, appointment_id, chat_id, message_id, kind):
+        return None
+
     async def appointment_exists(self, appointment_id):
         return any(a.id == appointment_id for a in self.appointments)
 

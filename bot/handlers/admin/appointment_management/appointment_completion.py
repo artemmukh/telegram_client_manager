@@ -10,6 +10,7 @@ from bot.handlers.utils.admin_utils.appointment_browser_helpers import (
     remember_tracked_message,
 )
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
+    compact_completion_result,
     invalidate_actor_stale_message,
     replace_completion_sibling_prompts,
     staff_completion_result_text,
@@ -17,6 +18,14 @@ from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
 from bot.handlers.utils.admin_utils.appointment_helpers import build_appointment_card
 from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
     appointment_card_kb,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_cb import (
+    AppointmentLogDetailsCB,
+    AppointmentLogHideDetailsCB,
+)
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+    appointment_log_hide_details_kb,
 )
 from bot.keyboards.admin.record_management_kb.completion_details_cb import (
     CompletionDetailsCB,
@@ -88,8 +97,8 @@ def create_admin_completion_router(
             if notification_service:
                 try:
                     await invalidate_actor_stale_message(
-                        notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id, lang,
+                        notification_service, appt_mng, e, callback_data.appointment_id,
+                        callback_query.message.chat.id, callback_query.message.message_id, "completion", lang,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -141,8 +150,8 @@ def create_admin_completion_router(
             if notification_service:
                 try:
                     await invalidate_actor_stale_message(
-                        notification_service, e,
-                        callback_query.message.chat.id, callback_query.message.message_id, lang,
+                        notification_service, appt_mng, e, callback_data.appointment_id,
+                        callback_query.message.chat.id, callback_query.message.message_id, "completion", lang,
                     )
                 except Exception as invalidation_error:
                     logger.warning(
@@ -164,9 +173,16 @@ def create_admin_completion_router(
 
         await state.clear()
         await callback_query.answer('')
+        compact_text, compact_text_stored = await compact_completion_result(
+            appt_mng,
+            appointment,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+            lang,
+        )
         await callback_query.message.edit_text(
-            _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]),
-            reply_markup=completion_details_kb(appointment.id, lang),
+            compact_text,
+            reply_markup=appointment_log_details_kb(appointment.id, lang) if compact_text_stored is True else None,
         )
 
     @router.callback_query(CompletionSiblingDetailsCB.filter())
@@ -246,6 +262,72 @@ def create_admin_completion_router(
         await callback_query.message.edit_text(
             _APPOINTMENT_COMPLETED.get(lang, _APPOINTMENT_COMPLETED["ru"]),
             reply_markup=completion_details_kb(appointment.id, lang),
+        )
+
+    @router.callback_query(AppointmentLogDetailsCB.filter())
+    async def show_appointment_log_details(
+        callback_query: CallbackQuery, callback_data: AppointmentLogDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id,
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        notification = await appt_mng.get_staff_notification_for_message(
+            appointment.id,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+        )
+        if (
+            notification is None
+            or notification.appointment_id != appointment.id
+            or notification.chat_id != callback_query.message.chat.id
+            or notification.message_id != callback_query.message.message_id
+            or notification.compact_text is None
+        ):
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer("")
+        await callback_query.message.edit_text(
+            build_appointment_card(appointment, lang),
+            reply_markup=appointment_log_hide_details_kb(appointment.id, lang),
+        )
+
+    @router.callback_query(AppointmentLogHideDetailsCB.filter())
+    async def hide_appointment_log_details(
+        callback_query: CallbackQuery, callback_data: AppointmentLogHideDetailsCB, current_user: User,
+    ):
+        lang = current_user.language
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id,
+        )
+        if appointment is None:
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        notification = await appt_mng.get_staff_notification_for_message(
+            appointment.id,
+            callback_query.message.chat.id,
+            callback_query.message.message_id,
+        )
+        if (
+            notification is None
+            or notification.appointment_id != appointment.id
+            or notification.chat_id != callback_query.message.chat.id
+            or notification.message_id != callback_query.message.message_id
+            or notification.compact_text is None
+        ):
+            await callback_query.answer(_APPOINTMENT_NOT_FOUND.get(lang, _APPOINTMENT_NOT_FOUND["ru"]), show_alert=True)
+            return
+
+        await callback_query.answer("")
+        await callback_query.message.edit_text(
+            notification.compact_text,
+            reply_markup=appointment_log_details_kb(appointment.id, lang),
         )
 
     return router

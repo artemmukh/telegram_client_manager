@@ -6,11 +6,17 @@ from bot.exceptions.appointment_exceptions import NotificationDeliveryError
 from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     replace_completion_sibling_prompts,
 )
-from bot.keyboards.admin.record_management_kb.completion_sibling_details_cb import (
-    CompletionSiblingDetailsCB,
+from bot.keyboards.admin.record_management_kb.appointment_log_details_cb import (
+    AppointmentLogDetailsCB,
 )
-from bot.keyboards.admin.record_management_kb.completion_sibling_details_kb import (
-    completion_sibling_details_kb,
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+)
+from bot.keyboards.admin.record_management_kb.booking_request_kb import (
+    booking_request_kb,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_kb import (
+    reschedule_request_kb,
 )
 from bot.keyboards.client.appointment_response_kb import (
     appointment_invite_kb,
@@ -22,6 +28,7 @@ from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
+    StaffLogDelivery,
     admin_client_changed_time_text,
     admin_confirmation_text,
     admin_upcoming_appointment_text,
@@ -888,6 +895,7 @@ async def test_notify_staff_new_booking_request_sends_message():
     assert result == 777
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
+    assert msg['reply_markup'] == booking_request_kb(appointment.id)
     assert msg['chat_id'] == 67890
     assert "Новая заявка на запись" in msg['text']
     assert "Иванов Иван" in msg['text']
@@ -1231,6 +1239,7 @@ async def test_notify_staff_reschedule_requested_sends_message():
 
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
+    assert msg['reply_markup'] == reschedule_request_kb(appointment.id)
     assert msg['chat_id'] == 67890
     assert "Клиент просит перенести запись" in msg['text']
     assert "Иванов Иван" in msg['text']
@@ -1268,6 +1277,156 @@ async def test_notify_staff_reschedule_requested_raises_on_send_failure():
 
     with pytest.raises(NotificationDeliveryError):
         await service.notify_staff_reschedule_requested(67890, appointment, "Иванов Иван")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method_name", "kind"),
+    [
+        ("notify_staff_booking_confirmed", "booking"),
+        ("notify_staff_booking_rejected", "booking"),
+        ("notify_staff_reschedule_decision_accepted", "reschedule"),
+        ("notify_staff_reschedule_decision_rejected", "reschedule"),
+        ("notify_staff_proposal_accepted", "reschedule"),
+        ("notify_staff_proposal_rejected", "reschedule"),
+    ],
+)
+async def test_resolved_staff_result_senders_return_neutral_delivery_without_keyboard(method_name, kind):
+    """Resolved staff activity is compact by default and can be expanded later.
+
+    The callback must be the shared appointment-log callback (only the
+    appointment id is exposed), rather than one of the unresolved request
+    action keyboards.  Returning the Telegram message id lets the fan-out
+    handler persist the exact delivered text for this recipient.
+    """
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    recipient.language = "ru"
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    service = AppointmentNotificationService(notifier, user_repo, FakeAppointmentRepo())
+    appointment = _appointment()
+    actor_label = {"ru": "Доктор Анна", "uz": "Shifokor Anna"}
+
+    if "booking" in method_name:
+        result = await getattr(service, method_name)(
+            recipient.telegram_user_id, appointment, actor_label, "Иванов Иван",
+        )
+    else:
+        result = await getattr(service, method_name)(
+            recipient.telegram_user_id, appointment, actor_label, "Иванов Иван",
+        ) if "decision" in method_name else await getattr(service, method_name)(
+            recipient.telegram_user_id, appointment, "Иванов Иван",
+        )
+
+    assert isinstance(result, StaffLogDelivery)
+    assert result.message_id == 777
+    assert result.compact_text == notifier.sent_messages[-1]["text"]
+    assert result.lang == "ru"
+    assert result.details_available is True
+    message = notifier.sent_messages[-1]
+    assert message["reply_markup"] is None
+    assert message["text"]
+    assert kind in {"booking", "reschedule"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("requested_lang", "expected_lang"), [("ru", "ru"), ("uz", "uz"), ("xx", "ru")])
+async def test_staff_creation_and_non_deleted_cancellation_return_neutral_details_metadata(
+    requested_lang, expected_lang,
+):
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    recipient.language = requested_lang
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    service = AppointmentNotificationService(notifier, user_repo, FakeAppointmentRepo())
+    appointment = _appointment()
+    actor_label = {"ru": "Доктор Анна", "uz": "Shifokor Anna"}
+
+    created_id = await service.notify_staff_appointment_created(
+        recipient.telegram_user_id, appointment, actor_label, "Иванов Иван",
+    )
+    cancelled_id = await service.notify_staff_appointment_cancelled(
+        recipient.telegram_user_id, appointment, actor_label, "Иванов Иван", deleted=False,
+    )
+
+    assert created_id.message_id == 777
+    assert cancelled_id.message_id == 777
+    assert created_id.lang == expected_lang
+    assert cancelled_id.lang == expected_lang
+    assert created_id.details_available is True
+    assert cancelled_id.details_available is True
+    assert len(notifier.sent_messages) == 2
+    for message in notifier.sent_messages:
+        assert message["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("requested_lang", "expected_lang"), [("ru", "ru"), ("uz", "uz"), ("xx", "ru")])
+async def test_staff_result_delivery_carries_recipient_language_with_ru_fallback(requested_lang, expected_lang):
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    recipient.language = requested_lang
+    service = AppointmentNotificationService(
+        notifier, FakeUserRepo(_client(), recipient_by_telegram_id=recipient), FakeAppointmentRepo(),
+    )
+
+    delivery = await service.notify_staff_booking_confirmed(
+        recipient.telegram_user_id, _appointment(), {"ru": "Доктор", "uz": "Shifokor"}, "Иванов Иван",
+    )
+
+    assert delivery.lang == expected_lang
+    assert delivery.details_available is True
+    assert notifier.sent_messages[-1]["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+async def test_deleted_staff_cancellation_is_terminal_without_details_keyboard():
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    service = AppointmentNotificationService(notifier, user_repo, FakeAppointmentRepo())
+
+    result = await service.notify_staff_appointment_cancelled(
+        recipient.telegram_user_id,
+        _appointment(),
+        {"ru": "Доктор Анна", "uz": "Shifokor Anna"},
+        "Иванов Иван",
+        deleted=True,
+    )
+
+    assert result.message_id == 777
+    assert result.compact_text == notifier.sent_messages[0]["text"]
+    assert result.lang == "ru"
+    assert result.details_available is False
+    assert notifier.sent_messages[0]["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", [
+    "notify_admin_confirmation",
+    "notify_admin_cancellation",
+    "notify_admin_client_changed_time",
+])
+async def test_client_outcome_staff_logs_return_neutral_delivery_without_keyboard(method_name):
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    recipient.language = "ru"
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    service = AppointmentNotificationService(notifier, user_repo, FakeAppointmentRepo())
+    appointment = _appointment()
+    appointment.status = AppointmentStatus.CONFIRMED
+
+    if method_name == "notify_admin_confirmation" or method_name == "notify_admin_cancellation":
+        result = await getattr(service, method_name)(recipient.telegram_user_id, appointment, "Иванов Иван")
+    else:
+        result = await getattr(service, method_name)(recipient.telegram_user_id, appointment, "Иванов Иван")
+
+    assert result.message_id == 777
+    assert result.compact_text == notifier.sent_messages[0]["text"]
+    assert result.lang == "ru"
+    assert result.details_available is True
+    message = notifier.sent_messages[0]
+    assert message["reply_markup"] is None
 
 
 @pytest.mark.asyncio
@@ -2036,17 +2195,96 @@ async def test_replace_completion_sibling_prompt_edits_localized_result_without_
     appt_mng.get_invalidation_targets = AsyncMock(return_value=[
         MagicMock(chat_id=67890, message_id=777),
     ])
+    appt_mng.set_notification_compact_text = AsyncMock(return_value=True)
 
     await replace_completion_sibling_prompts(service, appt_mng, appointment, actor_chat_id=999)
 
-    markup = completion_sibling_details_kb(188, 41, lang)
+    emitted_text = "№188 qabul yakunlandi.\nYakunladi: Doktor Anna"
+    markup = appointment_log_details_kb(188, lang)
 
     assert notifier.sent_messages == []
     assert notifier.edited_messages == [{
         "chat_id": 67890,
         "message_id": 777,
-        "text": "№188 qabul yakunlandi.\nYakunladi: Doktor Anna",
+        "text": emitted_text,
         "reply_markup": markup,
     }]
-    callback = CompletionSiblingDetailsCB.unpack(markup.inline_keyboard[0][0].callback_data)
-    assert callback.model_dump() == {"appointment_id": 188, "actor_user_id": 41}
+    appt_mng.set_notification_compact_text.assert_awaited_once_with(
+        188, 67890, 777, "completion", emitted_text,
+    )
+    button = markup.inline_keyboard[0][0]
+    assert button.text == "Batafsil"
+    callback = AppointmentLogDetailsCB.unpack(button.callback_data)
+    assert callback.model_dump() == {"appointment_id": 188}
+
+
+@pytest.mark.asyncio
+async def test_replace_completion_sibling_prompt_clears_keyboard_when_compact_text_not_persisted():
+    notifier = FakeTelegramNotifier()
+    recipient = User(
+        full_name="Hamshira Dilnoza",
+        phone="+998901234567",
+        role=Role.ADMIN,
+        telegram_user_id=67890,
+        ID=41,
+        language="uz",
+    )
+    service = AppointmentNotificationService(
+        notifier, FakeUserRepo(recipient_by_telegram_id=recipient), FakeAppointmentRepo(),
+    )
+
+    appointment = MagicMock(id=188, decided_by_user_id=41)
+    appt_mng = MagicMock()
+    appt_mng.resolve_decision_label = AsyncMock(return_value={"ru": "Doctor Anna", "uz": "Doktor Anna"})
+    appt_mng.get_invalidation_targets = AsyncMock(return_value=[
+        MagicMock(chat_id=67890, message_id=777),
+        MagicMock(chat_id=67890, message_id=778),
+    ])
+    appt_mng.set_notification_compact_text = AsyncMock(side_effect=[False, False])
+
+    await replace_completion_sibling_prompts(service, appt_mng, appointment, actor_chat_id=999)
+
+    emitted_text = "№188 qabul yakunlandi.\nYakunladi: Doktor Anna"
+    assert notifier.sent_messages == []
+    assert notifier.edited_messages == [
+        {"chat_id": 67890, "message_id": 777, "text": emitted_text, "reply_markup": None},
+        {"chat_id": 67890, "message_id": 778, "text": emitted_text, "reply_markup": None},
+    ]
+    assert appt_mng.set_notification_compact_text.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_replace_completion_sibling_prompt_clears_keyboard_when_compact_text_persistence_raises():
+    notifier = FakeTelegramNotifier()
+    recipient = User(
+        full_name="Hamshira Dilnoza",
+        phone="+998901234567",
+        role=Role.ADMIN,
+        telegram_user_id=67890,
+        ID=41,
+        language="uz",
+    )
+    service = AppointmentNotificationService(
+        notifier, FakeUserRepo(recipient_by_telegram_id=recipient), FakeAppointmentRepo(),
+    )
+
+    appointment = MagicMock(id=188, decided_by_user_id=41)
+    appt_mng = MagicMock()
+    appt_mng.resolve_decision_label = AsyncMock(return_value={"ru": "Doctor Anna", "uz": "Doktor Anna"})
+    appt_mng.get_invalidation_targets = AsyncMock(return_value=[
+        MagicMock(chat_id=67890, message_id=777),
+        MagicMock(chat_id=67890, message_id=778),
+    ])
+    appt_mng.set_notification_compact_text = AsyncMock(
+        side_effect=[RuntimeError("database unavailable"), False],
+    )
+
+    await replace_completion_sibling_prompts(service, appt_mng, appointment, actor_chat_id=999)
+
+    emitted_text = "№188 qabul yakunlandi.\nYakunladi: Doktor Anna"
+    assert notifier.sent_messages == []
+    assert notifier.edited_messages == [
+        {"chat_id": 67890, "message_id": 777, "text": emitted_text, "reply_markup": None},
+        {"chat_id": 67890, "message_id": 778, "text": emitted_text, "reply_markup": None},
+    ]
+    assert appt_mng.set_notification_compact_text.await_count == 2

@@ -118,6 +118,9 @@ class FakeUserRepo:
             clinic_name="Зуб Мудрости",
         )
 
+    async def get_user_by_id(self, user_id):
+        return await self.get_user_by_telegram_id(ADMIN_TELEGRAM_ID) if user_id == 1 else None
+
     async def get_client_by_id(self, user_id):
         return self.client
 

@@ -9,27 +9,33 @@ message_id via update_proposal_message_id.
 Thin, direct-call test in the same style as test_appointment_reschedule_handler.py
 and test_appointment_browser_propose_handler.py.
 """
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
-from bot.keyboards.admin.record_management_kb.reschedule_request_cb import RescheduleRequestActionCB
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+)
+from bot.keyboards.admin.record_management_kb.reschedule_request_cb import (
+    RescheduleRequestActionCB,
+)
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
-
 ADMIN_TELEGRAM_ID = 999
 
 # Well beyond MIN_LEAD_TIME (2h30m) from "now" so the propose_new_datetime
 # lead-time guard never trips regardless of when the suite runs.
-NEW_PROPOSED_DATETIME = (datetime.now() + timedelta(days=30)).replace(
+NEW_PROPOSED_DATETIME = (datetime.now(timezone.utc) + timedelta(days=30)).replace(
     hour=12, minute=0, second=0, microsecond=0,
 )
 NEW_PROPOSED_DATETIME_STR = NEW_PROPOSED_DATETIME.strftime("%Y-%m-%d %H:%M")
@@ -160,6 +166,7 @@ class RaceFakeAppointmentRepository:
     def __init__(self, pre_race, post_race):
         self.current = pre_race
         self.post_race = post_race
+        self.notifications = [AppointmentNotification(1, 555, 777, "reschedule")]
 
     async def get_appointment_by_id(self, appointment_id):
         return self.current
@@ -171,6 +178,17 @@ class RaceFakeAppointmentRepository:
         self, appointment_id, new_datetime, decided_by_user_id, status_updated_at, expected_status
     ):
         self.current = self.post_race
+        return False
+
+    async def set_appointment_notification_compact_text(
+        self, appointment_id, chat_id, message_id, kind, compact_text,
+    ):
+        for notification in self.notifications:
+            if (notification.appointment_id, notification.chat_id, notification.message_id, notification.kind) == (
+                appointment_id, chat_id, message_id, kind,
+            ):
+                notification.compact_text = compact_text
+                return True
         return False
 
 
@@ -279,7 +297,7 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
     appt_repo = RaceFakeAppointmentRepository(pre_race, post_race)
 
     notification_service = MagicMock()
-    notification_service.invalidate_stale_decision_message = AsyncMock()
+    notification_service.notifier.try_edit_message_text = AsyncMock(return_value=True)
 
     router = create_admin_reschedule_requests_router(
         "zb", appt_repo, FakeUserRepo(), FakeStaffRepo(), FakeClinicRepo(),
@@ -305,14 +323,14 @@ async def test_approve_propose_datetime_raises_already_decided_with_reschedule_w
     assert kwargs == {"show_alert": True}
     state.clear.assert_awaited_once()
 
-    notification_service.invalidate_stale_decision_message.assert_awaited_once_with(
-        555, 777,
-        {"ru": "Другой сотрудник", "uz": "Boshqa xodim"},
-        {"ru": "перенос отклонён", "uz": "ko'chirish rad etildi"},
-        appointment_summary="Запись №1\nВремя: 01.08.2026 10:00\nУслуга: Консультация\nСтатус: ❌ отменена",
-    )
-    outcome_text = notification_service.invalidate_stale_decision_message.call_args.args[3]
-    assert outcome_text["ru"] != "отклонена"
+    notification_service.notifier.try_edit_message_text.assert_awaited_once()
+    edit = notification_service.notifier.try_edit_message_text.call_args.kwargs
+    assert edit["chat_id"] == 555
+    assert edit["message_id"] == 777
+    assert appt_repo.notifications[0].compact_text == edit["text"]
+    assert edit["reply_markup"] == appointment_log_details_kb(1, "ru")
+    assert "перенос отклонён" in edit["text"]
+    assert "отклонена" not in edit["text"]
 
 
 @pytest.mark.asyncio
