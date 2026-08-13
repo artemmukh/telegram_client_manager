@@ -279,8 +279,8 @@ async def test_notify_admin_cancellation():
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
     assert "Клиент Иванов Иван отменил запись." in msg['text']
-    assert "10 июля 2026, 14:30" in msg['text']
-    assert "Консультация" in msg['text']
+    for detail in ("+998901234567", "10 июля 2026, 14:30", "Консультация", "Врач"):
+        assert detail not in msg['text']
 
 
 @pytest.mark.asyncio
@@ -328,8 +328,8 @@ async def test_notify_admin_confirmation_sends_short_text():
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
     assert "Клиент Иванов Иван подтвердил запись." in msg['text']
-    assert "10 июля 2026, 14:30" in msg['text']
-    assert "Консультация" in msg['text']
+    for detail in ("+998901234567", "10 июля 2026, 14:30", "Консультация", "Врач"):
+        assert detail not in msg['text']
 
 
 @pytest.mark.asyncio
@@ -582,7 +582,8 @@ def test_staff_appointment_created_text_includes_doctor_name():
         doctor_full_name="Петров <Пётр>",
     )
 
-    assert "👨‍⚕️ Врач: Петров &lt;Пётр&gt;" in text
+    assert "Создана новая запись клиента Иванов Иван" in text
+    assert "Врач" not in text
     assert "<Пётр>" not in text
 
 
@@ -591,7 +592,8 @@ def test_staff_appointment_created_text_without_doctor_shows_dash():
         "Иванов Иван", "+998901234567", "администратором", "10 июля 2026, 14:30", "Лечение",
     )
 
-    assert "👨‍⚕️ Врач: —" in text
+    assert "Создана новая запись" in text
+    assert "Врач" not in text
 
 
 def test_admin_confirmation_text_includes_doctor_name():
@@ -599,14 +601,16 @@ def test_admin_confirmation_text_includes_doctor_name():
         "Иванов Иван", "+998901234567", "10 июля 2026, 14:30", "Консультация",
         doctor_full_name="Петров <Пётр>",
     )
-    assert "🧑‍⚕️ Врач: Петров &lt;Пётр&gt;" in text
+    assert "Клиент Иванов Иван подтвердил запись" in text
+    assert "Врач" not in text
 
 
 def test_admin_confirmation_text_without_doctor_shows_dash():
     text = admin_confirmation_text(
         "Иванов Иван", "+998901234567", "10 июля 2026, 14:30", "Консультация",
     )
-    assert "🧑‍⚕️ Врач: —" in text
+    assert "Клиент Иванов Иван подтвердил запись" in text
+    assert "Врач" not in text
 
 
 def test_admin_client_changed_time_text_includes_doctor_name():
@@ -614,7 +618,8 @@ def test_admin_client_changed_time_text_includes_doctor_name():
         "Иванов Иван", "+998901234567", "10 июля 2026, 14:30",
         doctor_full_name="Петров Пётр",
     )
-    assert "🧑‍⚕️ Врач: Петров Пётр" in text
+    assert "Клиент Иванов Иван изменил время заявки" in text
+    assert "Врач" not in text
 
 
 def test_staff_new_booking_request_text_includes_doctor_name():
@@ -1144,7 +1149,7 @@ async def test_notify_staff_proposal_accepted_sends_short_text():
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "✅ Клиент Иванов Иван согласился на предложенное время.\n\n📱 Номер: —"
+    assert msg['text'] == "✅ Клиент Иванов Иван согласился на предложенное время."
 
 
 @pytest.mark.asyncio
@@ -1191,7 +1196,7 @@ async def test_notify_staff_proposal_rejected_sends_short_text():
     assert len(notifier.sent_messages) == 1
     msg = notifier.sent_messages[0]
     assert msg['chat_id'] == 54321
-    assert msg['text'] == "❌ Клиент Иванов Иван отклонил предложенное время.\n\n📱 Номер: —"
+    assert msg['text'] == "❌ Клиент Иванов Иван отклонил предложенное время."
 
 
 @pytest.mark.asyncio
@@ -1327,6 +1332,125 @@ async def test_resolved_staff_result_senders_return_neutral_delivery_without_key
     assert message["reply_markup"] is None
     assert message["text"]
     assert kind in {"booking", "reschedule"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requested_lang", ["ru", "uz"])
+@pytest.mark.parametrize(
+    ("method_name", "summary_template"),
+    [
+        (
+            "notify_admin_cancellation",
+            {"ru": "Клиент {client_name} отменил запись.", "uz": "Mijoz {client_name} yozuvni bekor qildi."},
+        ),
+        (
+            "notify_admin_client_changed_time",
+            {
+                "ru": "Клиент {client_name} изменил время заявки.",
+                "uz": "Mijoz {client_name} ariza vaqtini o'zgartirdi.",
+            },
+        ),
+        (
+            "notify_admin_confirmation",
+            {"ru": "Клиент {client_name} подтвердил запись.", "uz": "Mijoz {client_name} yozuvni tasdiqladi."},
+        ),
+        (
+            "notify_staff_proposal_accepted",
+            {
+                "ru": "✅ Клиент {client_name} согласился на предложенное время.",
+                "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.",
+            },
+        ),
+        (
+            "notify_staff_proposal_rejected",
+            {
+                "ru": "❌ Клиент {client_name} отклонил предложенное время.",
+                "uz": "❌ Mijoz {client_name} taklif qilingan vaqtni rad etdi.",
+            },
+        ),
+        (
+            "notify_staff_booking_confirmed",
+            {
+                "ru": "✅ Заявка клиента {client_name} подтверждена ({actor}).",
+                "uz": "✅ Mijoz {client_name} arizasi tasdiqlandi ({actor}).",
+            },
+        ),
+        (
+            "notify_staff_booking_rejected",
+            {
+                "ru": "❌ Заявка клиента {client_name} отклонена ({actor}).",
+                "uz": "❌ Mijoz {client_name} arizasi rad etildi ({actor}).",
+            },
+        ),
+        (
+            "notify_staff_reschedule_decision_accepted",
+            {
+                "ru": "✅ Перенос записи клиента {client_name} принят ({actor}).",
+                "uz": "✅ Mijoz {client_name} yozuvini ko'chirish so'rovi qabul qilindi ({actor}).",
+            },
+        ),
+        (
+            "notify_staff_reschedule_decision_rejected",
+            {
+                "ru": "❌ Перенос записи клиента {client_name} отклонён ({actor}).",
+                "uz": "❌ Mijoz {client_name} yozuvini ko'chirish so'rovi rad etildi ({actor}).",
+            },
+        ),
+        (
+            "notify_staff_appointment_cancelled",
+            {
+                "ru": "❌ Запись клиента {client_name} отменена ({actor}).",
+                "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).",
+            },
+        ),
+        (
+            "notify_staff_appointment_created",
+            {
+                "ru": "🆕 Создана новая запись клиента {client_name} (создана: {actor}).",
+                "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).",
+            },
+        ),
+    ],
+)
+async def test_staff_log_compact_text_keeps_only_event_summary(
+    requested_lang, method_name, summary_template,
+):
+    """Staff-log messages keep the event summary while Details holds appointment data."""
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    recipient.language = requested_lang
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    service = AppointmentNotificationService(notifier, user_repo, FakeAppointmentRepo())
+    appointment = _appointment()
+    appointment.client_phone = "PHONE-SECRET"
+    appointment.doctor_full_name = "DOCTOR-SECRET"
+    appointment.datetime = "DATE-SECRET"
+    appointment.purpose = "SERVICE-SECRET"
+    client_name = "CLIENT-NAME"
+    actor_label = {"ru": "ACTOR-RU", "uz": "ACTOR-UZ"}
+    actor = actor_label[requested_lang]
+
+    if method_name.startswith("notify_admin_") or method_name in {
+        "notify_staff_proposal_accepted",
+        "notify_staff_proposal_rejected",
+    }:
+        result = await getattr(service, method_name)(recipient.telegram_user_id, appointment, client_name)
+    elif method_name == "notify_staff_appointment_cancelled":
+        result = await getattr(service, method_name)(
+            recipient.telegram_user_id, appointment, actor_label, client_name, deleted=False,
+        )
+    else:
+        result = await getattr(service, method_name)(
+            recipient.telegram_user_id, appointment, actor_label, client_name,
+        )
+
+    expected_summary = summary_template[requested_lang].format(client_name=client_name, actor=actor)
+    assert isinstance(result, StaffLogDelivery)
+    assert result.details_available is True
+    assert expected_summary in result.compact_text
+    assert result.compact_text == notifier.sent_messages[-1]["text"]
+    for sensitive_detail in ("PHONE-SECRET", "DOCTOR-SECRET", "DATE-SECRET", "SERVICE-SECRET"):
+        assert sensitive_detail not in result.compact_text
 
 
 @pytest.mark.asyncio

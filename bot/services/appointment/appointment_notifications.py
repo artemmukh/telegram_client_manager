@@ -98,8 +98,8 @@ _ADMIN_UPCOMING_APPOINTMENT = {
 }
 
 _ADMIN_CANCELLATION = {
-    "ru": "Клиент {client_name} отменил запись.\n\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "Mijoz {client_name} yozuvni bekor qildi.\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "Клиент {client_name} отменил запись.",
+    "uz": "Mijoz {client_name} yozuvni bekor qildi.",
 }
 
 DEFAULT_UNKNOWN_CLIENT_LABEL = {
@@ -108,8 +108,8 @@ DEFAULT_UNKNOWN_CLIENT_LABEL = {
 }
 
 _STAFF_APPOINTMENT_CANCELLED = {
-    "ru": "❌ Запись клиента {client_name} отменена ({actor}).\n\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "❌ Запись клиента {client_name} отменена ({actor}).",
+    "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).",
 }
 
 _STAFF_APPOINTMENT_DELETED = {
@@ -118,18 +118,18 @@ _STAFF_APPOINTMENT_DELETED = {
 }
 
 _STAFF_APPOINTMENT_CREATED = {
-    "ru": "🆕 Создана новая запись клиента {client_name} (создана: {actor}).\n\n📱 Номер: {client_phone}\n👨‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "🆕 Создана новая запись клиента {client_name} (создана: {actor}).",
+    "uz": "🆕 Mijoz {client_name} uchun yangi yozuv yaratildi ({actor}).",
 }
 
 _ADMIN_CLIENT_CHANGED_TIME = {
-    "ru": "🕐 Клиент {client_name} изменил время заявки.\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Новое время: {datetime}",
-    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Yangi vaqt: {datetime}",
+    "ru": "🕐 Клиент {client_name} изменил время заявки.",
+    "uz": "🕐 Mijoz {client_name} ariza vaqtini o'zgartirdi.",
 }
 
 _ADMIN_CONFIRMATION = {
-    "ru": "Клиент {client_name} подтвердил запись.\n\n📱 Номер: {client_phone}\n🧑‍⚕️ Врач: {doctor_full_name}\n📅 Дата и время: {datetime}\n🏥 Услуга: {purpose}",
-    "uz": "Mijoz {client_name} yozuvni tasdiqladi.\n\n📱 Raqam: {client_phone}\n👨‍⚕️ Shifokor: {doctor_full_name}\n📅 Sana va vaqt: {datetime}\n🏥 Xizmat: {purpose}",
+    "ru": "Клиент {client_name} подтвердил запись.",
+    "uz": "Mijoz {client_name} yozuvni tasdiqladi.",
 }
 
 _ADMIN_COMPLETION_PROMPT = {
@@ -242,13 +242,13 @@ _CLOSED_REQUEST_TEXT = {
 }
 
 _STAFF_PROPOSAL_ACCEPTED = {
-    "ru": "✅ Клиент {client_name} согласился на предложенное время.\n\n📱 Номер: {client_phone}",
-    "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.\n\n📱 Raqam: {client_phone}",
+    "ru": "✅ Клиент {client_name} согласился на предложенное время.",
+    "uz": "✅ Mijoz {client_name} taklif qilingan vaqtga rozi bo'ldi.",
 }
 
 _STAFF_PROPOSAL_REJECTED = {
-    "ru": "❌ Клиент {client_name} отклонил предложенное время.\n\n📱 Номер: {client_phone}",
-    "uz": "❌ Mijoz {client_name} taklif qilingan vaqtni rad etdi.\n\n📱 Raqam: {client_phone}",
+    "ru": "❌ Клиент {client_name} отклонил предложенное время.",
+    "uz": "❌ Mijoz {client_name} taklif qilingan vaqtni rad etdi.",
 }
 
 _ADMIN_PROPOSAL_REMINDER = {
@@ -257,23 +257,23 @@ _ADMIN_PROPOSAL_REMINDER = {
 }
 
 _STAFF_BOOKING_CONFIRMED = {
-    "ru": "✅ Заявка клиента {client_name} подтверждена ({actor}).\n\n📱 Номер: {client_phone}",
-    "uz": "✅ Mijoz {client_name} arizasi tasdiqlandi ({actor}).\n\n📱 Raqam: {client_phone}",
+    "ru": "✅ Заявка клиента {client_name} подтверждена ({actor}).",
+    "uz": "✅ Mijoz {client_name} arizasi tasdiqlandi ({actor}).",
 }
 
 _STAFF_BOOKING_REJECTED = {
-    "ru": "❌ Заявка клиента {client_name} отклонена ({actor}).\n\n📱 Номер: {client_phone}",
-    "uz": "❌ Mijoz {client_name} arizasi rad etildi ({actor}).\n\n📱 Raqam: {client_phone}",
+    "ru": "❌ Заявка клиента {client_name} отклонена ({actor}).",
+    "uz": "❌ Mijoz {client_name} arizasi rad etildi ({actor}).",
 }
 
 _STAFF_RESCHEDULE_DECISION_ACCEPTED = {
-    "ru": "✅ Перенос записи клиента {client_name} принят ({actor}).\n\n📱 Номер: {client_phone}",
-    "uz": "✅ Mijoz {client_name} yozuvini ko'chirish so'rovi qabul qilindi ({actor}).\n\n📱 Raqam: {client_phone}",
+    "ru": "✅ Перенос записи клиента {client_name} принят ({actor}).",
+    "uz": "✅ Mijoz {client_name} yozuvini ko'chirish so'rovi qabul qilindi ({actor}).",
 }
 
 _STAFF_RESCHEDULE_DECISION_REJECTED = {
-    "ru": "❌ Перенос записи клиента {client_name} отклонён ({actor}).\n\n📱 Номер: {client_phone}",
-    "uz": "❌ Mijoz {client_name} yozuvini ko'chirish so'rovi rad etildi ({actor}).\n\n📱 Raqam: {client_phone}",
+    "ru": "❌ Перенос записи клиента {client_name} отклонён ({actor}).",
+    "uz": "❌ Mijoz {client_name} yozuvini ko'chirish so'rovi rad etildi ({actor}).",
 }
 
 _STAFF_RESCHEDULE_REQUESTED = {
