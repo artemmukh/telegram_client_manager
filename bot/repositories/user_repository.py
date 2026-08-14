@@ -230,6 +230,13 @@ class UserRepository:
 
         return [self._row_to_user(row) for row in rows]
 
+    async def get_all_clients(self) -> list[User]:
+        cursor = await self.connection.execute(USER_SELECT + """WHERE u.role = 'client'
+                                                              ORDER BY u.id""")
+        rows = await cursor.fetchall()
+
+        return [self._row_to_user(row) for row in rows]
+
     async def get_clients_by_name(self, full_name: str) -> list[User]:
         parts = full_name.strip().title().split()
         if not parts:
