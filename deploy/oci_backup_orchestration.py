@@ -97,7 +97,7 @@ class SubprocessOciUploader:
             object_name,
             "--file",
             str(path),
-            "--no-overwrite",
+            "--force",
             "--verify-checksum",
             "--opc-checksum-algorithm",
             "SHA256",

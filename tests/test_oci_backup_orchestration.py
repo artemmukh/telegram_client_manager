@@ -89,7 +89,7 @@ async def test_subprocess_oci_uploader_uses_exact_instance_principal_cli_contrac
                 "backups/zb/2026/08/24/id/snapshot.tar",
                 "--file",
                 str(payload),
-                "--no-overwrite",
+                "--force",
                 "--verify-checksum",
                 "--opc-checksum-algorithm",
                 "SHA256",
