@@ -13,6 +13,10 @@ from test_vps_snapshot_export import make_request
 
 from deploy.snapshot_export import export_snapshot
 from deploy.snapshot_verifier import SnapshotVerificationError, verify_snapshot
+from deploy.sqlite_snapshot_repository import (
+    MedicalRecordFilePath,
+    SqliteSnapshotRepository,
+)
 
 WINDOWS_ADVERSARIAL_MEMBER_NAMES = (
     ("2026/Record.docx", "2026/record.docx"),
@@ -93,6 +97,81 @@ def _refresh_manifest_digest(snapshot_dir: Path, artifact_name: str) -> None:
         old_digest, name = line.split(maxsplit=1)
         lines.append(f"{digest if name == artifact_name else old_digest}  {name}")
     manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _create_standalone_wal_database(database_path: Path) -> None:
+    connection = sqlite3.connect(database_path)
+    try:
+        assert connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        connection.execute(
+            "CREATE TABLE medical_records (id INTEGER PRIMARY KEY, file_path TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO medical_records (id, file_path) VALUES (1, 'wal-record.docx')"
+        )
+        connection.commit()
+        assert connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 0
+    finally:
+        connection.close()
+    for sidecar_path in (
+        Path(f"{database_path}-wal"),
+        Path(f"{database_path}-shm"),
+    ):
+        if sidecar_path.exists():
+            sidecar_path.unlink()
+
+
+def test_list_medical_record_file_paths_does_not_create_sidecars_for_static_wal_database(
+    tmp_path: Path,
+) -> None:
+    wal_database = tmp_path / "static-wal.db"
+    _create_standalone_wal_database(wal_database)
+    wal_sidecar = Path(f"{wal_database}-wal")
+    shm_sidecar = Path(f"{wal_database}-shm")
+    assert not wal_sidecar.exists()
+    assert not shm_sidecar.exists()
+    database_bytes = wal_database.read_bytes()
+
+    records = SqliteSnapshotRepository().list_medical_record_file_paths(wal_database)
+
+    assert records == [MedicalRecordFilePath(record_id=1, file_path="wal-record.docx")]
+    assert wal_database.read_bytes() == database_bytes
+    assert not wal_sidecar.exists()
+    assert not shm_sidecar.exists()
+
+
+@pytest.mark.asyncio
+async def test_verify_snapshot_does_not_mutate_wal_header_database_or_create_sidecars(
+    tmp_path: Path,
+) -> None:
+    request = make_request(tmp_path)
+    export_snapshot(request)
+
+    wal_database = tmp_path / "standalone-wal.db"
+    _create_standalone_wal_database(wal_database)
+    copied_main_db = request.output_dir / "sqlite" / "main.db"
+    copied_main_db.write_bytes(wal_database.read_bytes())
+    _refresh_manifest_digest(request.output_dir, "sqlite/main.db")
+
+    before = {
+        path.relative_to(request.output_dir): path.read_bytes()
+        for path in request.output_dir.rglob("*")
+        if path.is_file()
+    }
+    with sqlite3.connect(wal_database) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+    report = verify_snapshot(request.output_dir)
+
+    after = {
+        path.relative_to(request.output_dir): path.read_bytes()
+        for path in request.output_dir.rglob("*")
+        if path.is_file()
+    }
+    assert report.complete is True
+    assert after == before
+    assert not (request.output_dir / "sqlite" / "main.db-wal").exists()
+    assert not (request.output_dir / "sqlite" / "main.db-shm").exists()
 
 
 @pytest.mark.asyncio

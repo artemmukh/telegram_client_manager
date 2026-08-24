@@ -28,6 +28,11 @@ class SqliteSnapshotRepository:
                 sqlite3.connect(destination_path)
             ) as destination:
                 source.backup(destination)
+                journal_mode = destination.execute("PRAGMA journal_mode = DELETE").fetchone()
+                if journal_mode != ("delete",):
+                    raise SqliteSnapshotRepositoryError(
+                        "could not normalize copied SQLite journal mode"
+                    )
         except sqlite3.Error as error:
             raise SqliteSnapshotRepositoryError("could not create SQLite backup") from error
 
@@ -36,7 +41,7 @@ class SqliteSnapshotRepository:
             raise SqliteSnapshotRepositoryError("SQLite database is missing")
 
         try:
-            with closing(self._connect_readonly(database_path)) as connection:
+            with closing(self._connect_immutable(database_path)) as connection:
                 integrity_result = connection.execute("PRAGMA integrity_check").fetchall()
                 foreign_key_rows = connection.execute("PRAGMA foreign_key_check").fetchall()
         except sqlite3.Error as error:
@@ -52,7 +57,7 @@ class SqliteSnapshotRepository:
         database_path: Path,
     ) -> list[MedicalRecordFilePath]:
         try:
-            with closing(self._connect_readonly(database_path)) as connection:
+            with closing(self._connect_immutable(database_path)) as connection:
                 rows = connection.execute(
                     "SELECT id, file_path FROM medical_records WHERE file_path IS NOT NULL"
                 ).fetchall()
@@ -90,11 +95,28 @@ class SqliteSnapshotRepository:
 
     @staticmethod
     def _connect_readonly(database_path: Path) -> sqlite3.Connection:
+        return SqliteSnapshotRepository._connect_with_uri_parameters(
+            database_path,
+            "mode=ro",
+        )
+
+    @staticmethod
+    def _connect_immutable(database_path: Path) -> sqlite3.Connection:
+        return SqliteSnapshotRepository._connect_with_uri_parameters(
+            database_path,
+            "mode=ro&immutable=1",
+        )
+
+    @staticmethod
+    def _connect_with_uri_parameters(
+        database_path: Path,
+        uri_parameters: str,
+    ) -> sqlite3.Connection:
         try:
             resolved_path = database_path.resolve(strict=True)
         except OSError as error:
             raise SqliteSnapshotRepositoryError("SQLite database is missing") from error
         return sqlite3.connect(
-            f"{resolved_path.as_uri()}?mode=ro",
+            f"{resolved_path.as_uri()}?{uri_parameters}",
             uri=True,
         )

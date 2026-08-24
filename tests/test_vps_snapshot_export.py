@@ -14,6 +14,7 @@ from deploy.snapshot_export import (
     dry_run_snapshot,
     export_snapshot,
 )
+from deploy.snapshot_verifier import verify_snapshot
 
 SOURCE_ROOT = PureWindowsPath(r"C:\\medical-bot\\data\\history_of_illness\\generated")
 TARGET_ROOT = PurePosixPath("/app/data/history_of_illness/generated")
@@ -140,6 +141,90 @@ async def test_export_snapshot_rewrites_only_copy_and_creates_complete_contract(
         artifact_path = request.output_dir / artifact_name
         digest = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
         assert checksums[artifact_name] == digest
+
+
+@pytest.mark.asyncio
+async def test_export_snapshot_normalizes_wal_copies_and_verify_snapshot_accepts_contract(
+    tmp_path: Path,
+) -> None:
+    request = make_request(tmp_path)
+    wal_document = request.generated_root / "2026" / "wal-record.docx"
+    wal_document.write_bytes(b"WAL document")
+    source_connections = [
+        sqlite3.connect(request.main_db),
+        sqlite3.connect(request.reminders_db),
+    ]
+    try:
+        main_connection, reminders_connection = source_connections
+        for connection in source_connections:
+            assert connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+            connection.execute("PRAGMA wal_autocheckpoint=0")
+
+        main_connection.execute(
+            "INSERT INTO medical_records (id, file_path) VALUES (?, ?)",
+            (3, str(SOURCE_ROOT / "2026" / "wal-record.docx")),
+        )
+        reminders_connection.execute(
+            "INSERT INTO reminders (id, text) VALUES (?, ?)",
+            (2, "WAL reminder"),
+        )
+        main_connection.commit()
+        reminders_connection.commit()
+
+        source_main_rows = main_connection.execute(
+            "SELECT id, file_path FROM medical_records ORDER BY id"
+        ).fetchall()
+        source_reminder_rows = reminders_connection.execute(
+            "SELECT id, text FROM reminders ORDER BY id"
+        ).fetchall()
+        source_database_bytes = {
+            database_path: database_path.read_bytes()
+            for database_path in (request.main_db, request.reminders_db)
+        }
+        source_wal_bytes = {
+            database_path: Path(f"{database_path}-wal").read_bytes()
+            for database_path in (request.main_db, request.reminders_db)
+        }
+        assert all(source_wal_bytes.values())
+
+        report = export_snapshot(request)
+
+        assert report.rewritten_path_count == 2
+        assert main_connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert reminders_connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert main_connection.execute(
+            "SELECT id, file_path FROM medical_records ORDER BY id"
+        ).fetchall() == source_main_rows
+        assert reminders_connection.execute(
+            "SELECT id, text FROM reminders ORDER BY id"
+        ).fetchall() == source_reminder_rows
+        assert {
+            database_path: database_path.read_bytes()
+            for database_path in (request.main_db, request.reminders_db)
+        } == source_database_bytes
+        assert {
+            database_path: Path(f"{database_path}-wal").read_bytes()
+            for database_path in (request.main_db, request.reminders_db)
+        } == source_wal_bytes
+    finally:
+        for connection in source_connections:
+            connection.close()
+
+    sqlite_dir = request.output_dir / "sqlite"
+    assert {path.name for path in sqlite_dir.iterdir()} == {"main.db", "reminders.db"}
+    with sqlite3.connect(sqlite_dir / "main.db") as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert connection.execute(
+            "SELECT file_path FROM medical_records WHERE id = 3"
+        ).fetchone()[0] == str(TARGET_ROOT / "2026" / "wal-record.docx")
+    with sqlite3.connect(sqlite_dir / "reminders.db") as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert connection.execute(
+            "SELECT text FROM reminders WHERE id = 2"
+        ).fetchone()[0] == "WAL reminder"
+
+    report = verify_snapshot(request.output_dir)
+    assert report.complete is True
 
 
 @pytest.mark.asyncio
