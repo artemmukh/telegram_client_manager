@@ -1,0 +1,14 @@
+[Unit]
+Description=Verified OCI backup for Medical Appointment Telegram Bot ZB
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target bot-zb.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=900
+WorkingDirectory=/opt/telegram_client_manager
+EnvironmentFile=/opt/telegram_client_manager/deploy/oci-backup.env
+ExecStartPre=/usr/bin/docker compose -f /opt/telegram_client_manager/compose.yaml stop bot-zb
+ExecStart=/usr/bin/python3 -m deploy.backup_to_oci --data-root /srv/medical-bot/data
+ExecStopPost=/usr/bin/docker compose -f /opt/telegram_client_manager/compose.yaml start bot-zb

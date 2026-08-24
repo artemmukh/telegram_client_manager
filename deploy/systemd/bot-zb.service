@@ -1,0 +1,16 @@
+[Unit]
+Description=Medical Appointment Telegram Bot ZB
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/telegram_client_manager
+ExecStartPre=/usr/bin/install -d -o 10001 -g 10001 /srv/medical-bot/data
+ExecStart=/usr/bin/docker compose -f /opt/telegram_client_manager/compose.yaml up -d bot-zb
+ExecStop=/usr/bin/docker compose -f /opt/telegram_client_manager/compose.yaml stop bot-zb
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

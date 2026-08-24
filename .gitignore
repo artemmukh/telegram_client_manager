@@ -70,3 +70,5 @@ data/*.bak*
 .worktrees
 backup
 docs
+deploy/*.env
+!deploy/*.env.example

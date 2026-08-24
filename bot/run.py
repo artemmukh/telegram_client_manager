@@ -1,8 +1,6 @@
 import asyncio
 import logging
 
-from aiogram.types import BotCommandScopeDefault
-
 from bot.config.booking_config import MAX_BOOKINGS_PER_SLOT
 from bot.create_bot import config, db, dp
 from bot.handlers.client.geolocation import create_price_geo_router
@@ -79,7 +77,7 @@ from bot.services.client.client_notifications import ClientNotificationService
 from bot.services.llm.agent import ChatLLM
 from bot.services.medical_record.medical_record_management import MedicalRecordService
 from bot.services.utils.auth import AuthService
-from bot.utils.commands import DEFAULT_COMMANDS
+from bot.utils.polling import prepare_polling
 
 logger = logging.getLogger(__name__)
 
@@ -237,12 +235,11 @@ async def main():
     dp.include_router(create_price_geo_router(config.instance))
 
     try:
-        await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot with appointment reminders enabled")
         # dp["personal_data_broadcast_task"] = asyncio.create_task(
         #     client_notification_service.broadcast_personal_data_request()
         # )
-        await bot.set_my_commands(DEFAULT_COMMANDS, scope=BotCommandScopeDefault())
+        await prepare_polling(bot)
         await dp.start_polling(bot)
     finally:
         # Graceful shutdown of scheduler

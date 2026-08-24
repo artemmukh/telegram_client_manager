@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily verified OCI backup for Medical Appointment Telegram Bot ZB
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=bot-zb-backup.service
+
+[Install]
+WantedBy=timers.target
