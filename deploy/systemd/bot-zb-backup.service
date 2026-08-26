@@ -9,6 +9,4 @@ Type=oneshot
 TimeoutStartSec=900
 WorkingDirectory=/opt/telegram_client_manager
 EnvironmentFile=/opt/telegram_client_manager/deploy/oci-backup.env
-ExecStartPre=/usr/bin/docker compose -f /opt/telegram_client_manager/compose.yaml stop bot-zb
-ExecStart=/usr/bin/python3 -m deploy.backup_to_oci --data-root /srv/medical-bot/data
-ExecStopPost=/usr/bin/docker compose -f /opt/telegram_client_manager/compose.yaml start bot-zb
+ExecStart=/usr/local/lib/zb-deploy/run-zb-backup

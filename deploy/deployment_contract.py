@@ -67,6 +67,8 @@ def validate_deployment_contract(deploy_root: Path) -> DeploymentContract:
     bot_unit = _read_file(systemd_root / "bot-zb.service", "bot systemd unit")
     backup_unit = _read_file(systemd_root / "bot-zb-backup.service", "backup systemd unit")
     timer_unit = _read_file(systemd_root / "bot-zb-backup.timer", "backup systemd timer")
+    deploy_script = _read_file(deploy_root / "ci" / "deploy-zb", "deploy script")
+    backup_wrapper = _read_file(deploy_root / "ci" / "run-zb-backup", "backup lifecycle wrapper")
     _require_text(bot_unit, r"/opt/telegram_client_manager", "bot repository path")
     _require_text(bot_unit, r"/srv/medical-bot/data", "bot data path")
     _require_text(bot_unit, r"docker compose.*up -d bot-zb", "bot compose start")
@@ -79,14 +81,17 @@ def validate_deployment_contract(deploy_root: Path) -> DeploymentContract:
         r"^After=docker\.service network-online\.target bot-zb\.service\s*$",
         "backup network and bot-zb ordering",
     )
-    _require_text(backup_unit, r"ExecStartPre=.*docker compose.*stop bot-zb", "backup stop")
     _require_text(backup_unit, r"^TimeoutStartSec=900\s*$", "backup start timeout")
     _require_text(
         backup_unit,
-        r"^ExecStart=/usr/bin/python3 -m deploy\.backup_to_oci --data-root /srv/medical-bot/data\s*$",
-        "backup module invocation",
+        r"^ExecStart=/usr/local/lib/zb-deploy/run-zb-backup\s*$",
+        "backup ExecStart lifecycle wrapper",
     )
-    _require_text(backup_unit, r"ExecStopPost=.*docker compose.*start bot-zb", "backup restart")
+    if re.search(r"^Exec(?:StartPre|StopPost)=", backup_unit, re.MULTILINE):
+        raise DeploymentContractError(
+            "backup unit must not split its lifecycle across ExecStartPre or ExecStopPost"
+        )
+    _validate_backup_wrapper(deploy_script, backup_wrapper)
     _require_text(timer_unit, r"OnCalendar=\*-\*-\* 03:30:00", "backup schedule")
     _require_text(timer_unit, r"Persistent=true", "persistent backup timer")
 
@@ -142,3 +147,32 @@ def _required_compose_value(compose_text: str, name: str) -> str:
 def _require_text(text: str, pattern: str, label: str) -> None:
     if re.search(pattern, text, re.MULTILINE) is None:
         raise DeploymentContractError(f"deployment contract is missing {label}")
+
+
+def _validate_backup_wrapper(deploy_script: str, backup_wrapper: str) -> None:
+    """Require one lock owner for backup quiesce, snapshot, and restart."""
+    maintenance_lock = "/run/lock/zb-bot-maintenance.lock"
+    _require_text(deploy_script, re.escape(maintenance_lock), "deploy maintenance lock")
+    _require_text(backup_wrapper, re.escape(maintenance_lock), "backup maintenance lock")
+    _require_text(backup_wrapper, r"exec 9>\"\$MAINTENANCE_LOCK\"", "backup lock descriptor")
+    _require_text(backup_wrapper, r"/usr/bin/flock -n 9", "non-blocking backup lock")
+    _require_text(backup_wrapper, r"trap restart_bot_before_unlock EXIT", "backup restart trap")
+
+    stop_match = re.search(
+        r"/usr/bin/docker compose -f \"\$COMPOSE_FILE\" stop bot-zb",
+        backup_wrapper,
+    )
+    backup_match = re.search(
+        r"/usr/bin/python3 -m deploy\.backup_to_oci --data-root /srv/medical-bot/data",
+        backup_wrapper,
+    )
+    restart_match = re.search(
+        r"/usr/bin/docker compose -f \"\$COMPOSE_FILE\" start bot-zb",
+        backup_wrapper,
+    )
+    if stop_match is None or backup_match is None or restart_match is None:
+        raise DeploymentContractError(
+            "backup lifecycle wrapper must stop bot-zb, run the backup module, and start bot-zb"
+        )
+    if not stop_match.start() < backup_match.start() < restart_match.start():
+        raise DeploymentContractError("backup lifecycle wrapper has an unsafe stop/backup/start order")

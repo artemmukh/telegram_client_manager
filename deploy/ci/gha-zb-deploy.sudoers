@@ -1,0 +1,6 @@
+# Install as /etc/sudoers.d/gha-zb-deploy with mode 0440 and root:root ownership.
+# The deploy account is intentionally allowed to run one root-owned wrapper only.
+# SSH_ORIGINAL_COMMAND is supplied by sshd and is needed by that wrapper to
+# validate the one permitted command; no other caller-controlled environment is kept.
+Defaults!/usr/local/sbin/gha-zb-deploy-wrapper env_keep += "SSH_ORIGINAL_COMMAND"
+ubuntu ALL=(root) NOPASSWD: /usr/local/sbin/gha-zb-deploy-wrapper

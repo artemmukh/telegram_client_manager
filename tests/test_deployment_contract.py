@@ -101,6 +101,7 @@ def _synthetic_deploy_tree(tmp_path: Path) -> Path:
     shutil.copy2("compose.yaml", deploy_root / "compose.yaml")
     shutil.copy2("Dockerfile", deploy_root / "Dockerfile")
     shutil.copytree("deploy/systemd", deploy_root / "systemd")
+    shutil.copytree("deploy/ci", deploy_root / "ci")
     return deploy_root
 
 
@@ -156,16 +157,51 @@ async def test_deployment_contract_requires_backup_network_and_bot_ordering() ->
 
 def test_backup_unit_runs_tracked_backup_as_python_module() -> None:
     backup_text = Path("deploy/systemd/bot-zb-backup.service").read_text(encoding="utf-8")
+    wrapper_text = Path("deploy/ci/run-zb-backup").read_text(encoding="utf-8")
 
-    assert (
-        "ExecStart=/usr/bin/python3 -m deploy.backup_to_oci --data-root /srv/medical-bot/data"
-        in backup_text
-    )
+    assert "ExecStart=/usr/local/lib/zb-deploy/run-zb-backup" in backup_text
+    assert re.search(r"^ExecStart=.*run-zb-backup\s*$", backup_text, re.MULTILINE)
+    assert re.search(r"python3[\s\S]*-m[\s\S]*deploy\.backup_to_oci", wrapper_text)
+    assert "--data-root" in wrapper_text
+    assert "/srv/medical-bot/data" in wrapper_text
     assert not re.search(
         r"^ExecStart=/usr/bin/python3\s+/.+backup_to_oci\.py\s+",
         backup_text,
         re.MULTILINE,
     )
+
+
+def test_backup_wrapper_uses_shared_lock_and_holds_it_across_lifecycle() -> None:
+    deploy_text = Path("deploy/ci/deploy-zb").read_text(encoding="utf-8")
+    backup_text = Path("deploy/ci/run-zb-backup").read_text(encoding="utf-8")
+
+    lock_pattern = r"\bMAINTENANCE_LOCK\s*=\s*['\"]?(/run/lock/[A-Za-z0-9_.-]+)"
+    deploy_lock = re.search(lock_pattern, deploy_text)
+    backup_lock = re.search(lock_pattern, backup_text)
+    assert deploy_lock and backup_lock
+    assert deploy_lock.group(1) == backup_lock.group(1)
+
+    lock_position = re.search(
+        r"(?:flock|exec\s+\d+>).*?(?:MAINTENANCE_LOCK|/run/lock/)",
+        backup_text,
+    )
+    stop_position = re.search(
+        r"docker compose.*\bstop\s+(?:bot-zb|\$COMPOSE_SERVICE)\b",
+        backup_text,
+    )
+    backup_position = re.search(
+        r"python3[\s\S]{0,100}-m[\s\S]{0,100}deploy\.backup_to_oci",
+        backup_text,
+    )
+    restart_position = re.search(
+        r"docker compose.*\bstart\s+(?:bot-zb|\$COMPOSE_SERVICE)\b",
+        backup_text,
+    )
+    assert lock_position and stop_position and backup_position and restart_position
+    assert lock_position.start() <= stop_position.start() < backup_position.start() < restart_position.start()
+
+    unlocks = list(re.finditer(r"(?:flock\s+-u|exec\s+\d+>&-)", backup_text))
+    assert not unlocks or all(unlock.start() > restart_position.start() for unlock in unlocks)
 
 
 @pytest.mark.asyncio

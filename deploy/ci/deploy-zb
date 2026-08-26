@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# Installed as /usr/local/lib/zb-deploy/deploy-zb and invoked only by the
+# root-owned forced-command wrapper.  It intentionally has no configurable
+# paths, service names, branch names, or command arguments.
+set -euo pipefail
+IFS=$'\n\t'
+
+readonly DEPLOY_USER='ubuntu'
+readonly DEPLOY_BRANCH='codex/vps-migration'
+readonly REPOSITORY_DIR='/opt/telegram_client_manager'
+readonly COMPOSE_FILE='/opt/telegram_client_manager/compose.yaml'
+readonly COMPOSE_SERVICE='bot-zb'
+readonly BOT_SERVICE='bot-zb.service'
+readonly BACKUP_SERVICE='bot-zb-backup.service'
+readonly RUNTIME_ENV_FILE='/opt/telegram_client_manager/deploy/zb.env'
+readonly BUNDLE_DIR='/var/lib/zb-deploy'
+readonly MAINTENANCE_LOCK='/run/lock/zb-bot-maintenance.lock'
+readonly BUNDLE_SIZE_LIMIT_BYTES=$((128 * 1024 * 1024))
+readonly HEALTH_ATTEMPTS=3
+readonly HEALTH_DELAY_SECONDS=5
+
+die() {
+  printf 'deploy-zb: %s\n' "$*" >&2
+  exit 1
+}
+
+run_git() {
+  /usr/sbin/runuser -u "$DEPLOY_USER" -- /usr/bin/git -C "$REPOSITORY_DIR" "$@"
+}
+
+checkout_revision() {
+  local revision="$1"
+  run_git checkout --detach "$revision"
+}
+
+restore_branch_revision() {
+  local revision="$1"
+  checkout_revision "$revision"
+  run_git branch -f "$DEPLOY_BRANCH" "$revision"
+  run_git checkout "$DEPLOY_BRANCH"
+}
+
+finalize_branch_revision() {
+  local revision="$1"
+  run_git branch -f "$DEPLOY_BRANCH" "$revision"
+  run_git checkout "$DEPLOY_BRANCH"
+}
+
+is_container_running() {
+  /usr/bin/docker compose -f "$COMPOSE_FILE" ps --status running --services |
+    /usr/bin/grep -qx "$COMPOSE_SERVICE"
+}
+
+is_healthy() {
+  /usr/bin/systemctl is-active --quiet "$BOT_SERVICE" && is_container_running
+}
+
+wait_for_health() {
+  local attempt
+  for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1)); do
+    if is_healthy; then
+      return 0
+    fi
+    if ((attempt < HEALTH_ATTEMPTS)); then
+      /usr/bin/sleep "$HEALTH_DELAY_SECONDS"
+    fi
+  done
+  return 1
+}
+
+restore_pre_restart_state() {
+  local previous_revision="$1"
+  local reason="$2"
+
+  if restore_branch_revision "$previous_revision"; then
+    die "$reason; previous checkout restored and the running container was not restarted"
+  fi
+
+  die "$reason; the running container was not restarted, but restoring the previous checkout failed"
+}
+
+rollback_after_health_failure() {
+  local previous_revision="$1"
+
+  printf 'deploy-zb: new release failed health checks; attempting code rollback\n' >&2
+  if ! restore_branch_revision "$previous_revision"; then
+    die 'new release failed health checks and checkout rollback failed; database was not rolled back'
+  fi
+  if ! /usr/bin/docker compose -f "$COMPOSE_FILE" build "$COMPOSE_SERVICE"; then
+    die 'new release failed health checks and rollback image build failed; database was not rolled back'
+  fi
+  if ! /usr/bin/systemctl restart "$BOT_SERVICE"; then
+    die 'new release failed health checks and rollback service restart failed; database was not rolled back'
+  fi
+  if ! wait_for_health; then
+    die 'new release failed health checks and rollback health check failed; database was not rolled back'
+  fi
+
+  die 'new release failed health checks; previous code is running again and database was not rolled back'
+}
+
+if (($# != 1)) || [[ ! "$1" =~ ^[0-9a-f]{40}$ ]]; then
+  die 'expected one lowercase 40-character commit SHA'
+fi
+
+readonly EXPECTED_SHA="$1"
+
+test -d "$REPOSITORY_DIR/.git" || die 'repository checkout is missing'
+test -f "$COMPOSE_FILE" || die 'compose file is missing'
+test -f "$RUNTIME_ENV_FILE" || die 'runtime environment file is missing'
+test -x /usr/bin/docker || die 'docker is missing'
+test -x /usr/bin/git || die 'git is missing'
+test -x /usr/bin/systemctl || die 'systemctl is missing'
+
+exec 9>"$MAINTENANCE_LOCK"
+/usr/bin/flock -n 9 || die 'another deploy is already in progress'
+
+current_branch="$(run_git symbolic-ref --quiet --short HEAD || true)"
+test "$current_branch" = "$DEPLOY_BRANCH" || die 'repository is not on the expected deploy branch'
+
+if test -n "$(run_git status --porcelain --untracked-files=all)"; then
+  die 'repository checkout is dirty'
+fi
+
+/usr/bin/systemctl is-active --quiet "$BOT_SERVICE" || die 'bot service is not active before deploy'
+if /usr/bin/systemctl is-active --quiet "$BACKUP_SERVICE"; then
+  die 'backup service is active; deploy after it completes'
+fi
+
+previous_revision="$(run_git rev-parse HEAD)"
+
+/usr/bin/install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$BUNDLE_DIR"
+bundle_file="$(/usr/bin/mktemp "$BUNDLE_DIR/deploy.XXXXXX.bundle")"
+cleanup_bundle() {
+  /usr/bin/rm -f -- "$bundle_file"
+}
+trap cleanup_bundle EXIT
+
+# The input is an opaque Git bundle.  The byte cap prevents a compromised
+# client from consuming arbitrary disk space; an oversized bundle fails verify.
+/usr/bin/dd of="$bundle_file" bs=1 count="$BUNDLE_SIZE_LIMIT_BYTES" status=none
+/usr/bin/chown "$DEPLOY_USER:$DEPLOY_USER" "$bundle_file"
+test -s "$bundle_file" || die 'received an empty Git bundle'
+
+run_git bundle verify "$bundle_file" >/dev/null
+bundle_heads="$(run_git bundle list-heads "$bundle_file")"
+if (( $(printf '%s\n' "$bundle_heads" | /usr/bin/wc -l) != 1 )); then
+  die 'Git bundle advertised more than one reference'
+fi
+IFS=$' \t' read -r bundled_sha bundled_ref extra_bundle_data <<< "$bundle_heads"
+test -n "${bundled_sha:-}" || die 'Git bundle contains no advertised commit'
+test -n "${bundled_ref:-}" || die 'Git bundle contains no advertised reference'
+test -z "${extra_bundle_data:-}" || die 'Git bundle advertised an unexpected reference format'
+test "$bundled_sha" = "$EXPECTED_SHA" || die 'Git bundle commit does not match requested commit'
+
+run_git bundle unbundle "$bundle_file" >/dev/null
+run_git cat-file -e "${EXPECTED_SHA}^{commit}"
+
+if ! checkout_revision "$EXPECTED_SHA"; then
+  die 'could not check out the requested commit'
+fi
+
+if ! /usr/bin/docker compose -f "$COMPOSE_FILE" config -q; then
+  restore_pre_restart_state "$previous_revision" 'compose configuration validation failed'
+fi
+
+if ! /usr/bin/docker compose -f "$COMPOSE_FILE" build --pull "$COMPOSE_SERVICE"; then
+  restore_pre_restart_state "$previous_revision" 'container image build failed'
+fi
+
+if ! /usr/bin/systemctl restart "$BOT_SERVICE"; then
+  rollback_after_health_failure "$previous_revision"
+fi
+
+if ! wait_for_health; then
+  rollback_after_health_failure "$previous_revision"
+fi
+
+if ! finalize_branch_revision "$EXPECTED_SHA"; then
+  die 'new release is healthy, but updating the local deploy branch failed'
+fi
+
+printf 'deploy-zb: deployed %s successfully\n' "$EXPECTED_SHA"

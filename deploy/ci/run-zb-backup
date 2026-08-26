@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Installed as /usr/local/lib/zb-deploy/run-zb-backup, root:root 0755.
+# One process owns the common maintenance lock from before bot stop through
+# the guaranteed start attempt, so systemd Exec* process boundaries cannot
+# introduce a backup/deploy race.
+set -euo pipefail
+IFS=$'\n\t'
+
+readonly REPOSITORY_DIR='/opt/telegram_client_manager'
+readonly COMPOSE_FILE='/opt/telegram_client_manager/compose.yaml'
+readonly COMPOSE_SERVICE='bot-zb'
+readonly COMPOSE_COMMAND=(/usr/bin/docker compose -f "$COMPOSE_FILE")
+readonly MAINTENANCE_LOCK='/run/lock/zb-bot-maintenance.lock'
+
+stop_attempted=0
+bot_restart_completed=0
+
+restart_bot_before_unlock() {
+  local backup_status=$?
+
+  if ((stop_attempted && ! bot_restart_completed)); then
+    if ! "${COMPOSE_COMMAND[@]}" start "$COMPOSE_SERVICE"; then
+      printf 'run-zb-backup: failed to start %s after backup\n' "$COMPOSE_SERVICE" >&2
+      backup_status=1
+    fi
+  fi
+
+  exit "$backup_status"
+}
+
+test -d "$REPOSITORY_DIR" || {
+  printf 'run-zb-backup: repository checkout is missing\n' >&2
+  exit 1
+}
+test -f "$COMPOSE_FILE" || {
+  printf 'run-zb-backup: compose file is missing\n' >&2
+  exit 1
+}
+
+exec 9>"$MAINTENANCE_LOCK"
+/usr/bin/flock -n 9 || {
+  printf 'run-zb-backup: deploy or another backup is in progress\n' >&2
+  exit 1
+}
+
+trap restart_bot_before_unlock EXIT
+stop_attempted=1
+/usr/bin/docker compose -f "$COMPOSE_FILE" stop bot-zb
+cd "$REPOSITORY_DIR"
+/usr/bin/python3 -m deploy.backup_to_oci --data-root /srv/medical-bot/data
+/usr/bin/docker compose -f "$COMPOSE_FILE" start bot-zb
+bot_restart_completed=1
