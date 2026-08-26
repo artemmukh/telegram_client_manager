@@ -36,6 +36,15 @@ def deploy_ci_text() -> str:
 
 
 @pytest.fixture(scope="module")
+def runner_wrapper_text() -> str:
+    paths = (DEPLOY_WRAPPER_PATH, SUDOERS_PATH)
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        pytest.fail(f"self-hosted runner file(s) missing: {', '.join(missing)}")
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+
+@pytest.fixture(scope="module")
 def backup_unit_text() -> str:
     if not BACKUP_UNIT_PATH.is_file():
         pytest.fail(f"backup systemd unit is missing: {BACKUP_UNIT_PATH}")
@@ -57,6 +66,7 @@ def test_workflow_is_manual_and_requires_explicit_production_confirmation(
     assert confirmation, "workflow_dispatch must define a confirmation input"
     confirmation_block = confirmation.group(0)
     assert re.search(r"^\s+required:\s*true\s*$", confirmation_block, re.MULTILINE)
+    assert "DEPLOY_ZB" in workflow_text
     assert re.search(r"deploy|production|вкат|подтверд", confirmation_block, re.IGNORECASE)
 
 
@@ -102,12 +112,39 @@ def test_production_concurrency_never_cancels_an_in_progress_deploy(
     assert re.search(r"^\s+cancel-in-progress:\s*false\s*$", block, re.MULTILINE)
 
 
-def test_ssh_uses_pinned_hosts_and_never_discovers_hosts_at_runtime(
+def test_workflow_runs_only_on_the_approved_self_hosted_runner(
     workflow_text: str,
 ) -> None:
-    assert re.search(r"StrictHostKeyChecking=(?:yes|true)", workflow_text)
-    assert re.search(r"UserKnownHostsFile=", workflow_text)
-    assert "ssh-keyscan" not in workflow_text
+    runs_on = re.search(r"(?ms)^\s*runs-on:\s*(?P<value>[^\n]+(?:\n\s+-\s+[^\n]+)*)", workflow_text)
+    assert runs_on, "workflow must declare its runner labels"
+    runs_on_block = runs_on.group("value")
+    for label in ("self-hosted", "linux", "ARM64", PRODUCTION_ENVIRONMENT):
+        assert re.search(rf"(?m)^\s*-\s*{re.escape(label)}\s*$", runs_on_block) or re.search(
+            rf"\b{re.escape(label)}\b", runs_on_block,
+        ), f"missing runner label: {label}"
+    assert "ubuntu-latest" not in runs_on_block
+
+
+def test_workflow_uses_only_local_wrapper_and_has_no_ssh_transport_or_key_material(
+    workflow_text: str,
+) -> None:
+    forbidden_transport_or_key_patterns = (
+        r"\bssh\b",
+        r"\bscp\b",
+        r"\bsftp\b",
+        r"ssh-keyscan",
+        r"DEPLOY_ZB_SSH",
+        r"(?:authorized_keys|id_rsa|id_ed25519|known_hosts)",
+        r"\bsecrets\.",
+    )
+    for pattern in forbidden_transport_or_key_patterns:
+        assert not re.search(pattern, workflow_text, re.IGNORECASE), pattern
+
+    assert re.search(
+        r"(?m)^\s*sudo\s+-n\s+--\s+/usr/local/sbin/gha-zb-deploy-wrapper\s+"
+        r"deploy\s+[\"']?\$GITHUB_SHA[\"']?\s+<\s+[\"']?\$bundle_file[\"']?\s*$",
+        workflow_text,
+    ), "workflow must feed the bundle to the fixed local runner wrapper via stdin"
 
 
 def test_workflow_does_not_pass_a_raw_sha_as_the_bundle_ref(workflow_text: str) -> None:
@@ -184,10 +221,23 @@ def test_deploy_targets_fixed_service_and_repository_without_unsafe_cleanup(
         assert not re.search(pattern, deploy_ci_text, re.IGNORECASE), pattern
 
     assert re.search(
-        r"ubuntu\s+ALL=\(root\)\s+NOPASSWD:\s+/usr/local/sbin/gha-zb-deploy-wrapper",
+        r"gha-zb-runner\s+ALL=\(root\)\s+NOPASSWD:\s+/usr/local/sbin/gha-zb-deploy-wrapper",
         deploy_ci_text,
     )
     assert not re.search(r"NOPASSWD:\s+ALL\b", deploy_ci_text)
+
+
+def test_self_hosted_runner_wrapper_accepts_only_one_sha_and_executes_fixed_deploy_script(
+    runner_wrapper_text: str,
+) -> None:
+    assert "/usr/local/lib/zb-deploy/deploy-zb" in runner_wrapper_text
+    assert re.search(r"\bEUID\s*!=\s*0", runner_wrapper_text)
+    assert re.search(r"\(\(\s*\$#\s*==\s*2\s*\)\)", runner_wrapper_text)
+    assert re.search(r"\[\[\s*\"?\$1\"?\s*==\s*['\"]deploy['\"]", runner_wrapper_text)
+    assert re.search(r"\$2\"?\s*=~\s*\^\[0-9a-f\]\{40\}\$", runner_wrapper_text)
+    assert re.search(r'exec\s+"\$DEPLOY_SCRIPT"\s+"\$2"', runner_wrapper_text)
+    assert "SSH_ORIGINAL_COMMAND" not in runner_wrapper_text
+    assert not re.search(r"\b(?:eval|bash\s+-c|sh\s+-c)\b", runner_wrapper_text)
 
 
 def test_backup_and_deploy_share_a_lock_for_the_entire_backup_lifecycle(
@@ -229,7 +279,7 @@ def test_backup_and_deploy_share_a_lock_for_the_entire_backup_lifecycle(
 def test_workflow_does_not_handle_production_secret_or_data_artifacts(
     workflow_text: str,
 ) -> None:
-    """The workflow may use GitHub secret references, never copy live data/configs."""
+    """The local runner receives code only, never live data or credentials."""
     forbidden_artifact_patterns = (
         r"(?:^|[\s/'\"])(?:\.env|[^\s/'\"]+\.env)(?:$|[\s/'\"])",
         r"[^\s/'\"]+\.(?:db|sqlite|sqlite3)(?:$|[\s/'\"])",
@@ -238,3 +288,5 @@ def test_workflow_does_not_handle_production_secret_or_data_artifacts(
     )
     for pattern in forbidden_artifact_patterns:
         assert not re.search(pattern, workflow_text, re.IGNORECASE), pattern
+
+    assert not re.search(r"\bsecrets\.", workflow_text, re.IGNORECASE)

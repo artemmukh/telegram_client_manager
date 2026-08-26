@@ -19,7 +19,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/codex/vps-migration'
     name: Deploy checked-out ZB commit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, ARM64, zb-production]
     environment:
       name: zb-production
     timeout-minutes: 20
@@ -48,60 +48,23 @@ jobs:
           test "$(git branch --show-current)" = ""
           git cat-file -e "${GITHUB_SHA}^{commit}"
 
-      - name: Send an exact Git bundle to the restricted deploy endpoint
-        env:
-          DEPLOY_ZB_SSH_HOST: ${{ secrets.DEPLOY_ZB_SSH_HOST }}
-          DEPLOY_ZB_SSH_USER: ${{ secrets.DEPLOY_ZB_SSH_USER }}
-          DEPLOY_ZB_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_ZB_SSH_PRIVATE_KEY }}
-          DEPLOY_ZB_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_ZB_SSH_KNOWN_HOSTS }}
+      - name: Deploy an exact Git bundle through the restricted local endpoint
         shell: bash
         run: |
           set -euo pipefail
           umask 077
 
-          : "${DEPLOY_ZB_SSH_HOST:?missing zb-production DEPLOY_ZB_SSH_HOST secret}"
-          : "${DEPLOY_ZB_SSH_USER:?missing zb-production DEPLOY_ZB_SSH_USER secret}"
-          : "${DEPLOY_ZB_SSH_PRIVATE_KEY:?missing zb-production DEPLOY_ZB_SSH_PRIVATE_KEY secret}"
-          : "${DEPLOY_ZB_SSH_KNOWN_HOSTS:?missing zb-production DEPLOY_ZB_SSH_KNOWN_HOSTS secret}"
-
-          ssh_dir="$(mktemp -d)"
-          key_file="$ssh_dir/deploy_key"
-          known_hosts_file="$ssh_dir/known_hosts"
           bundle_file="$(mktemp)"
           bundle_ref="refs/tags/gha-zb-deploy-$GITHUB_SHA"
           cleanup() {
             git update-ref -d "$bundle_ref" "$GITHUB_SHA" 2>/dev/null || true
-            rm -f "$key_file" "$known_hosts_file" "$bundle_file"
-            rmdir "$ssh_dir" 2>/dev/null || true
+            rm -f "$bundle_file"
           }
           trap cleanup EXIT
-
-          printf '%s\n' "$DEPLOY_ZB_SSH_PRIVATE_KEY" > "$key_file"
-          printf '%s\n' "$DEPLOY_ZB_SSH_KNOWN_HOSTS" > "$known_hosts_file"
-          chmod 600 "$key_file" "$known_hosts_file"
-          test -s "$key_file"
-          test -s "$known_hosts_file"
-          ssh-keygen -F "$DEPLOY_ZB_SSH_HOST" -f "$known_hosts_file" >/dev/null
 
           git update-ref "$bundle_ref" "$GITHUB_SHA"
           git bundle create "$bundle_file" "$bundle_ref"
           git bundle verify "$bundle_file"
           test "$(git bundle list-heads "$bundle_file")" = "$GITHUB_SHA $bundle_ref"
 
-          ssh \
-            -o BatchMode=yes \
-            -o ClearAllForwardings=yes \
-            -o ConnectTimeout=15 \
-            -o ConnectionAttempts=1 \
-            -o ForwardAgent=no \
-            -o IdentitiesOnly=yes \
-            -o KbdInteractiveAuthentication=no \
-            -o PasswordAuthentication=no \
-            -o RequestTTY=no \
-            -o ServerAliveCountMax=3 \
-            -o ServerAliveInterval=10 \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$known_hosts_file" \
-            -i "$key_file" \
-            "${DEPLOY_ZB_SSH_USER}@${DEPLOY_ZB_SSH_HOST}" \
-            "deploy $GITHUB_SHA" < "$bundle_file"
+          sudo -n -- /usr/local/sbin/gha-zb-deploy-wrapper deploy "$GITHUB_SHA" < "$bundle_file"
