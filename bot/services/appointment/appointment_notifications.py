@@ -3,6 +3,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from bot.exceptions.appointment_exceptions import NotificationDeliveryError
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+)
 from bot.keyboards.admin.record_management_kb.booking_request_kb import (
     booking_request_kb,
 )
@@ -160,6 +163,32 @@ _PENDING_REQUEST_EXPIRED_ADMIN_INVITE = {
 _PENDING_REQUEST_EXPIRED_CLIENT_REQUEST = {
     "ru": "⌛ Ваша заявка на запись истекла без ответа клиники.",
     "uz": "⌛ Sizning yozilish arizangiz klinika javobisiz muddati tugadi.",
+}
+
+_STAFF_PENDING_REQUEST_EXPIRED = {
+    "ru": (
+        "⌛ Заявка №{appointment_id} автоматически истекла.\n"
+        "{awaiting_line}\n"
+        "Дедлайн ответа: {deadline}."
+    ),
+    "uz": (
+        "⌛ №{appointment_id}-ariza avtomatik ravishda muddati tugadi.\n"
+        "{awaiting_line}\n"
+        "Javob muddati: {deadline}."
+    ),
+}
+
+_STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY = {
+    "ru": {
+        "clinic": "Ожидали ответ от: клиники.",
+        "client": "Ожидали ответ от: клиента.",
+        "proposed_time": "Ожидали ответ по предложенному времени.",
+    },
+    "uz": {
+        "clinic": "Javob kutilgan tomon: klinika.",
+        "client": "Javob kutilgan tomon: mijoz.",
+        "proposed_time": "Taklif qilingan vaqt bo'yicha javob kutilgan.",
+    },
 }
 
 _RESCHEDULE_PROPOSED = {
@@ -502,6 +531,24 @@ def pending_request_expired_admin_invite_text(lang: str = "ru") -> str:
 
 def pending_request_expired_client_request_text(lang: str = "ru") -> str:
     return _PENDING_REQUEST_EXPIRED_CLIENT_REQUEST.get(lang, _PENDING_REQUEST_EXPIRED_CLIENT_REQUEST["ru"])
+
+
+def staff_pending_request_expired_text(
+    appointment_id: int,
+    awaiting_party: str,
+    deadline: datetime,
+    lang: str = "ru",
+) -> str:
+    resolved_lang = lang if lang in {"ru", "uz"} else "ru"
+    awaiting_line = _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang].get(
+        awaiting_party,
+        _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang]["proposed_time"],
+    )
+    return _STAFF_PENDING_REQUEST_EXPIRED[resolved_lang].format(
+        appointment_id=appointment_id,
+        awaiting_line=awaiting_line,
+        deadline=format_datetime_for_display(deadline, resolved_lang),
+    )
 
 
 def reschedule_proposed_text(proposed: str, lang: str = "ru") -> str:
@@ -1063,6 +1110,57 @@ class AppointmentNotificationService:
         )
 
         return True
+
+    async def notify_staff_pending_request_expired(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        *,
+        reply_to_message_id: int,
+        awaiting_party: str,
+        deadline: datetime,
+    ) -> StaffLogDelivery:
+        """Send a persisted, identifiable terminal log for automatic expiry."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        compact_text = staff_pending_request_expired_text(
+            appointment.id, awaiting_party, deadline, lang,
+        )
+        delivery = await self._send_staff_log(
+            staff_telegram_id,
+            appointment,
+            compact_text,
+            lang=lang,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+        await self.appointment_repo.add_appointment_notification(
+            appointment.id,
+            staff_telegram_id,
+            delivery.message_id,
+            kind="expiry",
+            compact_text=delivery.compact_text,
+        )
+
+        try:
+            edited = await self.notifier.try_edit_message_text(
+                chat_id=staff_telegram_id,
+                message_id=delivery.message_id,
+                text=delivery.compact_text,
+                reply_markup=appointment_log_details_kb(appointment.id, lang),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"Failed to add Details keyboard to expiry log for appointment {appointment.id} "
+                f"in chat {staff_telegram_id}: {e}"
+            )
+        else:
+            if not edited:
+                logger.warning(
+                    f"Failed to add Details keyboard to expiry log for appointment {appointment.id} "
+                    f"in chat {staff_telegram_id}"
+                )
+
+        return delivery
 
     async def notify_client_reschedule_proposed(self, appointment: Appointment) -> int | None:
         """Notify client that the clinic proposed a different time for their request.

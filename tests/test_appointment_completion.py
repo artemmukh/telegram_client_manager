@@ -59,6 +59,7 @@ from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
+from bot.repositories.appointment_repository import STAFF_LOG_NOTIFICATION_KINDS
 from bot.states.admin.record_management.appointment_browser_states import (
     AppointmentBrowserStates,
 )
@@ -179,7 +180,7 @@ class FakeAppointmentRepository:
     async def get_staff_appointment_notification_for_message(
         self, appointment_id, chat_id, message_id,
     ):
-        supported_kinds = {"booking", "reschedule", "creation", "cancellation", "completion"}
+        supported_kinds = {"booking", "reschedule", "creation", "cancellation", "completion", "expiry"}
         matches = [
             notification
             for notification in self.notifications
@@ -601,6 +602,40 @@ async def test_generic_staff_log_details_and_hide_support_booking_kind():
     await hide(callback_query, AppointmentLogHideDetailsCB(appointment_id=1), _admin_user())
     callback_query.message.edit_text.assert_awaited_once_with(
         "Booking result delivered in Russian",
+        reply_markup=appointment_log_details_kb(1, lang="ru"),
+    )
+
+
+def test_expiry_is_a_supported_staff_log_kind():
+    assert "expiry" in STAFF_LOG_NOTIFICATION_KINDS
+
+
+@pytest.mark.asyncio
+async def test_generic_staff_log_details_and_hide_support_expiry_kind():
+    appointment = _completed_appointment()
+    notification = AppointmentNotification(
+        appointment_id=1,
+        chat_id=ADMIN_TELEGRAM_ID,
+        message_id=777,
+        kind="expiry",
+        compact_text="⌛ Заявка №1 автоматически истекла.",
+    )
+    appointment_repo = FakeAppointmentRepository(appointment, notifications=[notification])
+    router = _router(appointment_repo)
+    details = _find_handler(router, "show_appointment_log_details")
+    hide = _find_handler(router, "hide_appointment_log_details")
+    callback_query = _callback_query()
+
+    await details(callback_query, AppointmentLogDetailsCB(appointment_id=1), _admin_user())
+    callback_query.message.edit_text.assert_awaited_once_with(
+        build_appointment_card(appointment, "ru"),
+        reply_markup=appointment_log_hide_details_kb(1, lang="ru"),
+    )
+
+    callback_query.message.edit_text.reset_mock()
+    await hide(callback_query, AppointmentLogHideDetailsCB(appointment_id=1), _admin_user())
+    callback_query.message.edit_text.assert_awaited_once_with(
+        notification.compact_text,
         reply_markup=appointment_log_details_kb(1, lang="ru"),
     )
 

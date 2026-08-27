@@ -13,6 +13,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.staff import Staff
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
@@ -2374,6 +2375,220 @@ async def test_expire_pending_request_job_handles_notification_failure(
                 AppointmentStatus.EXPIRED,
                 ANY,
             )
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_job_logs_once_per_staff_chat_and_replies_to_latest_action(
+    mock_appointment_repo, mock_user_repo, mock_notification_service,
+):
+    """Expiry closes every action card and adds one identifiable log per chat."""
+    appointment = Appointment(
+        id=267,
+        clinic_id=1,
+        client_id=1,
+        datetime="2026-08-27 14:00",
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING,
+        clinic_name="Зуб Мудрости",
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = appointment
+    notifications_by_kind = {
+        "booking": [
+            AppointmentNotification(267, 100, 11, "booking", id=5),
+            AppointmentNotification(267, 200, 21, "booking", id=7),
+        ],
+        "reschedule": [
+            AppointmentNotification(267, 100, 12, "reschedule", id=9),
+        ],
+    }
+    mock_appointment_repo.get_appointment_notifications.side_effect = (
+        lambda appointment_id, kind: notifications_by_kind[kind]
+    )
+    mock_notification_service.notify_client_pending_request_expired = AsyncMock(return_value=True)
+    mock_notification_service.invalidate_closed_request_message = AsyncMock()
+    mock_notification_service.notify_staff_pending_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class:
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+
+        with patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+             patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+            mock_repo_class.return_value = mock_appointment_repo
+            mock_user_repo_class.return_value = mock_user_repo
+            mock_notif_class.return_value = mock_notification_service
+
+            await expire_pending_request_job(appointment.id)
+
+    assert [
+        (call.args[0], call.args[1])
+        for call in mock_notification_service.invalidate_closed_request_message.await_args_list
+    ] == [(100, 11), (200, 21), (100, 12)]
+    terminal_calls = mock_notification_service.notify_staff_pending_request_expired.await_args_list
+    assert [(call.args[0], call.args[1]) for call in terminal_calls] == [
+        (100, appointment),
+        (200, appointment),
+    ]
+    assert terminal_calls[0].kwargs == {
+        "reply_to_message_id": 12,
+        "awaiting_party": "clinic",
+        "deadline": datetime(2026, 8, 27, 12, 0),
+    }
+    assert terminal_calls[1].kwargs == {
+        "reply_to_message_id": 21,
+        "awaiting_party": "clinic",
+        "deadline": datetime(2026, 8, 27, 12, 0),
+    }
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_job_does_not_fan_out_when_no_staff_action_target_exists(
+    mock_appointment_repo, mock_user_repo, mock_notification_service,
+):
+    appointment = Appointment(
+        id=267,
+        clinic_id=1,
+        client_id=1,
+        datetime="2026-08-27 14:00",
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING,
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = appointment
+    mock_appointment_repo.get_appointment_notifications.return_value = []
+    mock_notification_service.notify_client_pending_request_expired = AsyncMock(return_value=True)
+    mock_notification_service.notify_staff_pending_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+        mock_repo_class.return_value = mock_appointment_repo
+        mock_user_repo_class.return_value = mock_user_repo
+        mock_notif_class.return_value = mock_notification_service
+
+        await expire_pending_request_job(appointment.id)
+
+    mock_notification_service.notify_staff_pending_request_expired.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_job_continues_terminal_logs_after_one_staff_send_fails(
+    mock_appointment_repo, mock_user_repo, mock_notification_service,
+):
+    appointment = Appointment(
+        id=267,
+        clinic_id=1,
+        client_id=1,
+        datetime="2026-08-27 14:00",
+        purpose="Консультация",
+        created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING,
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = appointment
+    mock_appointment_repo.get_appointment_notifications.side_effect = (
+        lambda appointment_id, kind: [
+            AppointmentNotification(267, 100, 11, "booking", id=1),
+            AppointmentNotification(267, 200, 21, "booking", id=2),
+        ] if kind == "booking" else []
+    )
+    mock_notification_service.notify_client_pending_request_expired = AsyncMock(return_value=True)
+    mock_notification_service.notify_staff_pending_request_expired = AsyncMock(
+        side_effect=[RuntimeError("staff chat unavailable"), True]
+    )
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+        mock_repo_class.return_value = mock_appointment_repo
+        mock_user_repo_class.return_value = mock_user_repo
+        mock_notif_class.return_value = mock_notification_service
+
+        await expire_pending_request_job(appointment.id)
+
+    assert mock_notification_service.notify_staff_pending_request_expired.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("created_by", "proposed_by", "proposed_datetime", "awaiting_party", "expected_deadline"),
+    [
+        (CreatedBy.CLIENT, None, None, "clinic", datetime(2026, 8, 27, 12, 0)),
+        (CreatedBy.ADMIN, None, None, "client", datetime(2026, 8, 27, 12, 0)),
+        (CreatedBy.CLIENT, CreatedBy.ADMIN, "2026-08-28 16:00", "client", datetime(2026, 8, 28, 14, 0)),
+        (CreatedBy.ADMIN, CreatedBy.CLIENT, "2026-08-28 16:00", "clinic", datetime(2026, 8, 28, 14, 0)),
+    ],
+)
+async def test_expire_pending_request_job_passes_accurate_awaiting_party_and_deadline(
+    mock_appointment_repo, mock_user_repo, mock_notification_service,
+    created_by, proposed_by, proposed_datetime, awaiting_party, expected_deadline,
+):
+    appointment = Appointment(
+        id=267,
+        clinic_id=1,
+        client_id=1,
+        datetime="2026-08-27 14:00",
+        purpose="Консультация",
+        created_by=created_by,
+        status=AppointmentStatus.PENDING,
+        proposed_by=proposed_by,
+        proposed_datetime=proposed_datetime,
+    )
+    mock_appointment_repo.get_appointment_by_id.return_value = appointment
+    mock_appointment_repo.get_appointment_notifications.side_effect = (
+        lambda appointment_id, kind: [
+            AppointmentNotification(267, 100, 11, kind, id=1),
+        ] if kind == "booking" else []
+    )
+    mock_notification_service.notify_client_pending_request_expired = AsyncMock(return_value=True)
+    mock_notification_service.notify_staff_pending_request_expired = AsyncMock(return_value=True)
+
+    with patch("bot.services.appointment.appointment_jobs.get_bot") as mock_get_bot, \
+         patch("bot.services.appointment.appointment_jobs.load_config") as mock_load_config, \
+         patch("bot.services.appointment.appointment_jobs.Database") as mock_db_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentRepository") as mock_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.UserRepository") as mock_user_repo_class, \
+         patch("bot.services.appointment.appointment_jobs.AppointmentNotificationService") as mock_notif_class:
+        mock_get_bot.return_value = AsyncMock()
+        mock_load_config.return_value = MagicMock(database_path=":memory:")
+        mock_connection = AsyncMock()
+        mock_db_instance = MagicMock()
+        mock_db_instance.connect = AsyncMock(return_value=mock_connection)
+        mock_db_class.return_value = mock_db_instance
+        mock_repo_class.return_value = mock_appointment_repo
+        mock_user_repo_class.return_value = mock_user_repo
+        mock_notif_class.return_value = mock_notification_service
+
+        await expire_pending_request_job(appointment.id)
+
+    call = mock_notification_service.notify_staff_pending_request_expired.await_args
+    assert call.kwargs["awaiting_party"] == awaiting_party
+    assert call.kwargs["deadline"] == expected_deadline
 
 
 # Phase 2a-bis: Proposal Reminder Tests (fires 3h before the proposed datetime)

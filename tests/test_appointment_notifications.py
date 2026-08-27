@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -45,13 +46,21 @@ CONFIRM_CTA = "Пожалуйста, подтвердите вашу готов�
 
 
 class FakeTelegramNotifier:
-    def __init__(self, send_exception=None, try_edit_result=True, try_edit_exception=None, edit_exception=None):
+    def __init__(
+        self,
+        send_exception=None,
+        try_edit_result=True,
+        try_edit_exception=None,
+        edit_exception=None,
+        events=None,
+    ):
         self.sent_messages = []
         self.edited_messages = []
         self.send_exception = send_exception
         self.try_edit_result = try_edit_result
         self.try_edit_exception = try_edit_exception
         self.edit_exception = edit_exception
+        self.events = events
 
     async def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None):
         if self.send_exception is not None:
@@ -63,6 +72,8 @@ class FakeTelegramNotifier:
             'reply_markup': reply_markup,
             'reply_to_message_id': reply_to_message_id,
         })
+        if self.events is not None:
+            self.events.append(("send", chat_id, 777))
 
         return 777
 
@@ -77,6 +88,8 @@ class FakeTelegramNotifier:
                 'text': text,
                 'reply_markup': reply_markup,
             })
+            if self.events is not None:
+                self.events.append(("edit", chat_id, message_id))
 
         return self.try_edit_result
 
@@ -109,11 +122,26 @@ class FakeUserRepo:
 
 
 class FakeAppointmentRepo:
-    def __init__(self, latest_notification_message_id=None):
+    def __init__(self, latest_notification_message_id=None, events=None):
         self.latest_notification_message_id = latest_notification_message_id
+        self.notifications = []
+        self.events = events
 
     async def get_latest_notification_message_id(self, appointment_id, chat_id):
         return self.latest_notification_message_id
+
+    async def add_appointment_notification(
+        self, appointment_id, chat_id, message_id, kind, compact_text=None,
+    ):
+        self.notifications.append({
+            "appointment_id": appointment_id,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "kind": kind,
+            "compact_text": compact_text,
+        })
+        if self.events is not None:
+            self.events.append(("persist", chat_id, message_id, kind, compact_text))
 
 
 def _client():
@@ -1501,6 +1529,104 @@ async def test_staff_result_delivery_carries_recipient_language_with_ru_fallback
     assert delivery.lang == expected_lang
     assert delivery.details_available is True
     assert notifier.sent_messages[-1]["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("requested_lang", "expected_lang", "expected_fragments"),
+    [
+        (
+            "ru",
+            "ru",
+            ("⌛ Заявка №1 автоматически истекла.", "Ожидали ответ от: клиники.", "Дедлайн ответа: 27 августа 2026, 12:00."),
+        ),
+        (
+            "uz",
+            "uz",
+            ("⌛ №1-ariza avtomatik ravishda muddati tugadi.", "Javob kutilgan tomon: klinika.", "Javob muddati: 27 Avgust 2026, 12:00."),
+        ),
+        (
+            "xx",
+            "ru",
+            ("⌛ Заявка №1 автоматически истекла.", "Ожидали ответ от: клиники.", "Дедлайн ответа: 27 августа 2026, 12:00."),
+        ),
+    ],
+)
+async def test_notify_staff_pending_request_expired_persists_before_details_keyboard(
+    requested_lang, expected_lang, expected_fragments,
+):
+    """Automatic expiry is an identifiable, persisted staff log with Details."""
+    events = []
+    notifier = FakeTelegramNotifier(events=events)
+    recipient = _admin()
+    recipient.language = requested_lang
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    appointment_repo = FakeAppointmentRepo(events=events)
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.id = 1
+    deadline = datetime(2026, 8, 27, 12, 0)
+
+    result = await service.notify_staff_pending_request_expired(
+        recipient.telegram_user_id,
+        appointment,
+        reply_to_message_id=456,
+        awaiting_party="clinic",
+        deadline=deadline,
+    )
+
+    assert result.message_id == 777
+    assert result.lang == expected_lang
+    assert result.details_available is True
+    assert result.compact_text == notifier.sent_messages[0]["text"]
+    for expected_fragment in expected_fragments:
+        assert expected_fragment in result.compact_text
+    assert "Иванов Иван" not in result.compact_text
+    assert "Консультация" not in result.compact_text
+    assert notifier.sent_messages[0]["reply_to_message_id"] == 456
+    assert appointment_repo.notifications == [{
+        "appointment_id": 1,
+        "chat_id": recipient.telegram_user_id,
+        "message_id": 777,
+        "kind": "expiry",
+        "compact_text": result.compact_text,
+    }]
+    assert events == [
+        ("send", recipient.telegram_user_id, 777),
+        ("persist", recipient.telegram_user_id, 777, "expiry", result.compact_text),
+        ("edit", recipient.telegram_user_id, 777),
+    ]
+    assert notifier.edited_messages[0]["reply_markup"] == appointment_log_details_kb(
+        appointment.id, lang=expected_lang,
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_pending_request_expired_does_not_add_details_when_persistence_fails():
+    """A failed notification-row write must not expose a Details button."""
+    notifier = FakeTelegramNotifier()
+    recipient = _admin()
+    user_repo = FakeUserRepo(_client(), recipient_by_telegram_id=recipient)
+    appointment_repo = FakeAppointmentRepo()
+
+    async def fail_persistence(*args, **kwargs):
+        raise RuntimeError("database unavailable")
+
+    appointment_repo.add_appointment_notification = fail_persistence
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.notify_staff_pending_request_expired(
+            recipient.telegram_user_id,
+            _appointment(),
+            reply_to_message_id=456,
+            awaiting_party="client",
+            deadline=datetime(2026, 8, 27, 12, 0),
+        )
+
+    assert len(notifier.sent_messages) == 1
+    assert notifier.sent_messages[0]["reply_markup"] is None
+    assert notifier.edited_messages == []
 
 
 @pytest.mark.asyncio
