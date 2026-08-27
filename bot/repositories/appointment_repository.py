@@ -20,6 +20,7 @@ STAFF_LOG_NOTIFICATION_KINDS = (
     "reschedule",
     "creation",
     "cancellation",
+    "expiry",
 )
 
 APPOINTMENT_SELECT = """

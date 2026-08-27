@@ -8,9 +8,16 @@ of the AppointmentScheduler instance.
 """
 
 import logging
+from datetime import datetime, timedelta
 
-from bot.loader import get_bot
 from bot.config.config import load_config
+from bot.exceptions.appointment_exceptions import (
+    AppointmentNotFoundError,
+    NotificationDeliveryError,
+)
+from bot.loader import get_bot
+from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.database import Database
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
@@ -22,7 +29,6 @@ from bot.services.appointment.appointment_notifications import (
 )
 from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
-from bot.exceptions.appointment_exceptions import AppointmentNotFoundError, NotificationDeliveryError
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +54,7 @@ async def _close_staff_request_keyboards(
     appointment_id: int,
     kinds: tuple[str, ...],
     outcome_text: dict[str, str],
-) -> None:
+) -> list[AppointmentNotification]:
     """Стереть у сотрудников клавиатуры заявок, которые истекли без их ответа.
 
     Джобы истечения гасят протухшее сообщение клиенту
@@ -60,6 +66,7 @@ async def _close_staff_request_keyboards(
 
     Best-effort: сбой на одном получателе не должен помешать остальным.
     """
+    resolved_targets: list[AppointmentNotification] = []
     for kind in kinds:
         try:
             targets = await appointment_management.get_invalidation_targets(
@@ -71,6 +78,8 @@ async def _close_staff_request_keyboards(
             )
             continue
 
+        resolved_targets.extend(targets)
+
         for target in targets:
             try:
                 await notification_service.invalidate_closed_request_message(
@@ -81,6 +90,51 @@ async def _close_staff_request_keyboards(
                     f"Failed to close staff {kind} keyboard in chat {target.chat_id} "
                     f"for appointment {appointment_id}: {e}"
                 )
+
+    return resolved_targets
+
+
+def _latest_staff_targets_by_chat(
+    targets: list[AppointmentNotification],
+) -> list[AppointmentNotification]:
+    """Keep one deterministic latest action-message anchor for each staff chat."""
+    latest_by_chat: dict[int, AppointmentNotification] = {}
+    for target in targets:
+        current = latest_by_chat.get(target.chat_id)
+        if current is None:
+            latest_by_chat[target.chat_id] = target
+            continue
+
+        if target.id is None:
+            if current.id is None:
+                latest_by_chat[target.chat_id] = target
+            continue
+
+        if current.id is None or target.id > current.id:
+            latest_by_chat[target.chat_id] = target
+
+    return list(latest_by_chat.values())
+
+
+def _pending_expiry_context(appointment: Appointment) -> tuple[str, datetime]:
+    """Return the side that owed a response and the corresponding T-2 deadline."""
+    target_datetime = appointment.proposed_datetime or appointment.datetime
+    deadline = datetime.fromisoformat(target_datetime) - timedelta(hours=2)
+
+    if appointment.proposed_datetime is not None:
+        if appointment.proposed_by == CreatedBy.ADMIN:
+            return "client", deadline
+        if appointment.proposed_by == CreatedBy.CLIENT:
+            return "clinic", deadline
+
+        logger.warning(
+            f"Appointment {appointment.id} has proposed_datetime without proposed_by during expiry"
+        )
+        return "proposed_time", deadline
+
+    if appointment.created_by == CreatedBy.ADMIN:
+        return "client", deadline
+    return "clinic", deadline
 
 
 async def send_reminder_job(
@@ -345,6 +399,8 @@ async def expire_pending_request_job(appointment_id: int) -> None:
 
         logger.info(f"Appointment {appointment_id} pending request expired (unanswered)")
 
+        awaiting_party, deadline = _pending_expiry_context(appointment)
+
         try:
             await notification_service.notify_client_pending_request_expired(appointment)
         except Exception as e:
@@ -354,10 +410,25 @@ async def expire_pending_request_job(appointment_id: int) -> None:
 
         # Оба вида: "booking" — самозапись, "reschedule" — встречное время, которое
         # клиент предложил по приглашению от админа (этот случай тоже истекает здесь).
-        await _close_staff_request_keyboards(
+        targets = await _close_staff_request_keyboards(
             appointment_management, notification_service, appointment_id,
             ("booking", "reschedule"), _PENDING_EXPIRED_OUTCOME,
         )
+
+        for target in _latest_staff_targets_by_chat(targets):
+            try:
+                await notification_service.notify_staff_pending_request_expired(
+                    target.chat_id,
+                    appointment,
+                    reply_to_message_id=target.message_id,
+                    awaiting_party=awaiting_party,
+                    deadline=deadline,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"Failed to send expiry staff log to chat {target.chat_id} "
+                    f"for appointment {appointment_id}: {e}"
+                )
 
         if appointment.proposed_datetime is not None:
             if appointment.proposal_message_id:
