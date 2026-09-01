@@ -539,6 +539,61 @@ async def test_paginate_handler_calendar_mode_reads_calendar_date_from_fsm():
     assert back_target in str(kwargs["reply_markup"])
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "calendar_date",
+    [
+        pytest.param("__missing__", id="missing"),
+        pytest.param(None, id="none"),
+        pytest.param("not-an-iso-date", id="malformed"),
+    ],
+)
+async def test_paginate_handler_calendar_mode_recovers_from_expired_calendar_session(calendar_date):
+    """A stale calendar-list callback must reopen the calendar instead of
+    passing missing or malformed FSM data to date pagination/formatting."""
+    appt_repo = FakeAppointmentRepository(_appointment(status=AppointmentStatus.PENDING))
+    router = _build_router(appt_repo)
+    paginate = _find_handler(router, "paginate")
+
+    callback_query = _callback_query(OWN_ADMIN_TELEGRAM_ID)
+    callback_query.__class__ = CallbackQuery
+    state_data = {"calendar_doctor_filter_id": 55}
+    if calendar_date != "__missing__":
+        state_data["calendar_date"] = calendar_date
+    state = FakeState(**state_data)
+    callback_data = ApptPageCB(mode="calendar", page=1, tab="pending")
+
+    await paginate(callback_query, callback_data, state, _own_admin())
+
+    # The expired-session alert must be localized and distinct from the
+    # generic unexpected-error fallback that currently masks the TypeError.
+    answer_calls = callback_query.answer.await_args_list
+    assert any(
+        call.args == ("Сессия календаря устарела. Выберите дату заново.",)
+        and call.kwargs == {"show_alert": True}
+        for call in answer_calls
+    )
+
+    today = get_current_tashkent_datetime().date()
+    expected_year, expected_month = clamp_month_to_range(today.year, today.month)
+    callback_query.message.edit_text.assert_awaited_once()
+    args, kwargs = callback_query.message.edit_text.await_args
+    assert args[0].startswith("📅 ")
+    assert kwargs["reply_markup"] == appointment_calendar_kb(
+        expected_year,
+        expected_month,
+        back_callback_data="appt_search_calendar",
+        back_label="⬅️ К выбору врача",
+    )
+
+    assert state.states[-1] == AppointmentBrowserStates.calendar_month
+    assert state.data["calendar_doctor_filter_id"] == 55
+    assert state.data["calendar_year"] == expected_year
+    assert state.data["calendar_month"] == expected_month
+    assert appt_repo.count_calls == []
+    assert appt_repo.page_calls == []
+
+
 # --- card actions carry mode="calendar" through correctly ---
 
 @pytest.mark.asyncio
