@@ -125,11 +125,13 @@ class ClientNotificationService:
         delivery to the others."""
         # text = (
         #     "⚠️ Уважаемые пользователи!\n\n"
-        #     "В данный момент в боте могут наблюдаться временные неполадки. "
-        #     "Приношу извинения за неудобства. Работа над исправлением уже ведётся."
+        #     "Бот был недоступен некоторое время. Приносим извинения за неудобства."
+        #     "\nПроблемы на серверной стороне провайдера. "
+        #     "Бот сейчас работает в штатном режиме."
         # )
 
-        clients = await self.user_repository.get_clients_missing_personal_data()
+        # clients = await self.user_repository.get_clients_missing_personal_data()
+        clients = await  self.user_repository.get_all_clients() #!!!!!!!!
 
         for client in clients:
             if client.telegram_user_id is None:
@@ -139,12 +141,12 @@ class ClientNotificationService:
             reply_markup = personal_data_broadcast_kb(lang=client.language)
 
             try:
-                # await self.notifier.send_message(chat_id=client.telegram_user_id, text=text)
-                await self.notifier.send_message(
-                    chat_id=client.telegram_user_id,
-                    text=message_text,
-                    reply_markup=reply_markup,
-                )
+                await self.notifier.send_message(chat_id=client.telegram_user_id, text=text)
+                # await self.notifier.send_message(
+                #     chat_id=client.telegram_user_id,
+                #     text=message_text,
+                #     reply_markup=None,
+                # )
             except Exception as e:
                 logger.warning(
                     f"Failed to send personal-data request to client {client.telegram_user_id}: {e}"
