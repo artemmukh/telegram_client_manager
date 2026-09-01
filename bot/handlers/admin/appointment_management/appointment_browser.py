@@ -171,6 +171,10 @@ _LIST_HEADER_TEXT = {
 }
 _EDIT_MESSAGE_ERROR_TEXT = {"ru": "Ошибка редактирования сообщения", "uz": "Xabarni tahrirlashda xato"}
 _UNEXPECTED_ERROR_TEXT = {"ru": "Произошла непредвиденная ошибка", "uz": "Kutilmagan xato yuz berdi"}
+_EXPIRED_CALENDAR_SESSION_TEXT = {
+    "ru": "Сессия календаря устарела. Выберите дату заново.",
+    "uz": "Kalendar sessiyasi eskirdi. Sanani qaytadan tanlang.",
+}
 _BACK_TO_CALENDAR_LABEL = {"ru": "⬅️ К календарю", "uz": "⬅️ Kalendarga"}
 _CANCEL_EDIT_BACK_LABEL = {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"}
 
@@ -212,8 +216,23 @@ async def render_appointment_list(
         elif mode == "calendar":
             data = await state.get_data()
             calendar_date = data.get("calendar_date")
-            calendar_year = data.get("calendar_year")
-            calendar_month = data.get("calendar_month")
+            if not isinstance(calendar_date, str):
+                await callback_query.answer(
+                    _EXPIRED_CALENDAR_SESSION_TEXT.get(lang, _EXPIRED_CALENDAR_SESSION_TEXT["ru"]),
+                    show_alert=True,
+                )
+                await show_calendar(callback_query, state, lang=lang)
+                return
+
+            try:
+                calendar_day = date.fromisoformat(calendar_date)
+            except ValueError:
+                await callback_query.answer(
+                    _EXPIRED_CALENDAR_SESSION_TEXT.get(lang, _EXPIRED_CALENDAR_SESSION_TEXT["ru"]),
+                    show_alert=True,
+                )
+                await show_calendar(callback_query, state, lang=lang)
+                return
 
             result = await pagination_service.paginate_appointments_by_date_and_tab(
                 calendar_date, tab, page, clinic_id, doctor_id
@@ -221,7 +240,10 @@ async def render_appointment_list(
             title = _CALENDAR_DAY_APPOINTMENTS_TITLE.get(lang, _CALENDAR_DAY_APPOINTMENTS_TITLE["ru"]).format(
                 date=format_calendar_date_display(calendar_date),
             )
-            back_callback_data = ApptCalendarMonthCB(year=calendar_year, month=calendar_month).pack()
+            back_callback_data = ApptCalendarMonthCB(
+                year=calendar_day.year,
+                month=calendar_day.month,
+            ).pack()
             back_label = _BACK_TO_CALENDAR_LABEL.get(lang, _BACK_TO_CALENDAR_LABEL["ru"])
         else:
             data = await state.get_data()
