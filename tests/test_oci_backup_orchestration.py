@@ -13,7 +13,9 @@ from test_vps_snapshot_export import make_request
 
 from deploy import backup_to_oci
 from deploy.oci_backup_orchestration import (
+    GoogleDriveBackupConfig,
     OciBackupError,
+    SubprocessGoogleDriveUploader,
     SubprocessOciUploader,
     UploadReport,
     create_verified_bundle,
@@ -35,6 +37,52 @@ class FakeSubprocessRunner:
         if isinstance(self.result, BaseException):
             raise self.result
         return self.result
+
+
+@pytest.mark.asyncio
+async def test_subprocess_google_drive_uploader_uses_immutable_checksum_contract(
+    tmp_path: Path,
+) -> None:
+    payload = tmp_path / "snapshot.tar"
+    config_path = tmp_path / "rclone.conf"
+    payload.write_bytes(b"synthetic outer snapshot")
+    config_path.write_text("[zb-drive]\ntype = drive\n", encoding="utf-8")
+    runner = FakeSubprocessRunner(
+        subprocess.CompletedProcess(args=["rclone"], returncode=0, stdout="", stderr="")
+    )
+    uploader = SubprocessGoogleDriveUploader(runner=runner, timeout_seconds=23)
+
+    await uploader.upload(
+        path=payload,
+        config=GoogleDriveBackupConfig(remote="zb-drive", config_path=config_path),
+        sha256=snapshot_sha256(payload),
+    )
+
+    assert runner.calls == [
+        (
+            [
+                "rclone",
+                "copyto",
+                str(payload),
+                "zb-drive:snapshot.tar",
+                "--config",
+                str(config_path),
+                "--checksum",
+                "--immutable",
+                "--retries",
+                "1",
+                "--low-level-retries",
+                "1",
+            ],
+            {
+                "shell": False,
+                "check": False,
+                "capture_output": True,
+                "text": True,
+                "timeout": 23,
+            },
+        )
+    ]
 
 
 def _create_valid_data_root(data_root: Path) -> None:
@@ -458,6 +506,73 @@ def test_run_backup_uses_host_paths_and_export_bundle_upload_order(
     assert uploaded["sha256"] == VALID_SHA256
 
 
+def test_run_backup_mirrors_verified_bundle_to_google_drive_after_oci_upload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    _create_valid_data_root(data_root)
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    bundle_path = work_dir / "outer" / "bundle.tar"
+    bundle_path.parent.mkdir()
+    bundle_path.write_bytes(b"bundle")
+    rclone_config = tmp_path / "rclone.conf"
+    rclone_config.write_text("[zb-drive]\ntype = drive\n", encoding="utf-8")
+    events: list[str] = []
+    drive_upload: dict[str, object] = {}
+
+    monkeypatch.setenv("OCI_REGION", "me-dubai-1")
+    monkeypatch.setenv("OCI_NAMESPACE", "synthetic-namespace")
+    monkeypatch.setenv("OCI_BUCKET", "synthetic-bucket")
+    monkeypatch.setenv("GOOGLE_DRIVE_BACKUP_ENABLED", "true")
+    monkeypatch.setenv("GOOGLE_DRIVE_RCLONE_REMOTE", "zb-drive")
+    monkeypatch.setenv("GOOGLE_DRIVE_RCLONE_CONFIG", str(rclone_config))
+    monkeypatch.setattr(backup_to_oci, "_create_work_dir", lambda root: work_dir)
+
+    def fake_export(request: object) -> None:
+        events.append("export")
+
+    def fake_bundle(**kwargs: object) -> Path:
+        events.append("bundle")
+        return bundle_path
+
+    class SuccessfulOciUploader:
+        async def upload(self, **kwargs: object) -> UploadReport:
+            events.append("oci")
+            return UploadReport(etag="etag")
+
+    class SuccessfulGoogleDriveUploader:
+        async def upload(self, **kwargs: object) -> None:
+            events.append("drive")
+            drive_upload.update(kwargs)
+
+    monkeypatch.setattr(backup_to_oci, "export_snapshot", fake_export)
+    monkeypatch.setattr(backup_to_oci, "create_verified_bundle", fake_bundle)
+    monkeypatch.setattr(backup_to_oci, "SubprocessOciUploader", SuccessfulOciUploader)
+    monkeypatch.setattr(
+        backup_to_oci,
+        "SubprocessGoogleDriveUploader",
+        SuccessfulGoogleDriveUploader,
+    )
+    monkeypatch.setattr(backup_to_oci, "sha256", lambda path: VALID_SHA256)
+
+    backup_to_oci._run_backup(
+        data_root,
+        when=datetime(2026, 8, 24, 3, 30, tzinfo=UTC),
+        backup_id=UUID("12345678-1234-5678-1234-567812345678"),
+    )
+
+    assert events == ["export", "bundle", "oci", "drive"]
+    assert drive_upload["path"] == bundle_path
+    assert drive_upload["sha256"] == VALID_SHA256
+    assert drive_upload["config"] == GoogleDriveBackupConfig(
+        remote="zb-drive",
+        config_path=rclone_config,
+    )
+    assert work_dir.exists() is False
+
+
 def test_run_backup_removes_work_dir_after_successful_upload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -550,6 +665,68 @@ def test_run_backup_retains_work_dir_after_upload_failure_without_details(
     assert "ocid1.object.oc1..upload-secret" not in str(error_info.value)
 
 
+def test_run_backup_retains_work_dir_after_google_drive_failure_without_details(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    _create_valid_data_root(data_root)
+    work_dir = tmp_path / "work-drive-failure"
+    work_dir.mkdir()
+    bundle_path = work_dir / "outer" / "bundle.tar"
+    bundle_path.parent.mkdir()
+    bundle_path.write_bytes(b"bundle")
+    rclone_config = tmp_path / "rclone.conf"
+    rclone_config.write_text("[zb-drive]\ntype = drive\n", encoding="utf-8")
+    events: list[str] = []
+
+    monkeypatch.setenv("OCI_REGION", "me-dubai-1")
+    monkeypatch.setenv("OCI_NAMESPACE", "synthetic-namespace")
+    monkeypatch.setenv("OCI_BUCKET", "synthetic-bucket")
+    monkeypatch.setenv("GOOGLE_DRIVE_BACKUP_ENABLED", "true")
+    monkeypatch.setenv("GOOGLE_DRIVE_RCLONE_REMOTE", "zb-drive")
+    monkeypatch.setenv("GOOGLE_DRIVE_RCLONE_CONFIG", str(rclone_config))
+    monkeypatch.setattr(backup_to_oci, "_create_work_dir", lambda root: work_dir)
+
+    def fake_export(request: object) -> None:
+        events.append("export")
+
+    def fake_bundle(**kwargs: object) -> Path:
+        events.append("bundle")
+        return bundle_path
+
+    class SuccessfulOciUploader:
+        async def upload(self, **kwargs: object) -> UploadReport:
+            events.append("oci")
+            return UploadReport(etag="etag")
+
+    class FailingGoogleDriveUploader:
+        async def upload(self, **kwargs: object) -> None:
+            events.append("drive")
+            raise RuntimeError("rclone access token should not be exposed")
+
+    monkeypatch.setattr(backup_to_oci, "export_snapshot", fake_export)
+    monkeypatch.setattr(backup_to_oci, "create_verified_bundle", fake_bundle)
+    monkeypatch.setattr(backup_to_oci, "SubprocessOciUploader", SuccessfulOciUploader)
+    monkeypatch.setattr(
+        backup_to_oci,
+        "SubprocessGoogleDriveUploader",
+        FailingGoogleDriveUploader,
+    )
+    monkeypatch.setattr(backup_to_oci, "sha256", lambda path: VALID_SHA256)
+
+    with pytest.raises(OciBackupError, match="Google Drive mirror failed") as error_info:
+        backup_to_oci._run_backup(
+            data_root,
+            when=datetime(2026, 8, 24, 3, 30, tzinfo=UTC),
+            backup_id=UUID("12345678-1234-5678-1234-567812345678"),
+        )
+
+    assert events == ["export", "bundle", "oci", "drive"]
+    assert work_dir.exists() is True
+    assert "rclone access token should not be exposed" not in str(error_info.value)
+
+
 @pytest.mark.parametrize(
     "environment",
     [
@@ -558,7 +735,7 @@ def test_run_backup_retains_work_dir_after_upload_failure_without_details(
     ],
     ids=["missing", "blank-region"],
 )
-def test_backup_cli_invalid_config_has_only_generic_stderr(
+def test_backup_cli_invalid_config_has_only_generic_backup_stderr(
     tmp_path: Path,
     environment: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
@@ -575,4 +752,4 @@ def test_backup_cli_invalid_config_has_only_generic_stderr(
     result = backup_to_oci.main(["--data-root", str(data_root)])
 
     assert result == 1
-    assert capsys.readouterr().err == "OCI backup failed\n"
+    assert capsys.readouterr().err == "Backup failed\n"
