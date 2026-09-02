@@ -25,25 +25,92 @@ die() {
 }
 
 run_git() {
-  /usr/sbin/runuser -u "$DEPLOY_USER" -- /usr/bin/git -C "$REPOSITORY_DIR" "$@"
+  run_as_deploy_user /usr/bin/git -C "$REPOSITORY_DIR" "$@"
+}
+
+run_as_deploy_user() {
+  /usr/sbin/runuser -u "$DEPLOY_USER" -- "$@"
+}
+
+verify_tracked_directories_writable() {
+  local tracked_path
+  local directory
+  local tracked_files_pid
+  local -A tracked_directories=()
+
+  tracked_directories["$REPOSITORY_DIR"]=1
+  coproc TRACKED_FILES { run_git ls-files -z; }
+  tracked_files_pid="$TRACKED_FILES_PID"
+  while IFS= read -r -d '' tracked_path <&"${TRACKED_FILES[0]}"; do
+    directory="${tracked_path%/*}"
+    while [[ "$directory" != "$tracked_path" && "$directory" != '.' ]]; do
+      tracked_directories["$REPOSITORY_DIR/$directory"]=1
+      if [[ "$directory" == */* ]]; then
+        directory="${directory%/*}"
+      else
+        directory='.'
+      fi
+    done
+  done
+  wait "$tracked_files_pid" || return 1
+
+  for directory in "${!tracked_directories[@]}"; do
+    if ! run_as_deploy_user /usr/bin/test -w "$directory"; then
+      die "deploy user cannot write tracked directory: $directory"
+      return 1
+    fi
+    if ! run_as_deploy_user /usr/bin/test -x "$directory"; then
+      die "deploy user cannot search tracked directory: $directory"
+      return 1
+    fi
+  done
+}
+
+verify_repository_status_clean() {
+  local untracked_files="$1"
+  local status
+
+  status="$(run_git status --porcelain "--untracked-files=$untracked_files")" || return 1
+  test -z "$status" || return 1
+}
+
+verify_revision_clean() {
+  local revision="$1"
+  local checked_out_revision
+
+  checked_out_revision="$(run_git rev-parse HEAD)" || return 1
+  test "$checked_out_revision" = "$revision" || return 1
+  verify_repository_status_clean no || return 1
+}
+
+verify_branch_revision_clean() {
+  local revision="$1"
+  local checked_out_branch
+
+  checked_out_branch="$(run_git symbolic-ref --quiet --short HEAD)" || return 1
+  test "$checked_out_branch" = "$DEPLOY_BRANCH" || return 1
+  verify_revision_clean "$revision" || return 1
 }
 
 checkout_revision() {
   local revision="$1"
-  run_git checkout --detach "$revision"
+  run_git checkout --detach "$revision" || return 1
+  verify_revision_clean "$revision" || return 1
 }
 
 restore_branch_revision() {
   local revision="$1"
-  checkout_revision "$revision"
-  run_git branch -f "$DEPLOY_BRANCH" "$revision"
-  run_git checkout "$DEPLOY_BRANCH"
+  checkout_revision "$revision" || return 1
+  run_git branch -f "$DEPLOY_BRANCH" "$revision" || return 1
+  run_git checkout "$DEPLOY_BRANCH" || return 1
+  verify_branch_revision_clean "$revision" || return 1
 }
 
 finalize_branch_revision() {
   local revision="$1"
-  run_git branch -f "$DEPLOY_BRANCH" "$revision"
-  run_git checkout "$DEPLOY_BRANCH"
+  run_git branch -f "$DEPLOY_BRANCH" "$revision" || return 1
+  run_git checkout "$DEPLOY_BRANCH" || return 1
+  verify_branch_revision_clean "$revision" || return 1
 }
 
 is_container_running() {
@@ -118,8 +185,12 @@ exec 9>"$MAINTENANCE_LOCK"
 current_branch="$(run_git symbolic-ref --quiet --short HEAD || true)"
 test "$current_branch" = "$DEPLOY_BRANCH" || die 'repository is not on the expected deploy branch'
 
-if test -n "$(run_git status --porcelain --untracked-files=all)"; then
-  die 'repository checkout is dirty'
+if ! verify_repository_status_clean all; then
+  die 'repository checkout is dirty or its status cannot be read'
+fi
+
+if ! verify_tracked_directories_writable; then
+  die 'could not verify tracked directory permissions for the deploy user'
 fi
 
 /usr/bin/systemctl is-active --quiet "$BOT_SERVICE" || die 'bot service is not active before deploy'
