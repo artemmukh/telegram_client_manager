@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-
 
 WORKFLOW_PATH = Path(__file__).parents[1] / ".github" / "workflows" / "deploy-zb.yml"
 DEPLOY_SCRIPT_PATH = Path(__file__).parents[1] / "deploy" / "ci" / "deploy-zb"
@@ -164,6 +165,520 @@ def _git(repository: Path, *arguments: str) -> str:
         text=True,
     )
     return result.stdout
+
+
+def _shell_function_bodies(script: str) -> dict[str, str]:
+    """Return simple, top-level shell function bodies from the deploy script.
+
+    The deployment script keeps its checkout operations in small functions.
+    Extracting those functions lets the contract tests distinguish a
+    post-checkout invariant from the preflight status check in ``main``.
+    """
+    return {
+        match.group("name"): match.group("body")
+        for match in re.finditer(
+            r"(?ms)^(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\(\)\s*\{(?P<body>.*?)^\}",
+            script,
+        )
+    }
+
+
+def _shell_function_definition(script: str, function_name: str) -> str:
+    match = re.search(
+        rf"(?ms)^{re.escape(function_name)}\(\)\s*\{{.*?^\}}",
+        script,
+    )
+    assert match, f"deploy script function is missing: {function_name}"
+    return match.group(0)
+
+
+def _bash_command() -> list[str]:
+    if Path(r"C:\Program Files\Git\bin\bash.exe").is_file():
+        return [r"C:\Program Files\Git\bin\bash.exe"]
+    if Path(r"C:\Program Files\Git\usr\bin\bash.exe").is_file():
+        return [r"C:\Program Files\Git\usr\bin\bash.exe"]
+    return [shutil.which("bash") or "bash"]
+
+
+def _run_bash(harness: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _bash_command() + ["-c", harness],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _function_has_post_checkout_revision_check(body: str) -> bool:
+    """Check for HEAD equality and tracked worktree/index cleanliness."""
+    return (
+        re.search(r"\brun_git\s+rev-parse\s+HEAD\b", body) is not None
+        and re.search(r"\b(?:test|\[\[)[^\n]*(?:=|==)[^\n]*\$\w*revision\b", body)
+        is not None
+        and (
+            re.search(r"\brun_git\s+status\s+--porcelain\b", body) is not None
+            or "verify_repository_status_clean" in body
+        )
+    )
+
+
+def _has_branch_assertion(body: str) -> bool:
+    return (
+        re.search(r"\brun_git\s+symbolic-ref\s+--quiet\s+--short\s+HEAD\b", body)
+        is not None
+        and re.search(r"\b(?:test|\[\[)[^\n]*(?:=|==)[^\n]*DEPLOY_BRANCH\b", body)
+        is not None
+    )
+
+
+def _function_has_revision_contract(
+    functions: dict[str, str],
+    function_name: str,
+    seen: set[str] | None = None,
+) -> bool:
+    """Resolve a revision/clean verifier through nested helper calls."""
+    seen = set() if seen is None else seen
+    if function_name in seen:
+        return False
+    seen.add(function_name)
+
+    body = functions[function_name]
+    if _function_has_post_checkout_revision_check(body):
+        return True
+
+    for verifier_name in functions:
+        if verifier_name in seen or verifier_name not in body:
+            continue
+        if not re.search(rf"\b{re.escape(verifier_name)}\b[^\n]*\$revision\b", body):
+            continue
+        if _function_has_revision_contract(functions, verifier_name, seen.copy()):
+            return True
+    return False
+
+
+def _function_has_post_finalize_branch_check(
+    functions: dict[str, str],
+    function_name: str,
+    seen: set[str] | None = None,
+) -> bool:
+    """Resolve branch assertion plus nested HEAD/status verification."""
+    seen = set() if seen is None else seen
+    if function_name in seen:
+        return False
+    seen.add(function_name)
+
+    body = functions[function_name]
+    if _has_branch_assertion(body) and _function_has_revision_contract(
+        functions,
+        function_name,
+    ):
+        return True
+
+    for verifier_name in functions:
+        if verifier_name in seen or verifier_name not in body:
+            continue
+        if not re.search(rf"\b{re.escape(verifier_name)}\b[^\n]*\$revision\b", body):
+            continue
+        if _function_has_post_finalize_branch_check(
+            functions,
+            verifier_name,
+            seen.copy(),
+        ):
+            return True
+    return False
+
+
+def _function_or_called_verifier_has(
+    functions: dict[str, str],
+    function_name: str,
+    predicate: Callable[[str], bool],
+) -> bool:
+    """Allow direct checks or one small, explicitly called verifier helper."""
+    return _function_or_called_verifier_has_recursive(functions, function_name, predicate, set())
+
+
+def _function_or_called_verifier_has_recursive(
+    functions: dict[str, str],
+    function_name: str,
+    predicate: Callable[[str], bool],
+    seen: set[str],
+) -> bool:
+    if function_name in seen:
+        return False
+    seen.add(function_name)
+
+    body = functions[function_name]
+    if predicate(body):
+        return True
+
+    for verifier_name, verifier_body in functions.items():
+        if verifier_name in seen or verifier_name not in body:
+            continue
+        if predicate(verifier_body) and re.search(
+            rf"\b{re.escape(verifier_name)}\b[^\n]*\$revision\b",
+            body,
+        ):
+            return True
+        if re.search(rf"\b{re.escape(verifier_name)}\b[^\n]*\$revision\b", body) and _function_or_called_verifier_has_recursive(
+            functions,
+            verifier_name,
+            predicate,
+            seen.copy(),
+        ):
+            return True
+    return False
+
+
+def _uses_deploy_user_boundary(functions: dict[str, str], body: str) -> bool:
+    if re.search(r"(?:runuser|sudo)\b[^\n]*\$DEPLOY_USER", body):
+        return True
+    return any(
+        verifier_name in body
+        and re.search(r"(?:runuser|sudo)\b[^\n]*\$DEPLOY_USER", verifier_body)
+        for verifier_name, verifier_body in functions.items()
+    )
+
+
+def _has_permission_check(
+    functions: dict[str, str],
+    body: str,
+    permission: str,
+) -> bool:
+    if re.search(rf"(?:\btest\b|\[\[[^\n]*)[^\n]*{re.escape(permission)}", body):
+        return True
+    return any(
+        verifier_name in body
+        and re.search(
+            rf"(?:\btest\b|\[\[[^\n]*)[^\n]*{re.escape(permission)}",
+            verifier_body,
+        )
+        for verifier_name, verifier_body in functions.items()
+    )
+
+
+def test_detached_checkout_fails_closed_on_revision_or_tracked_tree_mismatch() -> None:
+    """A successful Git checkout is not enough to start a production build."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    functions = _shell_function_bodies(script)
+
+    assert "checkout_revision" in functions
+    assert _function_or_called_verifier_has(
+        functions,
+        "checkout_revision",
+        _function_has_post_checkout_revision_check,
+    ), (
+        "checkout_revision must verify exact HEAD and a clean tracked "
+        "worktree/index after checkout"
+    )
+
+
+def test_finalized_branch_is_verified_before_success_is_reported() -> None:
+    """The success message must be unreachable after an incomplete finalize."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    functions = _shell_function_bodies(script)
+
+    assert "finalize_branch_revision" in functions
+    assert _function_has_post_finalize_branch_check(
+        functions,
+        "finalize_branch_revision",
+    ), (
+        "finalize_branch_revision must verify branch, exact HEAD, and a clean "
+        "tracked worktree/index before deploy-zb reports success"
+    )
+
+    success_message = re.search(
+        r'''(?m)^printf ['"]deploy-zb: deployed %s successfully\\n['"] "\$EXPECTED_SHA"$''',
+        script,
+    )
+    assert success_message, "deploy-zb must retain an explicit success message"
+    finalize_invocation = re.search(
+        r"(?m)^(?!\s*finalize_branch_revision\s*\(\))"
+        r"(?=[^\n]*\bfinalize_branch_revision\b)[^\n]*$",
+        script,
+    )
+    assert finalize_invocation, "deploy-zb must invoke finalization before success"
+    assert finalize_invocation.start() < success_message.start()
+
+
+def _checkout_harness(
+    script: str,
+    *,
+    run_git_body: str,
+    function_call: str,
+) -> str:
+    definitions = "\n\n".join(
+        _shell_function_definition(script, function_name)
+        for function_name in (
+            "verify_repository_status_clean",
+            "verify_revision_clean",
+            "verify_branch_revision_clean",
+            "checkout_revision",
+            "finalize_branch_revision",
+        )
+    )
+    return (
+        "set -u\n"
+        'DEPLOY_BRANCH="codex/vps-migration"\n'
+        f"{definitions}\n\n"
+        f"run_git() {{\n{run_git_body}\n}}\n\n"
+        f"if {function_call}; then\n"
+        "  printf 'RESULT=success\\n'\n"
+        "else\n"
+        "  printf 'RESULT=failure\\n'\n"
+        "fi\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("scenario", "run_git_body"),
+    (
+        (
+            "checkout-command-failure",
+            """
+  if [[ "$1" == checkout ]]; then return 1; fi
+  if [[ "$1" == rev-parse ]]; then printf 'old-sha\\n'; return 0; fi
+  if [[ "$1" == status ]]; then return 0; fi
+  return 0
+""",
+        ),
+        (
+            "sha-mismatch",
+            """
+  if [[ "$1" == checkout ]]; then return 0; fi
+  if [[ "$1" == rev-parse ]]; then printf 'old-sha\\n'; return 0; fi
+  if [[ "$1" == status ]]; then return 0; fi
+  return 0
+""",
+        ),
+        (
+            "status-command-failure-with-empty-output",
+            """
+  if [[ "$1" == checkout ]]; then return 0; fi
+  if [[ "$1" == rev-parse ]]; then printf 'requested-sha\\n'; return 0; fi
+  if [[ "$1" == status ]]; then return 1; fi
+  return 0
+""",
+        ),
+    ),
+)
+def test_checkout_revision_rejects_masked_git_failures(
+    scenario: str,
+    run_git_body: str,
+) -> None:
+    """The real function must not turn a failed Git command into success."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    result = _run_bash(
+        _checkout_harness(
+            script,
+            run_git_body=run_git_body,
+            function_call='checkout_revision "requested-sha"',
+        )
+    )
+
+    assert "RESULT=failure" in result.stdout, (
+        f"{scenario} was masked by checkout_revision:\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
+def test_repository_status_preflight_rejects_status_command_failure() -> None:
+    """A failed status command cannot be accepted as an empty worktree."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    function = _shell_function_definition(script, "verify_repository_status_clean")
+    result = _run_bash(
+        "set -u\n"
+        f"{function}\n\n"
+        "run_git() { return 1; }\n\n"
+        'if verify_repository_status_clean all; then\n'
+        "  printf 'RESULT=success\\n'\n"
+        "else\n"
+        "  printf 'RESULT=failure\\n'\n"
+        "fi\n"
+    )
+
+    assert "RESULT=failure" in result.stdout, (
+        "repository status failure was accepted as a clean preflight:\n"
+        f"stdout={result.stdout!r}\\nstderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.parametrize("failure_command", ("branch", "checkout", "symbolic-ref"))
+def test_finalize_revision_rejects_masked_git_failures(failure_command: str) -> None:
+    """Every branch, checkout, and branch-read failure must abort finalization."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    result = _run_bash(
+        _checkout_harness(
+            script,
+            run_git_body=f"""
+  if [[ "$1" == {failure_command} ]]; then return 1; fi
+  if [[ "$1" == symbolic-ref ]]; then printf 'codex/vps-migration\\n'; return 0; fi
+  if [[ "$1" == rev-parse ]]; then printf 'requested-sha\\n'; return 0; fi
+  if [[ "$1" == status ]]; then return 0; fi
+  return 0
+""",
+            function_call='finalize_branch_revision "requested-sha"',
+        )
+    )
+
+    assert "RESULT=failure" in result.stdout, (
+        f"{failure_command} failure was masked by finalize_branch_revision:\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
+def _tracked_directory_preflight_harness(
+    script: str,
+    *,
+    run_git_body: str,
+    boundary_body: str,
+) -> str:
+    preflight = _shell_function_definition(script, "verify_tracked_directories_writable")
+    die = _shell_function_definition(script, "die")
+
+    # Git Bash does not provide the production /usr/sbin/runuser path. Keep
+    # the real function body and adapt only that privilege boundary so the
+    # producer-failure behavior is deterministic on both Windows and POSIX.
+    if "run_as_deploy_user" not in preflight:
+        preflight = preflight.replace(
+            '/usr/sbin/runuser -u "$DEPLOY_USER" -- /usr/bin/test -w "$directory"',
+            'run_as_deploy_user /usr/bin/test -w "$directory"',
+        )
+
+    return (
+        "set -u\n"
+        'DEPLOY_USER="ubuntu"\n'
+        'REPOSITORY_DIR="$PWD"\n'
+        f"{die}\n\n{preflight}\n\n"
+        f"run_as_deploy_user() {{\n{boundary_body}\n}}\n"
+        f"run_git() {{\n{run_git_body}\n}}\n"
+        "set +e\n"
+        "verify_tracked_directories_writable\n"
+        "status=$?\n"
+        "printf 'STATUS=%s\\n' \"$status\"\n"
+    )
+
+
+def test_tracked_directory_preflight_rejects_ls_files_producer_failure() -> None:
+    """A failed NUL-safe tracked-path producer cannot look like an empty tree."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    harness = _tracked_directory_preflight_harness(
+        script,
+        run_git_body="return 1",
+        boundary_body='"$@"',
+    )
+    result = _run_bash(harness)
+
+    assert result.returncode != 0 or "STATUS=0" not in result.stdout, (
+        "ls-files producer failure was treated as an empty tracked tree:\n"
+        f"returncode={result.returncode}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
+def test_tracked_directory_preflight_requires_write_and_search_permissions() -> None:
+    """A writable-but-unsearchable tracked parent must stop the deployment."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    result = _run_bash(
+        _tracked_directory_preflight_harness(
+            script,
+            run_git_body="""
+  if [[ "$1" == ls-files ]]; then printf 'dir/file\\0'; return 0; fi
+  return 0
+""",
+            boundary_body="""
+  for argument in "$@"; do
+    if [[ "$argument" == -x ]]; then return 1; fi
+  done
+  return 0
+""",
+        )
+    )
+
+    assert result.returncode != 0 or "STATUS=0" not in result.stdout, (
+        "preflight accepted a directory for which -w succeeded but -x failed:\n"
+        f"returncode={result.returncode}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
+def test_tracked_directory_preflight_preserves_newline_in_parent_path() -> None:
+    """A newline in a tracked directory name must reach the permission check intact."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    result = _run_bash(
+        _tracked_directory_preflight_harness(
+            script,
+            run_git_body="""
+  if [[ "$1" == ls-files ]]; then printf 'dir\\n/file\\0'; return 0; fi
+  return 0
+""",
+            boundary_body="""
+  local expected_newline_directory
+  expected_newline_directory="$REPOSITORY_DIR/dir"$'\\n'
+  for argument in "$@"; do
+    if [[ "$argument" == "$REPOSITORY_DIR" || "$argument" == "$expected_newline_directory" ]]; then
+      return 0
+    fi
+  done
+  return 1
+""",
+        )
+    )
+
+    assert result.returncode == 0 and "STATUS=0" in result.stdout, (
+        "tracked parent path was not passed byte-for-byte to the permission boundary:\n"
+        f"returncode={result.returncode}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
+def test_deploy_checks_repository_directory_writability_before_receiving_bundle() -> None:
+    """A root-owned worktree must fail before Git can leave a mixed checkout."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    functions = _shell_function_bodies(script)
+
+    writable_preflights = {
+        name: body
+        for name, body in functions.items()
+        if re.search(r"\brun_git\s+ls-files\s+-z\b", body)
+        and re.search(r"\b(?:read\s+-r[^\n]*-d\s+(?:''|\\?0)|xargs[^\n]*-0|mapfile[^\n]*-d)", body)
+        and re.search(r"\bdirname\b|%%/?\*|\$\{tracked_path%/\*\}", body)
+        and _uses_deploy_user_boundary(functions, body)
+        and _has_permission_check(functions, body, "-w")
+        and _has_permission_check(functions, body, "-x")
+        and re.search(r"\b(?:die|return\s+1|exit\s+1)\b", body)
+    }
+    assert writable_preflights, (
+        "deploy-zb must derive parent directories from NUL-safe tracked paths "
+        "and test writability as DEPLOY_USER, failing closed"
+    )
+
+    preflight_name = next(iter(writable_preflights))
+    preflight_call = re.search(
+        rf"(?m)^(?!\s*{re.escape(preflight_name)}\s*\(\))"
+        rf"(?=[^\n]*\b{re.escape(preflight_name)}\b)[^\n]*$",
+        script,
+    )
+    assert preflight_call, "the directory writability preflight must be invoked"
+
+    branch_check = script.find("current_branch=")
+    clean_check = script.find("verify_repository_status_clean all")
+    bundle_install = script.find('install -d -m 0700 -o "$DEPLOY_USER"')
+    bundle_creation = script.find('mktemp "$BUNDLE_DIR')
+    bundle_unbundle = script.find("bundle unbundle")
+    checkout_call = script.find('if ! checkout_revision "$EXPECTED_SHA"')
+
+    assert -1 not in (
+        branch_check,
+        clean_check,
+        bundle_install,
+        bundle_creation,
+        bundle_unbundle,
+        checkout_call,
+    )
+    assert clean_check < preflight_call.start() < bundle_install
+    assert preflight_call.start() < bundle_creation
+    assert preflight_call.start() < bundle_unbundle
+    assert preflight_call.start() < checkout_call
 
 
 def _create_selected_commit_bundle(repository: Path, bundle_path: Path, commit_sha: str) -> None:
