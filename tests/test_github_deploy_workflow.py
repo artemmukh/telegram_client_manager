@@ -575,6 +575,27 @@ def test_tracked_directory_preflight_rejects_ls_files_producer_failure() -> None
     )
 
 
+def test_tracked_directory_preflight_accepts_a_fast_ls_files_producer() -> None:
+    """A completed producer must not invalidate the file descriptor before reading."""
+    script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+    result = _run_bash(
+        _tracked_directory_preflight_harness(
+            script,
+            run_git_body="""
+  if [[ "$1" == ls-files ]]; then printf 'dir/file\\0'; return 0; fi
+  return 0
+""",
+            boundary_body="return 0",
+        )
+    )
+
+    assert result.returncode == 0 and "STATUS=0" in result.stdout, (
+        "a successful fast ls-files producer did not complete the preflight:\n"
+        f"returncode={result.returncode}\n"
+        f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
 def test_tracked_directory_preflight_requires_write_and_search_permissions() -> None:
     """A writable-but-unsearchable tracked parent must stop the deployment."""
     script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")

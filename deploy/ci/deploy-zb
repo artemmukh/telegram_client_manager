@@ -35,13 +35,16 @@ run_as_deploy_user() {
 verify_tracked_directories_writable() {
   local tracked_path
   local directory
-  local tracked_files_pid
+  local tracked_paths_file
   local -A tracked_directories=()
 
   tracked_directories["$REPOSITORY_DIR"]=1
-  coproc TRACKED_FILES { run_git ls-files -z; }
-  tracked_files_pid="$TRACKED_FILES_PID"
-  while IFS= read -r -d '' tracked_path <&"${TRACKED_FILES[0]}"; do
+  tracked_paths_file="$(/usr/bin/mktemp)" || return 1
+  if ! run_git ls-files -z > "$tracked_paths_file"; then
+    /usr/bin/rm -f -- "$tracked_paths_file"
+    return 1
+  fi
+  while IFS= read -r -d '' tracked_path; do
     directory="${tracked_path%/*}"
     while [[ "$directory" != "$tracked_path" && "$directory" != '.' ]]; do
       tracked_directories["$REPOSITORY_DIR/$directory"]=1
@@ -51,8 +54,8 @@ verify_tracked_directories_writable() {
         directory='.'
       fi
     done
-  done
-  wait "$tracked_files_pid" || return 1
+  done < "$tracked_paths_file"
+  /usr/bin/rm -f -- "$tracked_paths_file" || return 1
 
   for directory in "${!tracked_directories[@]}"; do
     if ! run_as_deploy_user /usr/bin/test -w "$directory"; then
