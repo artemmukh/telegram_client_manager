@@ -14,8 +14,10 @@ from pathlib import Path, PurePosixPath
 from uuid import UUID, uuid4
 
 from deploy.oci_backup_orchestration import (
+    GoogleDriveBackupConfig,
     OciBackupConfig,
     OciBackupError,
+    SubprocessGoogleDriveUploader,
     SubprocessOciUploader,
     create_verified_bundle,
     make_backup_object_name,
@@ -41,10 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _run_backup(arguments.data_root)
     except (OciBackupError, SnapshotExportError, OSError):
-        print("OCI backup failed", file=sys.stderr)
+        print("Backup failed", file=sys.stderr)
         return 1
     except Exception:  # noqa: BLE001 - CLI errors must never disclose local data paths
-        print("OCI backup failed", file=sys.stderr)
+        print("Backup failed", file=sys.stderr)
         return 1
     return 0
 
@@ -65,6 +67,7 @@ def _run_backup(
             backup_id if backup_id is not None else uuid4(),
         ),
     )
+    google_drive_config = _optional_google_drive_config()
     work_dir = _create_work_dir(source_paths.data_root)
     snapshot_dir = work_dir / "snapshot"
     request = SnapshotRequest(
@@ -80,6 +83,7 @@ def _run_backup(
         output_dir=work_dir / "outer",
         object_name=config.object_name,
     )
+    bundle_sha256 = sha256(bundle_path)
     try:
         asyncio.run(
             SubprocessOciUploader().upload(
@@ -88,7 +92,7 @@ def _run_backup(
                 region=config.region,
                 bucket=config.bucket,
                 object_name=config.object_name,
-                sha256=sha256(bundle_path),
+                sha256=bundle_sha256,
                 auth="instance_principal",
                 no_overwrite=True,
                 verify_checksum=True,
@@ -96,6 +100,17 @@ def _run_backup(
         )
     except Exception as error:
         raise OciBackupError("OCI upload failed") from error
+    if google_drive_config is not None:
+        try:
+            asyncio.run(
+                SubprocessGoogleDriveUploader().upload(
+                    path=bundle_path,
+                    config=google_drive_config,
+                    sha256=bundle_sha256,
+                )
+            )
+        except Exception as error:
+            raise OciBackupError("Google Drive mirror failed") from error
     _remove_successful_work_dir(work_dir, source_paths.data_root)
 
 
@@ -168,6 +183,19 @@ def _required_environment(name: str) -> str:
     if not value.strip():
         raise OciBackupError("OCI backup configuration is invalid")
     return value
+
+
+def _optional_google_drive_config() -> GoogleDriveBackupConfig | None:
+    enabled = os.environ.get("GOOGLE_DRIVE_BACKUP_ENABLED", "").strip().casefold()
+    if enabled in {"", "0", "false"}:
+        return None
+    if enabled not in {"1", "true"}:
+        raise OciBackupError("Google Drive mirror configuration is invalid")
+    remote = os.environ.get("GOOGLE_DRIVE_RCLONE_REMOTE", "")
+    config_path = os.environ.get("GOOGLE_DRIVE_RCLONE_CONFIG", "")
+    if not remote.strip() or not config_path.strip():
+        raise OciBackupError("Google Drive mirror configuration is invalid")
+    return GoogleDriveBackupConfig(remote=remote, config_path=Path(config_path))
 
 
 def _create_work_dir(data_root: Path) -> Path:

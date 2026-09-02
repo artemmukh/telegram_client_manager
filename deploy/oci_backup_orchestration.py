@@ -20,6 +20,7 @@ from deploy.snapshot_verifier import SnapshotVerificationError, verify_snapshot
 
 _BUNDLE_ARTIFACTS = (*MANIFEST_ARTIFACTS, "SHA256SUMS", "COMPLETE")
 _SHA256_PATTERN = re.compile(r"[0-9a-fA-F]{64}")
+_RCLONE_REMOTE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 class OciBackupError(RuntimeError):
@@ -32,6 +33,14 @@ class OciBackupConfig:
     region: str
     bucket: str
     object_name: str
+
+
+@dataclass(frozen=True)
+class GoogleDriveBackupConfig:
+    """Restricted rclone destination for the additional Drive mirror."""
+
+    remote: str
+    config_path: Path
 
 
 @dataclass(frozen=True)
@@ -137,6 +146,68 @@ class SubprocessOciUploader:
         return UploadReport(etag=etag)
 
 
+class SubprocessGoogleDriveUploader:
+    """Mirror an already-verified archive through an isolated rclone remote."""
+
+    def __init__(
+        self,
+        *,
+        runner: SubprocessRunner = subprocess.run,
+        timeout_seconds: int = 600,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise OciBackupError("Google Drive mirror timeout is invalid")
+        self._runner = runner
+        self._timeout_seconds = timeout_seconds
+
+    async def upload(
+        self,
+        *,
+        path: Path,
+        config: GoogleDriveBackupConfig,
+        sha256: str,
+    ) -> None:
+        _validate_google_drive_upload_request(path=path, config=config, sha256_digest=sha256)
+        try:
+            current_sha256 = calculate_sha256(path)
+        except OSError as error:
+            raise OciBackupError("Google Drive mirror payload is invalid") from error
+        if current_sha256.casefold() != sha256.casefold():
+            raise OciBackupError("Google Drive mirror checksum is invalid")
+
+        destination = f"{config.remote}:{path.name}"
+        args = [
+            "rclone",
+            "copyto",
+            str(path),
+            destination,
+            "--config",
+            str(config.config_path),
+            "--checksum",
+            "--immutable",
+            "--retries",
+            "1",
+            "--low-level-retries",
+            "1",
+        ]
+        try:
+            result = await asyncio.to_thread(
+                self._runner,
+                args,
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise OciBackupError("Google Drive mirror timed out") from error
+        except Exception as error:
+            raise OciBackupError("Google Drive mirror failed") from error
+        if getattr(result, "returncode", None) != 0:
+            raise OciBackupError("Google Drive mirror failed")
+
+
 def make_backup_object_name(when: datetime, backup_id: UUID) -> str:
     """Return the portable, date-partitioned key for one immutable backup."""
     utc_when = when.astimezone(UTC)
@@ -211,6 +282,26 @@ def _validate_upload_request(
         raise OciBackupError("OCI upload payload is invalid")
     if not _SHA256_PATTERN.fullmatch(sha256_digest):
         raise OciBackupError("OCI upload checksum is invalid")
+
+
+def _validate_google_drive_upload_request(
+    *,
+    path: Path,
+    config: GoogleDriveBackupConfig,
+    sha256_digest: str,
+) -> None:
+    if path.is_symlink() or not path.is_file() or not path.name:
+        raise OciBackupError("Google Drive mirror payload is invalid")
+    if not _RCLONE_REMOTE_PATTERN.fullmatch(config.remote):
+        raise OciBackupError("Google Drive mirror configuration is invalid")
+    if (
+        not config.config_path.is_absolute()
+        or config.config_path.is_symlink()
+        or not config.config_path.is_file()
+    ):
+        raise OciBackupError("Google Drive mirror configuration is invalid")
+    if not _SHA256_PATTERN.fullmatch(sha256_digest):
+        raise OciBackupError("Google Drive mirror checksum is invalid")
 
 
 def _validate_nonempty(label: str, value: str) -> None:
