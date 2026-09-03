@@ -1,8 +1,8 @@
 ﻿import asyncio
 import logging
+from dataclasses import dataclass
 
 from bot.keyboards.admin.name_change_kb import name_change_approval_kb
-from bot.keyboards.common.profile_kb import personal_data_broadcast_kb
 from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.escape_html import escape_html
@@ -41,26 +41,27 @@ _NAME_CHANGE_REQUEST_TEXT = {
 }
 
 
-_PERSONAL_DATA_REQUEST_TEXT = {
-"ru": (
-        "👋 Пожалуйста, заполните дату рождения и пол — это поможет нам вести ваш профиль точнее.\n\n"
-        "Нажмите кнопку ниже, чтобы указать данные.\n\n"
-        "Если кнопка не срабатывает, вы всегда можете сделать это через:\n"
-        "Профиль → Изменить личные данные → Добавить дату рождения и пол"
-    ),
-    "uz": (
-        "👋 Iltimos, tug'ilgan sanangiz va jinsingizni kiriting — bu profilingizni aniqroq yuritishimizga yordam beradi.\n\n"
-        "Ma'lumotlarni kiritish uchun quyidagi tugmani bosing.\n\n"
-        "Agar tugma ishlamasa, buni har doim quyidagi orqali qilishingiz mumkin:\n"
-        "Profil → Shaxsiy ma'lumotlarni o'zgartirish → Tug'ilgan sana va jinsni qo'shish"
-    ),
-}
+APPROVED_BROADCAST_TEXT = (
+    "Уважаемые клиенты! 👋\n\n"
+    "Хорошие новости: отпуск и ремонтные работы завершены.\n"
+    "Уже с субботы, 5 сентября, мы снова работаем и готовы принимать пациентов.\n\n"
+    "Для записи напишите нам в бот! 📲"
+)
+
+
+@dataclass(frozen=True)
+class BroadcastSummary:
+    sent: int = 0
+    failed: int = 0
+    skipped: int = 0
 
 
 class ClientNotificationService:
     def __init__(self, notifier: TelegramNotifier, user_repository: UserRepository) -> None:
         self.notifier = notifier
         self.user_repository = user_repository
+        self._broadcast_lock = asyncio.Lock()
+        self._broadcast_task: asyncio.Task[BroadcastSummary] | None = None
 
     async def notify_admins_name_changed_on_registration(
         self, clinic_id: int, stored_name: str, new_name: str, client_phone: str
@@ -119,37 +120,60 @@ class ClientNotificationService:
                     f"Failed to notify admin {admin.telegram_user_id} about name change request: {e}"
                 )
 
-    async def broadcast_personal_data_request(self) -> None:
-        """Best-effort broadcast asking clients missing birth date/gender to fill
-        them in. Never raises: a failed delivery to one client must not block
-        delivery to the others."""
-        # text = (
-        #     "⚠️ Уважаемые пользователи!\n\n"
-        #     "Бот был недоступен некоторое время. Приносим извинения за неудобства."
-        #     "\nПроблемы на серверной стороне провайдера. "
-        #     "Бот сейчас работает в штатном режиме."
-        # )
-
-        # clients = await self.user_repository.get_clients_missing_personal_data()
-        clients = await  self.user_repository.get_all_clients() #!!!!!!!!
+    async def broadcast_clients(self, text: str) -> BroadcastSummary:
+        """Best-effort one-time delivery to every client with Telegram access."""
+        clients = await self.user_repository.get_all_clients()
+        message_text = text if text == APPROVED_BROADCAST_TEXT else escape_html(text)
+        summary = BroadcastSummary()
 
         for client in clients:
             if client.telegram_user_id is None:
+                summary = BroadcastSummary(
+                    sent=summary.sent,
+                    failed=summary.failed,
+                    skipped=summary.skipped + 1,
+                )
                 continue
 
-            message_text = _PERSONAL_DATA_REQUEST_TEXT.get(client.language, _PERSONAL_DATA_REQUEST_TEXT["ru"])
-            reply_markup = personal_data_broadcast_kb(lang=client.language)
-
             try:
-                await self.notifier.send_message(chat_id=client.telegram_user_id, text=text)
-                # await self.notifier.send_message(
-                #     chat_id=client.telegram_user_id,
-                #     text=message_text,
-                #     reply_markup=None,
-                # )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to send personal-data request to client {client.telegram_user_id}: {e}"
+                await self.notifier.send_message(
+                    chat_id=client.telegram_user_id,
+                    text=message_text,
+                    reply_markup=None,
+                )
+            except Exception:
+                logger.warning("Failed to send one-time broadcast to a client", exc_info=True)
+                summary = BroadcastSummary(
+                    sent=summary.sent,
+                    failed=summary.failed + 1,
+                    skipped=summary.skipped,
+                )
+            else:
+                summary = BroadcastSummary(
+                    sent=summary.sent + 1,
+                    failed=summary.failed,
+                    skipped=summary.skipped,
                 )
 
             await asyncio.sleep(0.05)
+
+        return summary
+
+    async def start_broadcast(self, text: str) -> asyncio.Task[BroadcastSummary] | None:
+        """Start one client broadcast unless another batch is still running."""
+        async with self._broadcast_lock:
+            if self._broadcast_task is not None and not self._broadcast_task.done():
+                return None
+
+            task = asyncio.create_task(self._run_broadcast(text))
+            self._broadcast_task = task
+            return task
+
+    async def _run_broadcast(self, text: str) -> BroadcastSummary:
+        try:
+            return await self.broadcast_clients(text)
+        finally:
+            current_task = asyncio.current_task()
+            async with self._broadcast_lock:
+                if self._broadcast_task is current_task:
+                    self._broadcast_task = None

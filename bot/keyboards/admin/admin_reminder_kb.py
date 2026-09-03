@@ -25,7 +25,12 @@ def _active_preset(reminder_24h: bool, reminder_2h: bool) -> str:
     return "off"
 
 
-def admin_reminder_settings_kb(reminder_24h: bool, reminder_2h: bool, lang: str = "ru") -> InlineKeyboardMarkup:
+def admin_reminder_settings_kb(
+    reminder_24h: bool,
+    reminder_2h: bool,
+    lang: str = "ru",
+    show_broadcast: bool = False,
+) -> InlineKeyboardMarkup:
     active_preset = _active_preset(reminder_24h, reminder_2h)
     preset_labels = ADMIN_REMINDER_PRESET_LABELS.get(lang, ADMIN_REMINDER_PRESET_LABELS["ru"])
 
@@ -36,6 +41,9 @@ def admin_reminder_settings_kb(reminder_24h: bool, reminder_2h: bool, lang: str 
             text=text,
             callback_data=AdminReminderPresetCB(preset=preset).pack(),
         )
+
+    if show_broadcast:
+        builder.button(text="📣 Разослать сообщение", callback_data="profile_broadcast_settings")
 
     builder.adjust(1)
     return builder.as_markup()
