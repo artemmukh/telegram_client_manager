@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from aiogram.types import InlineKeyboardMarkup
 
@@ -24,9 +26,22 @@ class FakeTelegramNotifier:
         return 1
 
 
+class BlockingTelegramNotifier(FakeTelegramNotifier):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None):
+        self.started.set()
+        await self.release.wait()
+        return await super().send_message(chat_id, text, reply_markup, reply_to_message_id)
+
+
 class FakeUserRepo:
-    def __init__(self, staff, clients_missing_personal_data=None, notification_staff=None):
+    def __init__(self, staff, clients=None, clients_missing_personal_data=None, notification_staff=None):
         self.staff = staff
+        self.clients = clients if clients is not None else (clients_missing_personal_data or [])
         self.clients_missing_personal_data = clients_missing_personal_data or []
         self.notification_staff = staff if notification_staff is None else notification_staff
 
@@ -38,6 +53,9 @@ class FakeUserRepo:
 
     async def get_clients_missing_personal_data(self):
         return self.clients_missing_personal_data
+
+    async def get_all_clients(self):
+        return self.clients
 
 
 def _admin(telegram_user_id, ID):
@@ -170,22 +188,33 @@ async def test_notify_admins_name_change_request_escapes_html_special_characters
 
 
 @pytest.mark.asyncio
-async def test_broadcast_personal_data_request_sends_to_every_client_with_telegram_id():
+async def test_broadcast_clients_sends_raw_approved_text_to_every_client_with_telegram_id():
     clients = [
         _client(telegram_user_id=100, ID=1),
         _client(telegram_user_id=200, ID=2),
     ]
     notifier = FakeTelegramNotifier()
-    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    repo = FakeUserRepo(staff=[], clients=clients)
     service = ClientNotificationService(notifier, repo)
+    text = (
+        "Уважаемые клиенты! 👋\n\n"
+        "Хорошие новости: отпуск и ремонтные работы завершены.\n"
+        "Уже с субботы, 5 сентября, мы снова работаем и готовы принимать пациентов.\n\n"
+        "Для записи напишите нам в бот! 📲"
+    )
 
-    await service.broadcast_personal_data_request()
+    summary = await service.broadcast_clients(text)
 
     assert {message['chat_id'] for message in notifier.sent_messages} == {100, 200}
+    assert [message['text'] for message in notifier.sent_messages] == [text, text]
+    assert all(message['reply_markup'] is None for message in notifier.sent_messages)
+    assert summary.sent == 2
+    assert summary.failed == 0
+    assert summary.skipped == 0
 
 
 @pytest.mark.asyncio
-async def test_broadcast_personal_data_request_skips_client_without_telegram_id():
+async def test_broadcast_clients_skips_client_without_telegram_id_and_reports_it():
     """Defensive check: even though the repository query already filters out
     telegram_user_id IS NULL rows, the service must not crash or send if the
     repository ever returns one anyway."""
@@ -194,41 +223,72 @@ async def test_broadcast_personal_data_request_skips_client_without_telegram_id(
         _client(telegram_user_id=200, ID=2),
     ]
     notifier = FakeTelegramNotifier()
-    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    repo = FakeUserRepo(staff=[], clients=clients)
     service = ClientNotificationService(notifier, repo)
 
-    await service.broadcast_personal_data_request()
+    summary = await service.broadcast_clients("message")
 
     assert len(notifier.sent_messages) == 1
     assert notifier.sent_messages[0]['chat_id'] == 200
+    assert summary.sent == 1
+    assert summary.failed == 0
+    assert summary.skipped == 1
 
 
 @pytest.mark.asyncio
-async def test_broadcast_personal_data_request_continues_past_per_recipient_failure():
+async def test_broadcast_clients_continues_past_per_recipient_failure_and_reports_it():
     clients = [
         _client(telegram_user_id=100, ID=1),
         _client(telegram_user_id=200, ID=2),
         _client(telegram_user_id=300, ID=3),
     ]
     notifier = FakeTelegramNotifier(fail_for={200})
-    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    repo = FakeUserRepo(staff=[], clients=clients)
     service = ClientNotificationService(notifier, repo)
 
-    await service.broadcast_personal_data_request()
+    summary = await service.broadcast_clients("message")
 
     assert {message['chat_id'] for message in notifier.sent_messages} == {100, 300}
+    assert summary.sent == 2
+    assert summary.failed == 1
+    assert summary.skipped == 0
 
 
 @pytest.mark.asyncio
-async def test_broadcast_personal_data_request_sends_exact_reply_markup_and_fallback_text():
+async def test_broadcast_clients_escapes_customized_text_before_html_delivery():
     clients = [_client(telegram_user_id=100, ID=1)]
     notifier = FakeTelegramNotifier()
-    repo = FakeUserRepo(staff=[], clients_missing_personal_data=clients)
+    repo = FakeUserRepo(staff=[], clients=clients)
     service = ClientNotificationService(notifier, repo)
 
-    await service.broadcast_personal_data_request()
+    await service.broadcast_clients("Проверка <b>тега</b> & символа")
 
-    assert len(notifier.sent_messages) == 1
-    sent = notifier.sent_messages[0]
-    assert isinstance(sent['reply_markup'], InlineKeyboardMarkup)
-    assert "Профиль → Изменить личные данные → Добавить дату рождения и пол" in sent['text']
+    assert notifier.sent_messages[0]["text"] == "Проверка &lt;b&gt;тега&lt;/b&gt; &amp; символа"
+    assert notifier.sent_messages[0]["reply_markup"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_broadcast_atomically_accepts_only_one_concurrent_batch():
+    """The busy/atomic-start boundary belongs to the service, not a router
+    closure: independent admin FSM contexts must not be able to launch two
+    batches at the same time.  The accepted call returns its task; a busy call
+    returns None."""
+    notifier = BlockingTelegramNotifier()
+    repo = FakeUserRepo(staff=[], clients=[_client(telegram_user_id=100, ID=1)])
+    service = ClientNotificationService(notifier, repo)
+
+    first_task, second_task = await asyncio.gather(
+        service.start_broadcast("message"),
+        service.start_broadcast("message"),
+    )
+
+    accepted_task = first_task or second_task
+    rejected_task = second_task if first_task is not None else first_task
+    assert accepted_task is not None
+    assert rejected_task is None
+
+    await asyncio.wait_for(notifier.started.wait(), timeout=1)
+    notifier.release.set()
+    await accepted_task
+
+    assert [message["chat_id"] for message in notifier.sent_messages] == [100]

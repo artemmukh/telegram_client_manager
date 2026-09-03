@@ -1,6 +1,5 @@
 ﻿from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-
 _REMINDER_SETTINGS_LABEL = {
     "ru": "🔔 Настройки уведомлений",
     "uz": "🔔 Bildirishnoma sozlamalari",
@@ -31,12 +30,6 @@ _BACK_LABEL = {
     "uz": "⬅️ Orqaga",
 }
 
-_SPECIFY_BIRTH_DATE_LABEL = {
-    "ru": "🎂 Указать дату рождения и пол",
-    "uz": "🎂 Tug'ilgan sana va jinsni kiritish",
-}
-
-
 def profile_menu_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -65,13 +58,4 @@ def profile_personal_data_kb(lang: str = "ru") -> InlineKeyboardMarkup:
             callback_data="profile_add_birth_date",
         )],
         [InlineKeyboardButton(text=_BACK_LABEL.get(lang, _BACK_LABEL["ru"]), callback_data="profile_back")],
-    ])
-
-
-def personal_data_broadcast_kb(lang: str = "ru") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=_SPECIFY_BIRTH_DATE_LABEL.get(lang, _SPECIFY_BIRTH_DATE_LABEL["ru"]),
-            callback_data="profile_add_birth_date",
-        )],
     ])

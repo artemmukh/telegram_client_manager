@@ -163,7 +163,7 @@ async def main():
     #common handlers
     dp.include_router(create_start_router())
     dp.include_router(create_help_router())
-    dp.include_router(create_profile_router(client_management_service))
+    dp.include_router(create_profile_router(client_management_service, client_notification_service))
     dp.include_router(create_personal_data_router(client_management_service))
     dp.include_router(create_name_change_request_router(client_management_service, client_notification_service))
 
@@ -236,9 +236,6 @@ async def main():
 
     try:
         logger.info("Starting bot with appointment reminders enabled")
-        # dp["personal_data_broadcast_task"] = asyncio.create_task(
-        #     client_notification_service.broadcast_personal_data_request()
-        # )
         await prepare_polling(bot)
         await dp.start_polling(bot)
     finally:
