@@ -1,3 +1,4 @@
+import logging
 from collections import Counter
 from datetime import date, datetime, timedelta
 
@@ -20,6 +21,7 @@ from bot.exceptions.appointment_exceptions import (
     PendingRequestLimitExceededError,
     SlotUnavailableError,
 )
+from bot.exceptions.exceptions import BotException
 from bot.exceptions.user_exceptions import PhoneAlreadyExistsError, UserNotFoundError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
@@ -48,6 +50,7 @@ from bot.services.utils.date_parser import (
 )
 from bot.services.utils.slot_helpers import generate_available_slots
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.observability import log_event
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
 from bot.validators.validators import (
@@ -219,6 +222,8 @@ _COMPLETION_ALREADY_DECIDED_MESSAGE = {
     "uz": "Yozuv allaqachon ko'rib chiqilgan",
 }
 
+logger = logging.getLogger(__name__)
+
 
 class AppointmentManagement:
     def __init__(
@@ -334,6 +339,24 @@ class AppointmentManagement:
         return clinic.clinic_id, None
 
     async def create_self_booking(self, client_telegram_id: int, data: dict) -> Appointment:
+        log_event(logger, logging.DEBUG, "booking_create_started")
+        try:
+            appointment = await self._create_self_booking(client_telegram_id, data)
+        except BotException as error:
+            log_event(logger, logging.INFO, "booking_rejected", error_type=type(error).__name__)
+            raise
+
+        log_event(
+            logger,
+            logging.INFO,
+            "booking_created",
+            appointment_id=appointment.id,
+            clinic_id=appointment.clinic_id,
+            status=appointment.status.value,
+        )
+        return appointment
+
+    async def _create_self_booking(self, client_telegram_id: int, data: dict) -> Appointment:
         client = await self.user_repository.get_user_by_telegram_id(client_telegram_id)
         if client is None:
             raise UserNotFoundError(_CLIENT_NOT_FOUND_MESSAGE)

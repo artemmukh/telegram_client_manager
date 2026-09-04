@@ -9,8 +9,9 @@ used in test_appointment_invite_handler.py: build the router with mock
 collaborators, pull the decorated callback out of router.callback_query.handlers,
 and invoke it directly with mock aiogram objects.
 """
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from bot.handlers.client.appointment_booking import create_client_booking_router
 from bot.keyboards.client.booking_cb import ClientBookDayCB, ClientBookSlotCB
@@ -250,11 +251,12 @@ async def test_submit_booking_swallows_recipient_resolution_failure_and_skips_no
     router = _build_router(appointment_management_service, notification_service)
     submit_booking = _get_handler_by_name(router, "submit_booking")
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("INFO"):
         await submit_booking(_make_callback_query(), _make_state(), _current_user())
 
     notification_service.notify_staff_new_booking_request.assert_not_awaited()
-    assert "Failed to resolve notification recipients" in caplog.text
+    assert "event=booking_notification_recipients_failed" in caplog.text
+    assert "outcome=recipient_resolution_failed" in caplog.text
 
 
 @pytest.mark.asyncio

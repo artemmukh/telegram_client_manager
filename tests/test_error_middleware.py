@@ -87,12 +87,12 @@ async def test_bot_exception_answers_with_generic_message_and_logs_unexpected(ca
     event = _make_message()
     handler = _raising_handler(PaginationError("stale page"))
 
-    with caplog.at_level("ERROR", logger=LOGGER_NAME):
+    with caplog.at_level("INFO", logger=LOGGER_NAME):
         result = await _call_middleware(handler, event)
 
     assert result is None
     event.answer.assert_awaited_once_with("Произошла ошибка.")
-    assert "Unexpected" in caplog.text
+    assert "event=domain_error_handled" in caplog.text
     assert "Unhandled exception" not in caplog.text
 
 
@@ -140,7 +140,7 @@ async def test_generic_type_error_falls_back_to_unhandled_branch(caplog):
 
     assert result is None
     event.answer.assert_awaited_once_with("Произошла ошибка, мы уже разбираемся")
-    assert "Unhandled exception" in caplog.text
+    assert "event=unexpected_error" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ async def test_generic_key_error_also_falls_back_to_unhandled_branch(caplog):
 
     assert result is None
     event.answer.assert_awaited_once_with("Произошла ошибка, мы уже разбираемся")
-    assert "Unhandled exception" in caplog.text
+    assert "event=unexpected_error" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -169,8 +169,8 @@ async def test_answer_failure_on_unhandled_branch_is_swallowed_and_logged(caplog
 
     assert result is None
     event.answer.assert_awaited_once_with("Произошла ошибка, мы уже разбираемся")
-    assert "Unhandled exception" in caplog.text
-    assert "Failed to notify user about unhandled exception" in caplog.text
+    assert "event=unexpected_error" in caplog.text
+    assert "event=user_error_delivery_failed" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -183,7 +183,7 @@ async def test_callback_query_shaped_event_handles_unhandled_exception_same_as_m
 
     assert result is None
     event.answer.assert_awaited_once_with("Произошла ошибка, мы уже разбираемся")
-    assert "Unhandled exception" in caplog.text
+    assert "event=unexpected_error" in caplog.text
 
 
 @pytest.mark.asyncio

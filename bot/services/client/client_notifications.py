@@ -1,5 +1,7 @@
 ﻿import asyncio
 import logging
+import time
+import uuid
 from dataclasses import dataclass
 
 from bot.keyboards.admin.name_change_kb import name_change_approval_kb
@@ -7,6 +9,7 @@ from bot.models.user import User
 from bot.repositories.user_repository import UserRepository
 from bot.services.utils.escape_html import escape_html
 from bot.services.utils.telegram_notifier import TelegramNotifier
+from bot.utils.observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +89,13 @@ class ClientNotificationService:
                     chat_id=admin.telegram_user_id,
                     text=message_text,
                 )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to notify admin {admin.telegram_user_id} about name change on registration: {e}"
+            except Exception as error:  # noqa: BLE001 - one admin failure must not stop the fan-out
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "admin_notification_failed",
+                    clinic_id=clinic_id,
+                    error_type=type(error).__name__,
                 )
 
     async def notify_admins_name_change_request(
@@ -115,14 +122,27 @@ class ClientNotificationService:
                     text=message_text,
                     reply_markup=reply_markup,
                 )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to notify admin {admin.telegram_user_id} about name change request: {e}"
+            except Exception as error:  # noqa: BLE001 - one admin failure must not stop the fan-out
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "admin_notification_failed",
+                    clinic_id=user.clinic_id,
+                    error_type=type(error).__name__,
                 )
 
     async def broadcast_clients(self, text: str) -> BroadcastSummary:
         """Best-effort one-time delivery to every client with Telegram access."""
         clients = await self.user_repository.get_all_clients()
+        broadcast_id = uuid.uuid4().hex[:12]
+        started_at = time.perf_counter()
+        log_event(
+            logger,
+            logging.INFO,
+            "client_broadcast_started",
+            broadcast_id=broadcast_id,
+            recipient_count=len(clients),
+        )
         message_text = text if text == APPROVED_BROADCAST_TEXT else escape_html(text)
         summary = BroadcastSummary()
 
@@ -141,8 +161,14 @@ class ClientNotificationService:
                     text=message_text,
                     reply_markup=None,
                 )
-            except Exception:
-                logger.warning("Failed to send one-time broadcast to a client", exc_info=True)
+            except Exception as error:  # noqa: BLE001 - one failed recipient must not stop the batch
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "client_broadcast_delivery_failed",
+                    broadcast_id=broadcast_id,
+                    error_type=type(error).__name__,
+                )
                 summary = BroadcastSummary(
                     sent=summary.sent,
                     failed=summary.failed + 1,
@@ -157,6 +183,16 @@ class ClientNotificationService:
 
             await asyncio.sleep(0.05)
 
+        log_event(
+            logger,
+            logging.INFO,
+            "client_broadcast_completed",
+            broadcast_id=broadcast_id,
+            delivered_count=summary.sent,
+            failed_count=summary.failed,
+            skipped_count=summary.skipped,
+            duration_ms=round((time.perf_counter() - started_at) * 1000),
+        )
         return summary
 
     async def start_broadcast(self, text: str) -> asyncio.Task[BroadcastSummary] | None:

@@ -1,20 +1,20 @@
 import logging
 from datetime import date, datetime
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 import bot.messages.booking as msg
 from bot.exceptions.exceptions import BotException
 from bot.handlers.utils.appointment_slot_helpers import answer_no_slots_for_day
+from bot.keyboards.client.appointment_manage_kb import appointment_manage_empty_kb
 from bot.keyboards.client.booking_cb import (
     ClientBookDayCB,
     ClientBookDayPageCB,
     ClientBookDoctorCB,
     ClientBookSlotCB,
 )
-from bot.keyboards.client.appointment_manage_kb import appointment_manage_empty_kb
 from bot.keyboards.client.booking_kb import (
     booking_cancel_kb,
     booking_confirm_kb,
@@ -24,10 +24,13 @@ from bot.keyboards.client.booking_kb import (
 )
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
-from bot.services.appointment.appointment_notifications import AppointmentNotificationService
+from bot.services.appointment.appointment_notifications import (
+    AppointmentNotificationService,
+)
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.states.client.booking_states import ClientBookingStates
+from bot.utils.observability import log_event
 from bot.utils.role import RoleFilter
 from bot.validators.validators import validate_purpose
 
@@ -172,7 +175,7 @@ def create_client_booking_router(
     ) -> None:
         lang = current_user.language
         try:
-            datetime.strptime(callback_data.slot, "%H:%M")
+            datetime.strptime(callback_data.slot, "%H:%M")  # noqa: DTZ007 - validating a user-entered clock value
         except ValueError:
             await callback_query.answer(msg.invalid_time(lang), show_alert=True)
             return
@@ -217,6 +220,13 @@ def create_client_booking_router(
     @router.callback_query(ClientBookingStates.confirm, F.data == "client_book_submit")
     async def submit_booking(callback_query: CallbackQuery, state: FSMContext, current_user: User) -> None:
         data = await state.get_data()
+        log_event(
+            logger,
+            logging.INFO,
+            "booking_submit_requested",
+            clinic_id=current_user.clinic_id,
+            staff_id=data.get("staff_user_id"),
+        )
 
         try:
             appointment = await appointment_management_service.create_self_booking(
@@ -240,36 +250,83 @@ def create_client_booking_router(
         await callback_query.answer()
 
         if notification_service:
+            attempted_count = 0
+            delivered_count = 0
+            failed_count = 0
+            notification_outcome = "completed"
             try:
                 recipients = await appointment_management_service.resolve_notification_recipients(appointment)
-            except Exception:
-                logger.exception(f"Failed to resolve notification recipients for appointment {appointment.id}")
+            except Exception as error:  # noqa: BLE001 - notification fan-out is best effort
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "booking_notification_recipients_failed",
+                    appointment_id=appointment.id,
+                    error_type=type(error).__name__,
+                )
                 recipients = []
+                notification_outcome = "recipient_resolution_failed"
             for recipient in recipients:
+                attempted_count += 1
                 try:
                     admin_message_id = await notification_service.notify_staff_new_booking_request(
                         recipient.telegram_user_id,
                         appointment,
                         current_user.full_name,
                     )
+                except Exception as error:  # noqa: BLE001 - one recipient must not stop the fan-out
+                    failed_count += 1
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "booking_notification_failed",
+                        appointment_id=appointment.id,
+                        error_type=type(error).__name__,
+                    )
+                    continue
+
+                if admin_message_id is None:
+                    continue
+
+                delivered_count += 1
+                try:
                     # admin_notification_message_id is a single column and can only reply-thread
                     # to one recipient's chat; keep the first successful send (the treating
                     # doctor, matching prior single-recipient behavior).
-                    if admin_message_id is not None and appointment.admin_notification_message_id is None:
+                    if appointment.admin_notification_message_id is None:
                         await appointment_management_service.update_admin_notification_message_id(
                             appointment.id, admin_message_id
                         )
                         appointment.admin_notification_message_id = admin_message_id
 
-                    if admin_message_id is not None:
-                        await appointment_management_service.record_notification(
-                            appointment.id, recipient.telegram_user_id, admin_message_id, kind="booking",
-                        )
-                except Exception:
-                    logger.exception(
-                        f"Failed to send booking notification to {recipient.telegram_user_id} "
-                        f"for appointment {appointment.id}"
+                    await appointment_management_service.record_notification(
+                        appointment.id, recipient.telegram_user_id, admin_message_id, kind="booking",
                     )
+                except Exception as error:  # noqa: BLE001 - audit persistence is best effort
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "booking_notification_audit_failed",
+                        appointment_id=appointment.id,
+                        error_type=type(error).__name__,
+                    )
+            if notification_outcome == "completed":
+                if failed_count and delivered_count:
+                    notification_outcome = "partial"
+                elif failed_count:
+                    notification_outcome = "failed"
+                else:
+                    notification_outcome = "success"
+            log_event(
+                logger,
+                logging.INFO,
+                "booking_staff_notification_completed",
+                appointment_id=appointment.id,
+                outcome=notification_outcome,
+                attempted_count=attempted_count,
+                delivered_count=delivered_count,
+                failed_count=failed_count,
+            )
 
         if appointment_scheduler:
             await appointment_scheduler.schedule_pending_expiry(appointment)
