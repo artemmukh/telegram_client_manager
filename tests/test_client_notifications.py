@@ -236,7 +236,7 @@ async def test_broadcast_clients_skips_client_without_telegram_id_and_reports_it
 
 
 @pytest.mark.asyncio
-async def test_broadcast_clients_continues_past_per_recipient_failure_and_reports_it():
+async def test_broadcast_clients_continues_past_per_recipient_failure_and_reports_it(caplog):
     clients = [
         _client(telegram_user_id=100, ID=1),
         _client(telegram_user_id=200, ID=2),
@@ -246,12 +246,19 @@ async def test_broadcast_clients_continues_past_per_recipient_failure_and_report
     repo = FakeUserRepo(staff=[], clients=clients)
     service = ClientNotificationService(notifier, repo)
 
-    summary = await service.broadcast_clients("message")
+    with caplog.at_level("INFO"):
+        summary = await service.broadcast_clients("message")
 
     assert {message['chat_id'] for message in notifier.sent_messages} == {100, 300}
     assert summary.sent == 2
     assert summary.failed == 1
     assert summary.skipped == 0
+    assert "event=client_broadcast_started" in caplog.text
+    assert "event=client_broadcast_delivery_failed" in caplog.text
+    assert "event=client_broadcast_completed" in caplog.text
+    assert "chat_id=" not in caplog.text
+    assert "telegram_user_id=" not in caplog.text
+    assert "message" not in caplog.text
 
 
 @pytest.mark.asyncio

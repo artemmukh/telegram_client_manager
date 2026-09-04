@@ -5,26 +5,29 @@ from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.exceptions.appointment_exceptions import (
-    JobSchedulingError,
     JobCancellationError,
+    JobSchedulingError,
 )
 from bot.models.appointment import Appointment
+from bot.services.appointment.appointment_jobs import (
+    auto_complete_appointment_job,
+    auto_confirm_pending_job,
+    complete_appointment,
+    expire_pending_request_job,
+    expire_reschedule_request_job,
+    mark_appointment_completed_job,
+    send_proposal_reminder_job,
+    send_reminder_job,
+)
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
-from bot.services.appointment.appointment_jobs import (
-    send_reminder_job,
-    mark_appointment_completed_job,
-    complete_appointment,
-    expire_pending_request_job,
-    expire_reschedule_request_job,
-    auto_confirm_pending_job,
-    auto_complete_appointment_job,
-    send_proposal_reminder_job,
+from bot.services.utils.date_parser import (
+    get_current_tashkent_datetime as _current_tashkent_time,
 )
-from bot.services.utils.date_parser import get_current_tashkent_datetime as _current_tashkent_time
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.observability import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -385,12 +388,18 @@ class AppointmentScheduler:
         Job ID: appt_{appointment_id}_expire
         """
         if not appointment.id:
-            logger.warning("Cannot schedule pending expiry for appointment without ID")
+            log_event(logger, logging.WARNING, "scheduler_job_rejected", job_type="pending_expiry")
             return
 
         if appointment.status != AppointmentStatus.PENDING:
-            logger.info(f"Skipping pending expiry for appointment {appointment.id} "
-                       f"with status {appointment.status.value}")
+            log_event(
+                logger,
+                logging.INFO,
+                "scheduler_job_skipped",
+                appointment_id=appointment.id,
+                job_type="pending_expiry",
+                status=appointment.status.value,
+            )
             return
 
         try:
@@ -421,13 +430,21 @@ class AppointmentScheduler:
                     f"Failed to schedule pending expiry job {job_id}: {exc}"
                 ) from exc
 
-            logger.info(
-                f"Scheduled pending expiry for appointment {appointment.id} "
-                f"at {expiry_time.isoformat()} (2 hours before appointment)"
+            log_event(
+                logger,
+                logging.INFO,
+                "scheduler_job_scheduled",
+                appointment_id=appointment.id,
+                job_type="pending_expiry",
             )
         except JobSchedulingError as e:
-            logger.error(
-                f"Failed to schedule pending expiry for appointment {appointment.id}: {e}"
+            log_event(
+                logger,
+                logging.ERROR,
+                "scheduler_job_failed",
+                appointment_id=appointment.id,
+                job_type="pending_expiry",
+                error_type=type(e).__name__,
             )
 
     async def cancel_pending_expiry(self, appointment_id: int) -> None:
