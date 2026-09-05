@@ -11,14 +11,22 @@ asyncio.Lock, so every test resets that cache via the autouse fixture below
 to avoid cross-test leakage.
 """
 
+import asyncio
 import json
+import time
 
 import pytest
+from mistralai.client.models import DocumentURLChunk, TextChunk
 
 import bot.services.llm.agent as agent_module
 from bot.exceptions.medical_record_exceptions import MedicalRecordGenerationError
-from bot.services.llm.agent import BASE_BACKOFF_SECONDS, ChatLLM, MAX_ATTEMPTS
-from mistralai.client.models import DocumentURLChunk, TextChunk
+from bot.services.llm.agent import (
+    MAX_ATTEMPTS,
+    MIN_COMPLETION_START_INTERVAL_SECONDS,
+    ChatLLM,
+)
+
+REAL_ASYNCIO_SLEEP = asyncio.sleep
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +70,13 @@ class FakeUploadedFile:
 class FakeSignedUrl:
     def __init__(self, url="https://example.com/signed.pdf"):
         self.url = url
+
+
+class StructuredAPIError(Exception):
+    def __init__(self, status_code: int, headers: dict[str, str]):
+        super().__init__(f"status {status_code}")
+        self.status_code = status_code
+        self.headers = headers
 
 
 class FakeChatEndpoint:
@@ -211,11 +226,57 @@ async def test_generate_reuses_cached_pdf_url_across_calls():
 
 
 @pytest.mark.asyncio
+async def test_generate_passes_retries_none_to_sdk():
+    client = FakeMistralClient(chat_responses=[_ok_response()])
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    await chat_llm.generate("prompt text")
+
+    assert client.chat.calls[0]["retries"] is None
+
+
+@pytest.mark.asyncio
+async def test_generate_rate_limits_completion_starts_on_same_instance(sleep_calls):
+    client = FakeMistralClient(chat_responses=[_ok_response()])
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    await chat_llm.generate("first prompt")
+    await chat_llm.generate("second prompt")
+
+    assert len(client.chat.calls) == 2
+    # Successful calls have no retry backoff; any sleep here is the
+    # per-instance completion-start limiter. It must cover the 1.1s minimum.
+    assert any(seconds >= 1.1 for seconds in sleep_calls)
+
+
+@pytest.mark.asyncio
+async def test_generate_serializes_concurrent_completion_starts(monkeypatch):
+    monkeypatch.setattr(agent_module.asyncio, "sleep", REAL_ASYNCIO_SLEEP)
+
+    starts: list[float] = []
+
+    class TimedChatEndpoint(FakeChatEndpoint):
+        async def complete_async(self, **kwargs):
+            starts.append(time.monotonic())
+            return await super().complete_async(**kwargs)
+
+    client = FakeMistralClient(chat_responses=[_ok_response()])
+    client.chat = TimedChatEndpoint([_ok_response()])
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    await asyncio.gather(
+        chat_llm.generate("first prompt"),
+        chat_llm.generate("second prompt"),
+    )
+
+    assert len(starts) == 2
+    assert starts[1] - starts[0] >= MIN_COMPLETION_START_INTERVAL_SECONDS - 0.05
+
+
+@pytest.mark.asyncio
 async def test_generate_missing_required_keys_retries_then_raises(sleep_calls):
-    # PDF upload succeeds, so attempt 1 consumes the "retry without PDF"
-    # branch (no sleep, no attempt limit spent on a backoff wait); attempts
-    # 2 and 3 are genuine PDF-free retries with a real backoff sleep
-    # in between them.
+    # A malformed response with the PDF must retry as text-only, but only
+    # after the rate-limit-safe delay. There are exactly two chat attempts.
     client = FakeMistralClient(
         chat_responses=[_ok_response(MISSING_KEY_JSON)],
     )
@@ -224,8 +285,10 @@ async def test_generate_missing_required_keys_retries_then_raises(sleep_calls):
     with pytest.raises(MedicalRecordGenerationError):
         await chat_llm.generate("prompt text")
 
-    assert len(client.chat.calls) == MAX_ATTEMPTS
-    assert sleep_calls == [BASE_BACKOFF_SECONDS * 2]
+    assert MAX_ATTEMPTS == 2
+    assert len(client.chat.calls) == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 1.1
     # only the first (PDF-attached) attempt should have a document chunk
     first_call_content = client.chat.calls[0]["messages"][1]["content"]
     assert any(isinstance(c, DocumentURLChunk) for c in first_call_content)
@@ -244,7 +307,46 @@ async def test_generate_missing_tooth_map_retries_then_raises(sleep_calls):
     with pytest.raises(MedicalRecordGenerationError):
         await chat_llm.generate("prompt text")
 
-    assert len(client.chat.calls) == MAX_ATTEMPTS
+    assert MAX_ATTEMPTS == 2
+    assert len(client.chat.calls) == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 1.1
+
+
+@pytest.mark.asyncio
+async def test_generate_honors_numeric_retry_after_for_structured_429(monkeypatch):
+    sleep_calls: list[float] = []
+
+    async def _record_sleep(seconds):
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(agent_module.asyncio, "sleep", _record_sleep)
+    error = StructuredAPIError(429, {"Retry-After": "4"})
+    client = FakeMistralClient(
+        chat_responses=[_raising_response(error), _ok_response()],
+    )
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    result = await chat_llm.generate("prompt text")
+
+    assert result == json.loads(VALID_JSON)
+    assert len(client.chat.calls) == 2
+    assert sleep_calls and sleep_calls[-1] >= 3.9
+
+
+@pytest.mark.asyncio
+async def test_generate_ignores_retry_after_for_non_429(sleep_calls):
+    error = StructuredAPIError(500, {"Retry-After": "30"})
+    client = FakeMistralClient(
+        chat_responses=[_raising_response(error), _ok_response()],
+    )
+    chat_llm = ChatLLM(api_key="key", model="mistral-large", mistral_client=client)
+
+    result = await chat_llm.generate("prompt text")
+
+    assert result == json.loads(VALID_JSON)
+    assert len(client.chat.calls) == 2
+    assert sleep_calls and 1.1 <= sleep_calls[-1] < 30
 
 
 @pytest.mark.asyncio
@@ -268,19 +370,15 @@ async def test_generate_chat_completion_always_fails_retries_then_raises(sleep_c
     with pytest.raises(MedicalRecordGenerationError):
         await chat_llm.generate("prompt text")
 
-    assert len(client.chat.calls) == MAX_ATTEMPTS
-    assert sleep_calls == [BASE_BACKOFF_SECONDS * 2]
+    assert MAX_ATTEMPTS == 2
+    assert len(client.chat.calls) == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 1.1
 
 
 @pytest.mark.asyncio
-async def test_generate_persistent_failure_with_pdf_upload_failing_uses_real_backoff_retries(sleep_calls):
-    """When the PDF upload itself fails on attempt 1, the failure is caught
-    locally and attempt 1 still reaches chat.complete_async as a text-only
-    request. Since that text-only chat call also fails, all three attempts
-    reach the chat endpoint, separated by normal exponential backoff -- this
-    is the test that most directly proves the backoff-driven retry loop
-    works and that a broken PDF path no longer silently reduces the
-    effective chat-completion retry budget."""
+async def test_generate_persistent_failure_with_pdf_upload_failing_uses_completion_limiter(sleep_calls):
+    """A PDF upload failure still leaves two text-only chat attempts."""
     client = FakeMistralClient(
         chat_responses=[_raising_response(RuntimeError("network error"))],
         fail_upload=True,
@@ -290,11 +388,13 @@ async def test_generate_persistent_failure_with_pdf_upload_failing_uses_real_bac
     with pytest.raises(MedicalRecordGenerationError):
         await chat_llm.generate("prompt text")
 
-    # the PDF upload is only attempted once (attempt 1); every attempt
-    # reaches the chat endpoint since the upload failure never blocks it
+    # The PDF upload is only attempted once; every allowed chat attempt is
+    # text-only since attachment failed before the first completion.
     assert client.files.upload_calls == 1
-    assert len(client.chat.calls) == MAX_ATTEMPTS
-    assert sleep_calls == [BASE_BACKOFF_SECONDS * (2 ** 0), BASE_BACKOFF_SECONDS * (2 ** 1)]
+    assert MAX_ATTEMPTS == 2
+    assert len(client.chat.calls) == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] >= 1.1
     for call in client.chat.calls:
         content = call["messages"][1]["content"]
         assert not any(isinstance(c, DocumentURLChunk) for c in content)
@@ -309,8 +409,8 @@ async def test_generate_pdf_attach_failure_falls_back_to_text_only_success(sleep
 
     assert result == json.loads(VALID_JSON)
     assert client.files.upload_calls == 1
-    # the upload failure recovers within the same attempt (no backoff sleep)
-    # and the chat completion succeeds on the very next try
+    # No completion was started with the missing attachment, so falling back
+    # to text-only within the same attempt is safe and needs no retry delay.
     assert len(client.chat.calls) == 1
     assert sleep_calls == []
 
