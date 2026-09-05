@@ -37,11 +37,13 @@ from bot.services.medical_record.medical_record_management import (
     STALE_GENERATING_MINUTES,
     MedicalRecordService,
 )
-from bot.services.utils.date_parser import get_current_tashkent_datetime, get_current_tashkent_time
+from bot.services.utils.date_parser import (
+    get_current_tashkent_datetime,
+    get_current_tashkent_time,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.medical_record_enums import MedicalRecordStatus
 from bot.utils.role import Role
-
 from tests.conftest import LLM_RESPONSE, FakeAppointmentManagement, FakeChatLLM
 
 
@@ -105,7 +107,7 @@ async def test_generate_success_creates_docx_and_marks_ready(fake_medical_record
 
 
 @pytest.mark.asyncio
-async def test_generate_falls_back_to_empty_ai_fields_when_llm_fails(fake_medical_record_repo, monkeypatch):
+async def test_generate_marks_failed_when_llm_fails_without_creating_docx(fake_medical_record_repo, monkeypatch):
     appointment = _appointment()
     client = _client()
     chat_llm = FakeChatLLM(error=MedicalRecordGenerationError("Ollama unavailable"))
@@ -118,19 +120,18 @@ async def test_generate_falls_back_to_empty_ai_fields_when_llm_fails(fake_medica
         "bot.services.medical_record.medical_record_management.create_docx", create_docx_mock,
     )
 
-    record = await service.generate(appointment.id)
+    result = await service.generate(appointment.id)
 
-    assert record.status is MedicalRecordStatus.READY_PARTIAL
-    assert record.file_path == "/data/history_of_illness/generated/medical_card_1.docx"
+    assert result is None
+    create_docx_mock.assert_not_awaited()
 
-    data_arg, tooth_map_arg = create_docx_mock.call_args.args[0], create_docx_mock.call_args.args[1]
-    assert data_arg["complaints"] == ""
-    assert data_arg["diseases"] == ""
-    assert data_arg["examination"] == ""
-    assert data_arg["diagnosis"] == appointment.purpose
-    assert data_arg["treatment"] == ""
-    assert "tooth_map" not in data_arg
-    assert tooth_map_arg == []
+    failed_record = await fake_medical_record_repo.get_by_appointment_and_diagnosis(
+        appointment.id, appointment.purpose,
+    )
+    assert failed_record.status is MedicalRecordStatus.FAILED
+    assert failed_record.file_path is None
+    assert failed_record.error_message == "Ollama unavailable"
+    assert fake_medical_record_repo.mark_ready_calls == []
 
 
 @pytest.mark.parametrize("status", [
@@ -551,20 +552,12 @@ async def test_generate_ai_fields_returns_llm_response_keys_as_is(fake_medical_r
 
 
 @pytest.mark.asyncio
-async def test_generate_ai_fields_returns_empty_strings_and_partial_true_on_llm_failure(fake_medical_record_repo):
+async def test_generate_ai_fields_propagates_llm_failure(fake_medical_record_repo):
     chat_llm = FakeChatLLM(error=MedicalRecordGenerationError("boom"))
     service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), chat_llm, instance="zb")
 
-    ai_fields, partial = await service._generate_ai_fields("Консультация", _client())
-
-    assert partial is True
-    assert ai_fields == {
-        "complaints": "",
-        "diseases": "",
-        "examination": "",
-        "treatment": "",
-        "tooth_map": [],
-    }
+    with pytest.raises(MedicalRecordGenerationError, match="boom"):
+        await service._generate_ai_fields("Консультация", _client())
 
 
 # --- _build_output_path / _sanitize_path_segment ---
@@ -619,32 +612,42 @@ async def test_build_output_path_caps_all_segments_including_clinic_and_doctor(f
 
 
 def test_sanitize_path_segment_replaces_unsafe_filesystem_characters():
-    from bot.services.medical_record.medical_record_management import _sanitize_path_segment
+    from bot.services.medical_record.medical_record_management import (
+        _sanitize_path_segment,
+    )
 
     assert _sanitize_path_segment(r'a:b/c\d*e?f"g<h>i|j') == "a_b_c_d_e_f_g_h_i_j"
 
 
 def test_sanitize_path_segment_strips_trailing_dots_and_spaces():
-    from bot.services.medical_record.medical_record_management import _sanitize_path_segment
+    from bot.services.medical_record.medical_record_management import (
+        _sanitize_path_segment,
+    )
 
     assert _sanitize_path_segment("Иванов Иван. ") == "Иванов Иван"
 
 
 def test_sanitize_path_segment_guards_windows_reserved_names():
-    from bot.services.medical_record.medical_record_management import _sanitize_path_segment
+    from bot.services.medical_record.medical_record_management import (
+        _sanitize_path_segment,
+    )
 
     assert _sanitize_path_segment("CON") == "CON_"
     assert _sanitize_path_segment("com3") == "com3_"
 
 
 def test_sanitize_path_segment_falls_back_to_underscore_for_empty_result():
-    from bot.services.medical_record.medical_record_management import _sanitize_path_segment
+    from bot.services.medical_record.medical_record_management import (
+        _sanitize_path_segment,
+    )
 
     assert _sanitize_path_segment("   ...   ") == "_"
 
 
 def test_sanitize_path_segment_truncates_to_max_length():
-    from bot.services.medical_record.medical_record_management import _sanitize_path_segment
+    from bot.services.medical_record.medical_record_management import (
+        _sanitize_path_segment,
+    )
 
     long_diagnosis = "К" * (DIAGNOSIS_SEGMENT_MAX_LENGTH + 20)
 

@@ -11,8 +11,8 @@ from bot.utils import prompt_builder
 logger = logging.getLogger(__name__)
 
 REQUIRED_KEYS = ("complaints", "diseases", "examination", "treatment", "tooth_map")
-MAX_ATTEMPTS = 3
-BASE_BACKOFF_SECONDS = 2
+MAX_ATTEMPTS = 2
+MIN_COMPLETION_START_INTERVAL_SECONDS = 1.1
 
 _reference_pdf_url: str | None = None
 _reference_pdf_lock = asyncio.Lock()
@@ -63,15 +63,18 @@ class ChatLLM:
     def __init__(self, api_key: str, model: str, mistral_client: Mistral | None = None):
         self.model = model
         self.client = mistral_client or Mistral(api_key=api_key)
+        self._completion_start_lock = asyncio.Lock()
+        self._next_completion_start_monotonic = 0.0
 
     async def generate(self, prompt: str) -> dict:
         """Send a single-turn prompt and return the parsed JSON response.
 
-        Retries up to MAX_ATTEMPTS times with exponential backoff on network
-        errors, non-2xx responses, invalid JSON, or a JSON payload missing
-        any of REQUIRED_KEYS (complaints, diseases, examination, treatment,
-        tooth_map). Raises MedicalRecordGenerationError once every
-        attempt is exhausted, never leaking the underlying SDK/JSON error.
+        Retries up to MAX_ATTEMPTS times on network errors, non-2xx responses,
+        invalid JSON, or a JSON payload missing any of REQUIRED_KEYS
+        (complaints, diseases, examination, treatment, tooth_map). Completion
+        starts are rate-limited per ChatLLM instance. Raises
+        MedicalRecordGenerationError once every attempt is exhausted, never
+        leaking the underlying SDK/JSON error.
 
         If an attempt that included the cached reference PDF fails, the
         module-level PDF URL cache is invalidated and the next attempt is
@@ -86,29 +89,64 @@ class ChatLLM:
             if attach_pdf:
                 try:
                     pdf_url = await _get_reference_pdf_url(self.client)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - attachment failure must fall back to text-only completion.
                     logger.warning("Reference PDF attachment failed, continuing without it: %s", exc)
                     _invalidate_reference_pdf_cache()
 
             used_pdf = pdf_url is not None
             try:
                 return await self._request_once(prompt, pdf_url=pdf_url)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - retry must cover SDK, JSON, and validation failures.
                 last_error = exc
                 logger.warning("Mistral request attempt %s/%s failed: %s", attempt, MAX_ATTEMPTS, exc)
 
                 if used_pdf:
                     _invalidate_reference_pdf_cache()
-                    attach_pdf = False
-                    continue
-
                 attach_pdf = False
                 if attempt < MAX_ATTEMPTS:
-                    await asyncio.sleep(BASE_BACKOFF_SECONDS * (2 ** (attempt - 1)))
+                    await self._apply_retry_after_cooldown(exc)
 
         raise MedicalRecordGenerationError(
             f"Не удалось получить ответ от Mistral после {MAX_ATTEMPTS} попыток."
         ) from last_error
+
+    async def _apply_retry_after_cooldown(self, exc: Exception) -> None:
+        """Honor a structured 429 Retry-After value before the next request."""
+        if getattr(exc, "status_code", None) != 429:
+            return
+
+        headers = getattr(exc, "headers", None)
+        retry_after = headers.get("Retry-After") if headers is not None else None
+        if retry_after is None:
+            return
+
+        try:
+            retry_after_seconds = max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid Mistral Retry-After header: %r", retry_after)
+            return
+
+        loop = asyncio.get_running_loop()
+        async with self._completion_start_lock:
+            self._next_completion_start_monotonic = max(
+                self._next_completion_start_monotonic,
+                loop.time() + retry_after_seconds,
+            )
+
+    async def _wait_for_completion_start_slot(self) -> None:
+        """Ensure Mistral completion starts are at least 1.1 seconds apart."""
+        loop = asyncio.get_running_loop()
+
+        async with self._completion_start_lock:
+            now = loop.time()
+            delay = self._next_completion_start_monotonic - now
+            if delay > 0:
+                await asyncio.sleep(max(delay, MIN_COMPLETION_START_INTERVAL_SECONDS))
+
+            started_at = max(loop.time(), self._next_completion_start_monotonic)
+            self._next_completion_start_monotonic = (
+                started_at + MIN_COMPLETION_START_INTERVAL_SECONDS
+            )
 
     async def _request_once(self, prompt: str, pdf_url: str | None) -> dict:
         content: list = [TextChunk(text=prompt)]
@@ -116,6 +154,7 @@ class ChatLLM:
         if pdf_url is not None:
             content.append(DocumentURLChunk(document_url=pdf_url))
 
+        await self._wait_for_completion_start_slot()
         response = await self.client.chat.complete_async(
             model=self.model,
             messages=[
@@ -123,6 +162,7 @@ class ChatLLM:
                 {"role": "user", "content": content},
             ],
             response_format={"type": "json_object"},
+            retries=None,
         )
 
         raw_content = response.choices[0].message.content

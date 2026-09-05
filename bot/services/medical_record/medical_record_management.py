@@ -28,14 +28,6 @@ READY_STATUSES = (MedicalRecordStatus.READY, MedicalRecordStatus.READY_PARTIAL)
 
 ALREADY_GENERATED_STATUSES = (*READY_STATUSES, MedicalRecordStatus.GENERATING)
 
-EMPTY_AI_FIELDS = {
-    "complaints": "",
-    "diseases": "",
-    "examination": "",
-    "treatment": "",
-    "tooth_map": [],
-}
-
 DIAGNOSIS_SEGMENT_MAX_LENGTH = 30
 PATH_SEGMENT_MAX_LENGTH = 30
 STALE_GENERATING_MINUTES = 5
@@ -108,11 +100,9 @@ class MedicalRecordService:
         If the appointment or its client cannot be found, no record is
         created/touched and None is returned.
 
-        On LLM failure (after ChatLLM's own retries are exhausted), the
-        document is still generated with empty strings for the four
-        AI-authored fields, tooth_map defaulting to an empty list, and the
-        record is marked ready_partial, so the "get document" button never
-        blocks on the LLM being unavailable.
+        On LLM failure (after ChatLLM's own retries are exhausted), no
+        document is generated and the record is marked failed. Existing
+        ready_partial records remain readable for backwards compatibility.
         """
         appointment = await self.appointment_management.get_appointment_by_id(appointment_id)
         if appointment is None:
@@ -154,7 +144,15 @@ class MedicalRecordService:
             )
             return None
 
-        ai_fields, partial = await self._generate_ai_fields(diagnosis, client)
+        try:
+            ai_fields, partial = await self._generate_ai_fields(diagnosis, client)
+        except MedicalRecordGenerationError as exc:
+            logger.warning("LLM generation failed, medical record was not created: %s", exc)
+            await self.medical_record_repository.mark_failed(
+                record.id, str(exc), get_current_tashkent_time(),
+            )
+            return None
+
         tooth_map = ai_fields.pop("tooth_map")
 
         data = {
@@ -172,7 +170,7 @@ class MedicalRecordService:
         try:
             file_path = await create_docx(data, tooth_map, output_path, template_path)
         except Exception as exc:
-            logger.exception("Failed to render medical record docx for appointment %s: %s", appointment_id, exc)
+            logger.exception("Failed to render medical record docx for appointment %s", appointment_id)
             await self.medical_record_repository.mark_failed(record.id, str(exc), get_current_tashkent_time())
             return None
 
@@ -254,11 +252,7 @@ class MedicalRecordService:
     async def _generate_ai_fields(self, purpose: str, client: User) -> tuple[dict, bool]:
         prompt = self._build_prompt(purpose, client)
 
-        try:
-            llm_response = await self.chat_llm.generate(prompt)
-        except MedicalRecordGenerationError as exc:
-            logger.warning("LLM generation failed, falling back to empty AI fields: %s", exc)
-            return dict(EMPTY_AI_FIELDS), True
+        llm_response = await self.chat_llm.generate(prompt)
 
         return {
             "complaints": llm_response["complaints"],
