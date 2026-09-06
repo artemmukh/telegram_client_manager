@@ -11,6 +11,21 @@ def test_prompt_maps_all_crown_aliases_to_the_universal_k_marker():
     assert "«цлит» означает цельнолитую коронку" in prompt
     assert "Любая коронка, явно указанная для конкретного зуба" in prompt
     assert 'marker "K"' in prompt
+    assert "«35, 45 постановка МК» и «35,45 постановка мк» трактуй одинаково" in prompt
+    assert "исходную формулировку диагноза не изменяй и не добавляй в JSON новые ключи" in prompt
+    assert 'поле "diagnosis"' not in prompt
+
+
+def test_prompt_preserves_expanded_professional_medical_record_fields():
+    prompt = prompt_builder.get_system_prompt()
+
+    assert (
+        "поля \"complaints\", \"diseases\", \"examination\", \"treatment\" "
+        "ВСЕГДА должны быть заполнены развёрнутым профессиональным текстом"
+    ) in prompt
+    assert "Пустая строка в этих четырёх полях недопустима, если диагноз указан" in prompt
+    assert "Не придумывай конкретные жалобы, глубину кариозной полости" not in prompt
+    assert "используй нейтральную медицинскую формулировку" not in prompt
 
 
 def test_prompt_maps_cervical_caries_and_reserves_x_for_tooth_conditions():
