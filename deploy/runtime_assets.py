@@ -27,6 +27,12 @@ STATIC_ASSET_PATHS = frozenset(
     }
 )
 
+REFRESHABLE_STATIC_ASSET_PATHS = frozenset(
+    {
+        "history_of_illness/templates/docx_gen_prompt.txt",
+    }
+)
+
 
 @dataclass(frozen=True)
 class AssetProvisioningReport:
@@ -60,7 +66,10 @@ def provision_runtime_assets(seed_root: Path, data_root: Path) -> AssetProvision
             continue
         _assert_within_data_root(destination_path, resolved_data_root)
         if destination_path.exists():
-            continue
+            if relative_path.as_posix() not in REFRESHABLE_STATIC_ASSET_PATHS:
+                continue
+            if destination_path.read_bytes() == source_path.read_bytes():
+                continue
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         _assert_no_destination_symlinks(data_root, relative_path)
         _assert_within_data_root(destination_path, resolved_data_root)
