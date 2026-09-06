@@ -143,6 +143,26 @@ async def test_provision_runtime_assets_does_not_overwrite_existing_allowed_stat
     assert "location/location.png" not in report.copied_paths
 
 
+@pytest.mark.asyncio
+async def test_provision_runtime_assets_refreshes_managed_system_prompt(
+    tmp_path: Path,
+) -> None:
+    relative_path = Path("history_of_illness/templates/docx_gen_prompt.txt")
+    source = tmp_path / "image-seed" / relative_path
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"new system prompt")
+
+    data = tmp_path / "data"
+    destination = data / relative_path
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes(b"stale system prompt")
+
+    report = provision_runtime_assets(tmp_path / "image-seed", data)
+
+    assert destination.read_bytes() == b"new system prompt"
+    assert relative_path.as_posix() in report.copied_paths
+
+
 @pytest.mark.parametrize("target_kind", ["inside", "outside"])
 @pytest.mark.asyncio
 async def test_provision_runtime_assets_rejects_existing_destination_symlink_component(
