@@ -13,3 +13,5 @@ class MedicalRecord:
     updated_at: str | None = None
     error_message: str | None = None
     diagnosis: str = ""
+    appointment_datetime: str | None = None
+    doctor_full_name: str | None = None

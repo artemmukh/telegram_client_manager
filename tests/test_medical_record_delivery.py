@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from bot.handlers.utils import medical_record_delivery
 from bot.handlers.utils.medical_record_delivery import (
     FAILURE_MESSAGE,
     add_medical_record_document,
@@ -32,7 +33,6 @@ from bot.services.medical_record.medical_record_management import MedicalRecordS
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.medical_record_enums import MedicalRecordStatus
 from bot.utils.role import Role
-
 from tests.conftest import FakeAppointmentManagement, FakeChatLLM
 
 _DEFAULT = object()
@@ -110,6 +110,91 @@ async def test_ready_record_sends_document_and_answers_without_alert(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_selected_record_delivery_sends_only_the_requested_document(tmp_path):
+    first_path = tmp_path / "first.docx"
+    first_path.write_bytes(b"")
+    second_path = tmp_path / "second.docx"
+    second_path.write_bytes(b"")
+    selected = MedicalRecord(
+        id=1, appointment_id=10, diagnosis="Кариес 37", status=MedicalRecordStatus.READY,
+        file_path=str(first_path),
+    )
+    unrelated = MedicalRecord(
+        id=2, appointment_id=10, diagnosis="Пульпит 46", status=MedicalRecordStatus.READY,
+        file_path=str(second_path),
+    )
+    callback_query = _callback_query()
+    service = _service(ready_documents=[selected, unrelated])
+    service.get_document_for_appointment = AsyncMock(return_value=selected)
+
+    await medical_record_delivery.deliver_selected_medical_record(
+        callback_query, service, record_id=1, appointment_id=10,
+    )
+
+    service.get_document_for_appointment.assert_awaited_once_with(1, 10)
+    service.ensure_file_exists.assert_awaited_once_with(selected)
+    callback_query.message.answer_document.assert_awaited_once()
+    assert callback_query.message.answer_document.call_args.args[0].path == str(first_path)
+    assert callback_query.message.answer_document.call_args.args[0].path != str(second_path)
+    service.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deleted_record_id_is_not_delivered_or_regenerated():
+    callback_query = _callback_query()
+    service = _service(ready_documents=[])
+    service.get_document_for_appointment = AsyncMock(return_value=None)
+
+    await medical_record_delivery.deliver_selected_medical_record(
+        callback_query, service, record_id=404, appointment_id=10,
+    )
+
+    service.get_document_for_appointment.assert_awaited_once_with(404, 10)
+    service.ensure_file_exists.assert_not_awaited()
+    service.generate.assert_not_awaited()
+    callback_query.message.answer_document.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        status
+        for status in MedicalRecordStatus
+        if status not in (MedicalRecordStatus.READY, MedicalRecordStatus.READY_PARTIAL)
+    ],
+)
+@pytest.mark.asyncio
+async def test_selected_non_ready_record_is_not_regenerated_or_delivered(tmp_path, status):
+    """A selected row must be delivered only when it is ready.
+
+    The appointment document list can contain pending/generating/failed rows;
+    opening one of those rows must not turn a download action into an implicit
+    regeneration or send a non-ready file.
+    """
+    file_path = tmp_path / f"record-{status.value}.docx"
+    file_path.write_bytes(b"")
+    record = MedicalRecord(
+        id=1,
+        appointment_id=10,
+        diagnosis="Кариес 37",
+        status=status,
+        file_path=str(file_path),
+    )
+    callback_query = _callback_query()
+    service = _service()
+    service.get_document_for_appointment = AsyncMock(return_value=record)
+
+    await medical_record_delivery.deliver_selected_medical_record(
+        callback_query, service, record_id=1, appointment_id=10,
+    )
+
+    service.get_document_for_appointment.assert_awaited_once_with(1, 10)
+    service.ensure_file_exists.assert_not_awaited()
+    service.generate.assert_not_awaited()
+    callback_query.message.answer_document.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_ready_partial_record_sends_document_too(tmp_path):
     file_path = tmp_path / "medical_card_10.docx"
     file_path.write_bytes(b"")
@@ -151,6 +236,44 @@ async def test_multiple_ready_documents_each_sent_as_a_separate_message(tmp_path
     assert callback_query.message.answer_document.await_count == 2
     sent_paths = {call.args[0].path for call in callback_query.message.answer_document.call_args_list}
     assert sent_paths == {str(first_path), str(second_path)}
+
+
+@pytest.mark.asyncio
+async def test_bulk_ready_delivery_sends_ready_documents_in_order_without_generation(tmp_path):
+    newest_path = tmp_path / "newest.docx"
+    newest_path.write_bytes(b"")
+    older_path = tmp_path / "older.docx"
+    older_path.write_bytes(b"")
+    newest = MedicalRecord(
+        id=2, appointment_id=10, diagnosis="Пульпит", status=MedicalRecordStatus.READY,
+        file_path=str(newest_path), created_at="2026-09-07 12:00:00",
+    )
+    older = MedicalRecord(
+        id=1, appointment_id=10, diagnosis="Кариес", status=MedicalRecordStatus.READY_PARTIAL,
+        file_path=str(older_path), created_at="2026-09-06 12:00:00",
+    )
+    callback_query = _callback_query()
+    service = _service(ready_documents=[newest, older])
+
+    await medical_record_delivery.deliver_ready_medical_records(callback_query, service, appointment_id=10)
+
+    service.get_ready_documents.assert_awaited_once_with(10)
+    service.generate.assert_not_awaited()
+    assert [
+        call.args[0].path for call in callback_query.message.answer_document.call_args_list
+    ] == [str(newest_path), str(older_path)]
+
+
+@pytest.mark.asyncio
+async def test_bulk_ready_delivery_does_not_generate_when_no_ready_documents_exist():
+    callback_query = _callback_query()
+    service = _service(ready_documents=[])
+
+    await medical_record_delivery.deliver_ready_medical_records(callback_query, service, appointment_id=10)
+
+    service.get_ready_documents.assert_awaited_once_with(10)
+    service.generate.assert_not_awaited()
+    callback_query.message.answer_document.assert_not_awaited()
 
 
 @pytest.mark.asyncio

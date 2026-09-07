@@ -66,8 +66,7 @@ _PRICE_LABEL = {"ru": "💰 Цена", "uz": "💰 Narx"}
 _FINISH_APPOINTMENT_LABEL = {"ru": "✅ Завершить приём", "uz": "✅ Qabulni yakunlash"}
 _EDIT_TIME_LABEL = {"ru": "🕐 Изменить время", "uz": "🕐 Vaqtni o'zgartirish"}
 _CHANGE_STATUS_LABEL = {"ru": "🔁 Изменить статус", "uz": "🔁 Holatni o'zgartirish"}
-_GET_MEDICAL_RECORD_LABEL = {"ru": "📄 Получить историю болезни", "uz": "📄 Kasallik tarixini olish"}
-_ADD_MEDICAL_RECORD_LABEL = {"ru": "➕ Добавить документ", "uz": "➕ Hujjat qo'shish"}
+_MEDICAL_DOCUMENTS_LABEL = {"ru": "📄 Документы", "uz": "📄 Hujjatlar"}
 _BACK_TO_LIST_LABEL = {"ru": "⬅️ Назад к списку", "uz": "⬅️ Ro'yxatga qaytish"}
 
 _CANCEL_EDIT_LABEL = {"ru": "❌ Отменить", "uz": "❌ Bekor qilish"}
@@ -372,17 +371,9 @@ def appointment_card_kb(
 
     if status == AppointmentStatus.COMPLETED:
         builder.button(
-            text=_GET_MEDICAL_RECORD_LABEL.get(lang, _GET_MEDICAL_RECORD_LABEL["ru"]),
+            text=_MEDICAL_DOCUMENTS_LABEL.get(lang, _MEDICAL_DOCUMENTS_LABEL["ru"]),
             callback_data=ApptActionCB(
-                action="get_medical_record", appointment_id=appointment_id, mode=mode, page=page,
-            ).pack(),
-        )
-        rows.append(1)
-
-        builder.button(
-            text=_ADD_MEDICAL_RECORD_LABEL.get(lang, _ADD_MEDICAL_RECORD_LABEL["ru"]),
-            callback_data=ApptActionCB(
-                action="add_medical_record", appointment_id=appointment_id, mode=mode, page=page,
+                action="documents", appointment_id=appointment_id, mode=mode, page=page, value=tab,
             ).pack(),
         )
         rows.append(1)

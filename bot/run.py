@@ -20,6 +20,9 @@ from bot.handlers.admin.appointment_management.appointment_creation import (
 from bot.handlers.admin.appointment_management.booking_requests import (
     create_admin_booking_requests_router,
 )
+from bot.handlers.admin.appointment_management.medical_documents import (
+    create_admin_medical_documents_router,
+)
 from bot.handlers.admin.appointment_management.record_menu import (
     create_admin_record_router,
 )
@@ -208,6 +211,11 @@ async def main():
     dp.include_router(create_admin_appointment_browser_router(
         config.instance, appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,
         medical_record_service=medical_record_service, blocked_slot_repository=blocked_slot_repo,
+    ))
+    dp.include_router(create_admin_medical_documents_router(
+        medical_record_service,
+        appointment_management_service,
+        client_management_service,
     ))
     dp.include_router(create_admin_completion_router(
         appointment_repo, user_repo, staff_repo, clinic_repo, appointment_scheduler, notification_service,

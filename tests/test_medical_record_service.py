@@ -21,12 +21,18 @@ to it, e.g. how price_list/geolocation tests stub FSInputFile rather than
 touching the real files).
 """
 
+import asyncio
+from copy import deepcopy
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
-from bot.exceptions.medical_record_exceptions import MedicalRecordGenerationError
+from bot.exceptions.medical_record_exceptions import (
+    MedicalRecordDeletionError,
+    MedicalRecordGenerationError,
+)
 from bot.models.appointment import Appointment
 from bot.models.medical_record import MedicalRecord
 from bot.models.user import User
@@ -322,6 +328,416 @@ async def test_get_ready_documents_returns_only_ready_records_for_the_appointmen
     assert documents == [ready]
 
 
+# --- scoped lookup and physical deletion ---
+
+@pytest.mark.asyncio
+async def test_get_document_for_appointment_rechecks_record_and_appointment_scope(fake_medical_record_repo):
+    record = MedicalRecord(
+        id=4, appointment_id=10, diagnosis="Кариес 37", status=MedicalRecordStatus.READY,
+        file_path="/tmp/record.docx",
+    )
+    fake_medical_record_repo.records.append(record)
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    assert await service.get_document_for_appointment(record_id=4, appointment_id=10) is record
+    assert await service.get_document_for_appointment(record_id=4, appointment_id=11) is None
+    assert await service.get_document_for_appointment(record_id=404, appointment_id=10) is None
+    assert fake_medical_record_repo.get_by_id_calls == [4, 4, 404]
+
+
+@pytest.mark.asyncio
+async def test_get_document_by_id_returns_current_document_without_appointment_callback_data(
+    fake_medical_record_repo,
+):
+    record = MedicalRecord(
+        id=9, appointment_id=10, diagnosis="Кариес 37", status=MedicalRecordStatus.READY,
+    )
+    fake_medical_record_repo.records.append(record)
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    assert await service.get_document_by_id(9) is record
+    assert await service.get_document_by_id(404) is None
+    assert fake_medical_record_repo.get_by_id_calls == [9, 404]
+
+
+@pytest.mark.asyncio
+async def test_delete_document_unlinks_an_in_root_file_then_deletes_its_row(
+    fake_medical_record_repo, tmp_path, monkeypatch,
+):
+    record = MedicalRecord(
+        id=4, appointment_id=10, diagnosis="Кариес", status=MedicalRecordStatus.READY,
+    )
+    document = tmp_path / "generated" / "record.docx"
+    document.parent.mkdir()
+    document.write_bytes(b"docx")
+    record.file_path = str(document)
+    fake_medical_record_repo.records.append(record)
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR",
+        document.parent,
+    )
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    await service.delete_document(record_id=4, appointment_id=10)
+
+    assert not document.exists()
+    assert await fake_medical_record_repo.get_by_id(4) is None
+    assert fake_medical_record_repo.delete_by_id_calls == [4]
+
+
+@pytest.mark.asyncio
+async def test_delete_document_removes_stale_row_when_in_root_file_is_missing(
+    fake_medical_record_repo, tmp_path, monkeypatch,
+):
+    root = tmp_path / "generated"
+    root.mkdir()
+    record = MedicalRecord(
+        id=5, appointment_id=10, diagnosis="Кариес", status=MedicalRecordStatus.READY,
+        file_path=str(root / "already-removed.docx"),
+    )
+    fake_medical_record_repo.records.append(record)
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", root,
+    )
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    await service.delete_document(record_id=5, appointment_id=10)
+
+    assert await fake_medical_record_repo.get_by_id(5) is None
+
+
+@pytest.mark.parametrize(
+    "path_kind",
+    ["out_of_root", "traversal", "directory", "outward_symlink"],
+)
+@pytest.mark.asyncio
+async def test_delete_document_rejects_unsafe_targets_and_retains_row(
+    fake_medical_record_repo, tmp_path, monkeypatch, path_kind,
+):
+    root = tmp_path / "generated"
+    root.mkdir()
+    outside = tmp_path / "outside.docx"
+    outside.write_bytes(b"outside")
+    if path_kind == "out_of_root":
+        target = outside
+    elif path_kind == "traversal":
+        target = root / "nested" / ".." / ".." / "outside.docx"
+    elif path_kind == "directory":
+        target = root / "directory"
+        target.mkdir()
+    else:
+        target = root / "outward-link.docx"
+        try:
+            target.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlink creation is unavailable on this host")
+
+    record = MedicalRecord(
+        id=6, appointment_id=10, diagnosis="Кариес", status=MedicalRecordStatus.READY,
+        file_path=str(target),
+    )
+    fake_medical_record_repo.records.append(record)
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", root,
+    )
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    with pytest.raises(MedicalRecordDeletionError):
+        await service.delete_document(record_id=6, appointment_id=10)
+
+    assert await fake_medical_record_repo.get_by_id(6) is record
+    assert fake_medical_record_repo.delete_by_id_calls == []
+    assert outside.exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_document_retains_row_when_unlink_raises_oserror(
+    fake_medical_record_repo, tmp_path, monkeypatch,
+):
+    root = tmp_path / "generated"
+    root.mkdir()
+    target = root / "record.docx"
+    target.write_bytes(b"docx")
+    record = MedicalRecord(
+        id=7, appointment_id=10, diagnosis="Кариес", status=MedicalRecordStatus.READY,
+        file_path=str(target),
+    )
+    fake_medical_record_repo.records.append(record)
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", root,
+    )
+
+    def _raise_unlink(self: Path, missing_ok: bool = False):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "unlink", _raise_unlink)
+    service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
+
+    with pytest.raises(MedicalRecordDeletionError):
+        await service.delete_document(record_id=7, appointment_id=10)
+    # Restore Path.unlink before pytest's tmp_path cleanup runs; patching the
+    # class method globally must not interfere with fixture teardown.
+    monkeypatch.undo()
+
+    assert await fake_medical_record_repo.get_by_id(7) is record
+    assert fake_medical_record_repo.delete_by_id_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_document_rejects_external_symlink_to_in_root_target_and_keeps_both(
+    fake_medical_record_repo, tmp_path, monkeypatch,
+):
+    """A symlink itself must be inside OUTPUT_DIR, not only its target.
+
+    Otherwise an altered database path can make deletion unlink an arbitrary
+    external directory entry even when that entry happens to point back into
+    the generated-document tree.
+    """
+    root = tmp_path / "generated"
+    root.mkdir()
+    in_root_target = root / "record.docx"
+    in_root_target.write_bytes(b"docx")
+    external_link = tmp_path / "external-link.docx"
+    try:
+        external_link.symlink_to(in_root_target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is unavailable on this host")
+
+    record = MedicalRecord(
+        id=8,
+        appointment_id=10,
+        diagnosis="Кариес",
+        status=MedicalRecordStatus.READY,
+        file_path=str(external_link),
+    )
+    fake_medical_record_repo.records.append(record)
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", root,
+    )
+    service = MedicalRecordService(
+        fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb",
+    )
+
+    with pytest.raises(MedicalRecordDeletionError):
+        await service.delete_document(record_id=8, appointment_id=10)
+
+    assert external_link.is_symlink()
+    assert in_root_target.exists()
+    assert await fake_medical_record_repo.get_by_id(8) is record
+    assert fake_medical_record_repo.delete_by_id_calls == []
+
+
+@pytest.mark.asyncio
+async def test_delete_during_paused_generation_does_not_leave_orphan_file(
+    fake_medical_record_repo, monkeypatch, tmp_path,
+):
+    """Deleting an in-flight row must prevent its later render from orphaning a file."""
+    appointment = _appointment()
+    client = _client()
+    llm_started = asyncio.Event()
+    release_llm = asyncio.Event()
+
+    class PausingLLM:
+        async def generate(self, prompt: str) -> dict:
+            llm_started.set()
+            await release_llm.wait()
+            return dict(LLM_RESPONSE)
+
+    output_root = tmp_path / "generated"
+    output_root.mkdir()
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", output_root,
+    )
+
+    rendered_paths: list[Path] = []
+
+    async def _render(data, tooth_map, output_path, template_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"orphan if deletion is ignored")
+        rendered_paths.append(output_path)
+        return str(output_path)
+
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.create_docx", _render,
+    )
+    service = MedicalRecordService(
+        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), PausingLLM(), instance="zb",
+    )
+
+    generation_task = asyncio.create_task(service.generate(appointment.id, appointment.purpose))
+    await asyncio.wait_for(llm_started.wait(), timeout=1)
+
+    in_flight = await fake_medical_record_repo.get_by_appointment_and_diagnosis(
+        appointment.id, appointment.purpose,
+    )
+    assert in_flight is not None
+    assert in_flight.status is MedicalRecordStatus.GENERATING
+
+    assert await service.delete_document(in_flight.id, appointment.id)
+    assert await fake_medical_record_repo.get_by_id(in_flight.id) is None
+
+    release_llm.set()
+    assert await generation_task is None
+
+    assert rendered_paths
+    assert all(not path.exists() for path in rendered_paths)
+    assert fake_medical_record_repo.records == []
+
+
+@pytest.mark.asyncio
+async def test_delete_waiting_for_ready_publication_removes_the_published_file(
+    fake_medical_record_repo, monkeypatch, tmp_path,
+):
+    """Deletion waits for the atomic READY publication, then unlinks its file."""
+    appointment = _appointment()
+    client = _client()
+    output_root = tmp_path / "generated"
+    output_root.mkdir()
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", output_root,
+    )
+
+    rendered_paths: list[Path] = []
+
+    async def _render(data, tooth_map, output_path, template_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"orphan if deletion is ignored")
+        rendered_paths.append(output_path)
+        return str(output_path)
+
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.create_docx", _render,
+    )
+    ready_update_started = asyncio.Event()
+    release_ready_update = asyncio.Event()
+    original_mark_ready = fake_medical_record_repo.mark_ready
+
+    async def _pause_ready_update(*args, **kwargs):
+        ready_update_started.set()
+        await release_ready_update.wait()
+        await original_mark_ready(*args, **kwargs)
+
+    monkeypatch.setattr(fake_medical_record_repo, "mark_ready", _pause_ready_update)
+    service = MedicalRecordService(
+        fake_medical_record_repo,
+        FakeAppointmentManagement(appointment, client),
+        FakeChatLLM(response=LLM_RESPONSE),
+        instance="zb",
+    )
+
+    generation_task = asyncio.create_task(service.generate(appointment.id, appointment.purpose))
+    await asyncio.wait_for(ready_update_started.wait(), timeout=1)
+    in_flight = await fake_medical_record_repo.get_by_appointment_and_diagnosis(
+        appointment.id, appointment.purpose,
+    )
+    assert in_flight is not None
+    assert in_flight.status is MedicalRecordStatus.GENERATING
+
+    delete_task = asyncio.create_task(service.delete_document(in_flight.id, appointment.id))
+    await asyncio.sleep(0)
+    assert not delete_task.done()
+    release_ready_update.set()
+
+    generated = await generation_task
+    assert generated is not None
+    assert await delete_task is True
+    assert rendered_paths
+    assert all(not path.exists() for path in rendered_paths)
+    assert fake_medical_record_repo.records == []
+
+
+@pytest.mark.asyncio
+async def test_delete_with_stale_generating_snapshot_blocks_ready_publication_and_cleans_file(
+    fake_medical_record_repo, monkeypatch, tmp_path,
+):
+    """A stale delete snapshot cannot race past a READY publication.
+
+    Real repository calls deserialize separate model snapshots.  This test
+    makes the fake do the same, then pauses deletion after it captured a
+    GENERATING row and before it removes the row.  The final publish must wait
+    for that deletion rather than leave a document with no database row.
+    """
+    appointment = _appointment()
+    client = _client()
+    llm_started = asyncio.Event()
+    release_llm = asyncio.Event()
+    output_root = tmp_path / "generated"
+    output_root.mkdir()
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", output_root,
+    )
+
+    class PausingLLM:
+        async def generate(self, prompt: str) -> dict:
+            llm_started.set()
+            await release_llm.wait()
+            return dict(LLM_RESPONSE)
+
+    render_started = asyncio.Event()
+    rendered_paths: list[Path] = []
+
+    async def _render(data, tooth_map, output_path, template_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"must be cleaned")
+        rendered_paths.append(output_path)
+        render_started.set()
+        return str(output_path)
+
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.create_docx", _render,
+    )
+    original_get_by_id = fake_medical_record_repo.get_by_id
+
+    async def _independent_snapshot(record_id: int):
+        record = await original_get_by_id(record_id)
+        return deepcopy(record) if record is not None else None
+
+    monkeypatch.setattr(fake_medical_record_repo, "get_by_id", _independent_snapshot)
+    ready_update_started = asyncio.Event()
+    original_mark_ready = fake_medical_record_repo.mark_ready
+
+    async def _signal_ready_update(*args, **kwargs):
+        ready_update_started.set()
+        await original_mark_ready(*args, **kwargs)
+
+    monkeypatch.setattr(fake_medical_record_repo, "mark_ready", _signal_ready_update)
+    service = MedicalRecordService(
+        fake_medical_record_repo, FakeAppointmentManagement(appointment, client), PausingLLM(), instance="zb",
+    )
+    original_scoped_lookup = service.get_document_for_appointment
+    stale_snapshot_captured = asyncio.Event()
+    release_delete = asyncio.Event()
+
+    async def _pause_delete_after_snapshot(record_id: int, appointment_id: int):
+        record = await original_scoped_lookup(record_id, appointment_id)
+        stale_snapshot_captured.set()
+        await release_delete.wait()
+        return record
+
+    monkeypatch.setattr(service, "get_document_for_appointment", _pause_delete_after_snapshot)
+    generation_task = asyncio.create_task(service.generate(appointment.id, appointment.purpose))
+    await asyncio.wait_for(llm_started.wait(), timeout=1)
+    in_flight = await fake_medical_record_repo.get_by_appointment_and_diagnosis(
+        appointment.id, appointment.purpose,
+    )
+    assert in_flight is not None
+    delete_task = asyncio.create_task(service.delete_document(in_flight.id, appointment.id))
+    await asyncio.wait_for(stale_snapshot_captured.wait(), timeout=1)
+
+    release_llm.set()
+    await asyncio.wait_for(render_started.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert not ready_update_started.is_set()
+
+    release_delete.set()
+    assert await delete_task is True
+    assert await generation_task is None
+    assert not ready_update_started.is_set()
+    assert rendered_paths
+    assert all(not path.exists() for path in rendered_paths)
+    assert fake_medical_record_repo.records == []
+
+
 # --- mark_for_regeneration ---
 
 @pytest.mark.asyncio
@@ -352,12 +768,48 @@ async def test_ensure_file_exists_returns_record_unchanged_when_file_present(
     record = MedicalRecord(
         id=1, appointment_id=10, diagnosis="Кариес 37", status=MedicalRecordStatus.READY, file_path=str(file_path),
     )
+    fake_medical_record_repo.records.append(record)
     service = MedicalRecordService(fake_medical_record_repo, FakeAppointmentManagement(), FakeChatLLM(), instance="zb")
 
     result = await service.ensure_file_exists(record)
 
     assert result is record
     assert fake_medical_record_repo.mark_pending_calls == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_file_exists_rejects_stale_record_even_when_file_still_exists(
+    fake_medical_record_repo, tmp_path, monkeypatch,
+):
+    """A selected document must not be delivered after its row was deleted."""
+    output_root = tmp_path / "generated"
+    output_root.mkdir()
+    file_path = output_root / "medical_card_1.docx"
+    file_path.write_bytes(b"stale document")
+    monkeypatch.setattr(
+        "bot.services.medical_record.medical_record_management.OUTPUT_DIR", output_root,
+    )
+
+    stale_record = MedicalRecord(
+        id=1,
+        appointment_id=10,
+        diagnosis="Кариес 37",
+        status=MedicalRecordStatus.READY,
+        file_path=str(file_path),
+    )
+    chat_llm = FakeChatLLM(response=LLM_RESPONSE)
+    service = MedicalRecordService(
+        fake_medical_record_repo, FakeAppointmentManagement(), chat_llm, instance="zb",
+    )
+
+    result = await service.ensure_file_exists(stale_record)
+
+    assert result is None
+    assert fake_medical_record_repo.get_by_id_calls == [1]
+    assert fake_medical_record_repo.mark_pending_calls == []
+    assert fake_medical_record_repo.create_pending_calls == []
+    assert chat_llm.calls == []
+    assert file_path.exists()
 
 
 @pytest.mark.asyncio

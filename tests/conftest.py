@@ -244,6 +244,12 @@ class FakeMedicalRecordRepository:
         self.mark_pending_calls: list[tuple[int, str]] = []
         self.mark_ready_calls: list[tuple[int, str, bool, str]] = []
         self.mark_failed_calls: list[tuple[int, str, str]] = []
+        self.get_by_id_calls: list[int] = []
+        self.list_by_appointment_id_calls: list[tuple[int, int, int]] = []
+        self.count_by_appointment_id_calls: list[int] = []
+        self.list_by_client_id_calls: list[tuple[int, int, int | None, int, int]] = []
+        self.count_by_client_id_calls: list[tuple[int, int, int | None]] = []
+        self.delete_by_id_calls: list[int] = []
 
     async def create_pending(self, appointment_id: int, diagnosis: str, created_at: str) -> MedicalRecord:
         self.create_pending_calls.append((appointment_id, diagnosis, created_at))
@@ -262,12 +268,69 @@ class FakeMedicalRecordRepository:
     async def get_by_appointment_and_diagnosis(self, appointment_id: int, diagnosis: str) -> MedicalRecord | None:
         return self._find_by_appointment_and_diagnosis(appointment_id, diagnosis)
 
+    async def get_by_id(self, record_id: int) -> MedicalRecord | None:
+        self.get_by_id_calls.append(record_id)
+        return self._find_by_id(record_id)
+
     async def list_ready_by_appointment_id(self, appointment_id: int) -> list[MedicalRecord]:
         ready_statuses = (MedicalRecordStatus.READY, MedicalRecordStatus.READY_PARTIAL)
         return [
             r for r in self.records
             if r.appointment_id == appointment_id and r.status in ready_statuses and r.file_path is not None
         ]
+
+    async def list_by_appointment_id(
+        self, appointment_id: int, *, limit: int, offset: int,
+    ) -> list[MedicalRecord]:
+        self.list_by_appointment_id_calls.append((appointment_id, limit, offset))
+        records = [record for record in self.records if record.appointment_id == appointment_id]
+        records.sort(key=lambda record: (record.created_at or "", record.id or 0), reverse=True)
+        return records[offset:offset + limit]
+
+    async def count_by_appointment_id(self, appointment_id: int) -> int:
+        self.count_by_appointment_id_calls.append(appointment_id)
+        return sum(record.appointment_id == appointment_id for record in self.records)
+
+    async def list_by_client_id(
+        self,
+        client_id: int,
+        clinic_id: int,
+        *,
+        doctor_id: int | None,
+        limit: int,
+        offset: int,
+    ) -> list[MedicalRecord]:
+        self.list_by_client_id_calls.append((client_id, clinic_id, doctor_id, limit, offset))
+        # The shared fake has no appointment repository. Tests that exercise
+        # client-scoped pagination seed these optional display attributes on
+        # records, and use them as the fake's already-authorized scope.
+        records = [
+            record for record in self.records
+            if getattr(record, "client_id", None) == client_id
+            and getattr(record, "clinic_id", None) == clinic_id
+            and (doctor_id is None or getattr(record, "doctor_id", None) == doctor_id)
+        ]
+        records.sort(key=lambda record: (record.created_at or "", record.id or 0), reverse=True)
+        return records[offset:offset + limit]
+
+    async def count_by_client_id(
+        self, client_id: int, clinic_id: int, *, doctor_id: int | None,
+    ) -> int:
+        self.count_by_client_id_calls.append((client_id, clinic_id, doctor_id))
+        return sum(
+            getattr(record, "client_id", None) == client_id
+            and getattr(record, "clinic_id", None) == clinic_id
+            and (doctor_id is None or getattr(record, "doctor_id", None) == doctor_id)
+            for record in self.records
+        )
+
+    async def delete_by_id(self, record_id: int) -> bool:
+        self.delete_by_id_calls.append(record_id)
+        record = self._find_by_id(record_id)
+        if record is None:
+            return False
+        self.records.remove(record)
+        return True
 
     async def mark_generating(self, id: int, updated_at: str) -> None:
         self.mark_generating_calls.append((id, updated_at))
