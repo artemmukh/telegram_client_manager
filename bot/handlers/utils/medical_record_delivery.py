@@ -1,7 +1,10 @@
 from aiogram.types import CallbackQuery, FSInputFile
 
 from bot.models.medical_record import MedicalRecord
-from bot.services.medical_record.medical_record_management import READY_STATUSES, MedicalRecordService
+from bot.services.medical_record.medical_record_management import (
+    READY_STATUSES,
+    MedicalRecordService,
+)
 from bot.utils.medical_record_enums import MedicalRecordStatus
 
 FAILURE_MESSAGE = {
@@ -74,6 +77,38 @@ async def deliver_medical_record(
         return
 
     await callback_query.message.answer_document(FSInputFile(record.file_path))
+
+
+async def deliver_selected_medical_record(
+    callback_query: CallbackQuery,
+    medical_record_service: MedicalRecordService,
+    record_id: int,
+    appointment_id: int,
+    lang: str = "ru",
+) -> None:
+    """Send one still-existing document without falling back to generation."""
+    record = await medical_record_service.get_document_for_appointment(record_id, appointment_id)
+    await callback_query.answer()
+    if record is None or record.status not in READY_STATUSES:
+        return
+
+    if not await _send_document(callback_query, medical_record_service, record):
+        await callback_query.message.answer(FAILURE_MESSAGE.get(lang, FAILURE_MESSAGE["ru"]))
+
+
+async def deliver_ready_medical_records(
+    callback_query: CallbackQuery,
+    medical_record_service: MedicalRecordService,
+    appointment_id: int,
+    lang: str = "ru",
+) -> None:
+    """Send the ready documents only; an empty list is intentionally a no-op."""
+    documents = await medical_record_service.get_ready_documents(appointment_id)
+    await callback_query.answer()
+
+    for record in documents:
+        if not await _send_document(callback_query, medical_record_service, record):
+            await callback_query.message.answer(FAILURE_MESSAGE.get(lang, FAILURE_MESSAGE["ru"]))
 
 
 async def add_medical_record_document(

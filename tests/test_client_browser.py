@@ -272,7 +272,7 @@ async def test_paginate_clients_list_mode_excludes_other_clinics():
 def test_client_card_kb_has_delete_button_with_scoped_callback():
     markup = client_card_kb(client_id=1, mode="list", page=1)
 
-    delete_button = markup.inline_keyboard[2][0]
+    delete_button = markup.inline_keyboard[3][0]
     callback = ClientActionCB.unpack(delete_button.callback_data)
 
     assert callback.action == "delete"
@@ -282,13 +282,18 @@ def test_client_card_kb_has_delete_button_with_scoped_callback():
     assert delete_button.text
 
 
-def test_client_card_kb_adjust_layout_places_delete_before_back_row():
+def test_client_card_kb_adjust_layout_places_documents_then_delete_before_back_row():
     markup = client_card_kb(client_id=1, mode="list", page=1)
 
     row_lengths = [len(row) for row in markup.inline_keyboard]
-    assert row_lengths == [2, 2, 1, 1]
-    assert ClientActionCB.unpack(markup.inline_keyboard[2][0].callback_data).action == "delete"
-    assert ClientPageCB.unpack(markup.inline_keyboard[3][0].callback_data).mode == "list"
+    assert row_lengths == [2, 1, 2, 1, 1]
+    documents_callback = ClientActionCB.unpack(markup.inline_keyboard[1][0].callback_data)
+    assert documents_callback.action == "documents"
+    assert documents_callback.client_id == 1
+    assert documents_callback.mode == "list"
+    assert documents_callback.page == 1
+    assert ClientActionCB.unpack(markup.inline_keyboard[3][0].callback_data).action == "delete"
+    assert ClientPageCB.unpack(markup.inline_keyboard[4][0].callback_data).mode == "list"
 
 
 # --- start_delete: appointment-count warning ---

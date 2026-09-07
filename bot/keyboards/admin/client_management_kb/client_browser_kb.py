@@ -26,6 +26,7 @@ _TEXTS = {
         "page_1_of_1": "Страница 1 из 1",
         "new_appointment": "➕Записать на приём",
         "view_appointments": "📋 Посмотреть записи",
+        "documents": "📄 Документы клиента",
         "edit_full_name_card": "✏️ Изменить ФИ",
         "edit_phone_card": "📞 Изменить телефон",
         "back_to_list": "⬅️ Назад к списку",
@@ -50,6 +51,7 @@ _TEXTS = {
         "page_1_of_1": "1 / 1 sahifa",
         "new_appointment": "➕Qabulga yozish",
         "view_appointments": "📋 Yozuvlarni ko'rish",
+        "documents": "📄 Mijoz hujjatlari",
         "edit_full_name_card": "✏️ F.I.Sh.ni o'zgartirish",
         "edit_phone_card": "📞 Telefonni o'zgartirish",
         "back_to_list": "⬅️ Ro'yxatga qaytish",
@@ -178,6 +180,11 @@ def client_card_kb(client_id: int, mode: str, page: int, lang: str = "ru") -> In
     )
 
     builder.button(
+        text=texts["documents"],
+        callback_data=ClientActionCB(action="documents", client_id=client_id, mode=mode, page=page).pack(),
+    )
+
+    builder.button(
         text=texts["edit_full_name_card"],
         callback_data=ClientActionCB(action="edit_name", client_id=client_id, mode=mode, page=page).pack(),
     )
@@ -201,7 +208,7 @@ def client_card_kb(client_id: int, mode: str, page: int, lang: str = "ru") -> In
             callback_data=ClientPageCB(mode=mode, page=page).pack(),
         )
 
-    builder.adjust(2, 2, 1, 1)
+    builder.adjust(2, 1, 2, 1, 1)
     return builder.as_markup()
 
 

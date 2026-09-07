@@ -20,6 +20,23 @@ SELECT
 FROM medical_records
 """
 
+MEDICAL_RECORD_WITH_APPOINTMENT_DETAILS_SELECT = """
+SELECT
+    mr.id,
+    mr.appointment_id,
+    mr.diagnosis,
+    mr.status,
+    mr.file_path,
+    mr.created_at,
+    mr.updated_at,
+    mr.error_message,
+    a.datetime,
+    doctor.full_name
+FROM medical_records mr
+JOIN appointments a ON a.id = mr.appointment_id
+LEFT JOIN users doctor ON doctor.id = a.admin_id
+"""
+
 
 class MedicalRecordRepository:
     def __init__(self, connection: aiosqlite.Connection):
@@ -171,7 +188,14 @@ class MedicalRecordRepository:
             raise
 
         record_id = cursor.lastrowid
-        return await self._get_by_id(record_id)
+        return await self.get_by_id(record_id)
+
+    async def get_by_id(self, record_id: int) -> MedicalRecord | None:
+        cursor = await self.connection.execute(
+            MEDICAL_RECORD_SELECT + "\nWHERE id = ?",
+            (record_id,),
+        )
+        return self._row_to_medical_record(await cursor.fetchone())
 
     async def get_by_appointment_and_diagnosis(self, appointment_id: int, diagnosis: str) -> MedicalRecord | None:
         cursor = await self.connection.execute(
@@ -186,11 +210,81 @@ class MedicalRecordRepository:
             WHERE appointment_id = ?
               AND status IN (?, ?)
               AND file_path IS NOT NULL
+            ORDER BY created_at DESC, id DESC
             """,
             (appointment_id, MedicalRecordStatus.READY.value, MedicalRecordStatus.READY_PARTIAL.value),
         )
         rows = await cursor.fetchall()
         return [self._row_to_medical_record(row) for row in rows]
+
+    async def list_by_appointment_id(
+        self, appointment_id: int, *, limit: int, offset: int,
+    ) -> list[MedicalRecord]:
+        cursor = await self.connection.execute(
+            MEDICAL_RECORD_SELECT + """
+            WHERE appointment_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (appointment_id, limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_medical_record(row) for row in rows]
+
+    async def count_by_appointment_id(self, appointment_id: int) -> int:
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM medical_records WHERE appointment_id = ?",
+            (appointment_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def list_by_client_id(
+        self,
+        client_id: int,
+        clinic_id: int,
+        *,
+        doctor_id: int | None,
+        limit: int,
+        offset: int,
+    ) -> list[MedicalRecord]:
+        cursor = await self.connection.execute(
+            MEDICAL_RECORD_WITH_APPOINTMENT_DETAILS_SELECT + """
+            WHERE a.client_id = ?
+              AND a.clinic_id = ?
+              AND (? IS NULL OR a.admin_id = ?)
+            ORDER BY mr.created_at DESC, mr.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (client_id, clinic_id, doctor_id, doctor_id, limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_medical_record(row) for row in rows]
+
+    async def count_by_client_id(
+        self, client_id: int, clinic_id: int, *, doctor_id: int | None,
+    ) -> int:
+        cursor = await self.connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM medical_records mr
+            JOIN appointments a ON a.id = mr.appointment_id
+            WHERE a.client_id = ?
+              AND a.clinic_id = ?
+              AND (? IS NULL OR a.admin_id = ?)
+            """,
+            (client_id, clinic_id, doctor_id, doctor_id),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def delete_by_id(self, record_id: int) -> bool:
+        cursor = await self.connection.execute(
+            "DELETE FROM medical_records WHERE id = ?",
+            (record_id,),
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
 
     async def mark_generating(self, id: int, updated_at: str) -> None:
         await self.connection.execute(
@@ -237,13 +331,6 @@ class MedicalRecordRepository:
         )
         await self.connection.commit()
 
-    async def _get_by_id(self, id: int) -> MedicalRecord | None:
-        cursor = await self.connection.execute(
-            MEDICAL_RECORD_SELECT + "\nWHERE id = ?",
-            (id,),
-        )
-        return self._row_to_medical_record(await cursor.fetchone())
-
     def _row_to_medical_record(self, row) -> MedicalRecord | None:
         if row is None:
             return None
@@ -256,4 +343,6 @@ class MedicalRecordRepository:
             created_at=row[5],
             updated_at=row[6],
             error_message=row[7],
+            appointment_datetime=row[8] if len(row) > 8 else None,
+            doctor_full_name=row[9] if len(row) > 9 else None,
         )

@@ -28,6 +28,62 @@ async def medical_record_repo():
     await connection.close()
 
 
+@pytest_asyncio.fixture
+async def linked_medical_record_repo():
+    """Repository fixture with the appointment/user joins used by client pages.
+
+    Keep the existing bare ``medical_record_repo`` fixture unchanged: most
+    legacy repository tests intentionally do not need an appointments table.
+    """
+    connection = await aiosqlite.connect(":memory:")
+    await connection.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, full_name TEXT NOT NULL)")
+    await connection.execute("""
+        CREATE TABLE appointments(
+            id INTEGER PRIMARY KEY,
+            clinic_id INTEGER NOT NULL,
+            client_id INTEGER NOT NULL,
+            admin_id INTEGER,
+            datetime TIMESTAMP NOT NULL,
+            purpose TEXT
+        )
+    """)
+    await connection.executemany(
+        "INSERT INTO users(id, full_name) VALUES (?, ?)",
+        [(7, "Доктор Семёнов"), (8, "Доктор Ким")],
+    )
+    await connection.executemany(
+        """
+        INSERT INTO appointments(id, clinic_id, client_id, admin_id, datetime, purpose)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (101, 1, 10, 7, "2026-09-01 10:00:00", "Кариес 11"),
+            (102, 1, 10, 8, "2026-09-02 10:00:00", "Кариес 12"),
+            (103, 1, 10, 7, "2026-09-03 10:00:00", "Кариес 13"),
+            (104, 1, 10, 7, "2026-09-04 10:00:00", "Кариес 14"),
+            (105, 2, 10, 7, "2026-09-05 10:00:00", "Кариес 15"),
+            (106, 1, 11, 7, "2026-09-06 10:00:00", "Кариес 16"),
+        ],
+    )
+    await connection.commit()
+
+    repo = MedicalRecordRepository(connection)
+    await repo.init()
+    for appointment_id, diagnosis, created_at in [
+        (101, "Документ 101", "2026-09-01 12:00:00"),
+        (102, "Документ 102", "2026-09-02 12:00:00"),
+        (103, "Документ 103", "2026-09-03 12:00:00"),
+        (104, "Документ 104", "2026-09-04 12:00:00"),
+        (105, "Документ 105", "2026-09-05 12:00:00"),
+        (106, "Документ 106", "2026-09-06 12:00:00"),
+    ]:
+        record = await repo.create_pending(appointment_id, diagnosis, created_at)
+        await repo.mark_ready(record.id, f"/tmp/{record.id}.docx", partial=False, updated_at=created_at)
+
+    yield repo
+    await connection.close()
+
+
 @pytest.mark.asyncio
 async def test_create_pending_then_read_round_trip(medical_record_repo):
     created = await medical_record_repo.create_pending(
@@ -166,8 +222,82 @@ async def test_list_ready_by_appointment_id_only_returns_ready_rows_with_file_pa
 
     document_ids = {d.id for d in documents}
     assert document_ids == {ready.id, ready_partial.id}
+    assert [document.id for document in documents] == [ready_partial.id, ready.id]
     assert pending.id not in document_ids
     assert generating.id not in document_ids
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_returns_record_and_none_for_unknown_id(linked_medical_record_repo):
+    record = await linked_medical_record_repo.get_by_id(4)
+
+    assert record is not None
+    assert record.id == 4
+    assert record.appointment_id == 104
+    assert await linked_medical_record_repo.get_by_id(999) is None
+
+
+@pytest.mark.asyncio
+async def test_list_by_appointment_id_pages_newest_first_with_stable_id_tiebreaker(
+    linked_medical_record_repo,
+):
+    second = await linked_medical_record_repo.create_pending(
+        appointment_id=103,
+        diagnosis="Повторный документ 103",
+        created_at="2026-09-03 12:00:00",
+    )
+    await linked_medical_record_repo.mark_ready(
+        second.id,
+        f"/tmp/{second.id}.docx",
+        partial=False,
+        updated_at="2026-09-03 12:00:00",
+    )
+
+    page = await linked_medical_record_repo.list_by_appointment_id(103, limit=1, offset=0)
+    next_page = await linked_medical_record_repo.list_by_appointment_id(103, limit=1, offset=1)
+
+    assert [item.id for item in page] == [second.id]
+    assert [item.id for item in next_page] == [3]
+    assert await linked_medical_record_repo.count_by_appointment_id(103) == 2
+
+
+@pytest.mark.asyncio
+async def test_list_by_client_id_pages_only_records_visible_to_clinic_and_doctor(
+    linked_medical_record_repo,
+):
+    items = await linked_medical_record_repo.list_by_client_id(
+        client_id=10, clinic_id=1, doctor_id=7, limit=2, offset=0,
+    )
+
+    assert [item.id for item in items] == [4, 3]
+    assert all(item.appointment_datetime for item in items)
+    assert all(item.doctor_full_name for item in items)
+    assert [item.appointment_datetime for item in items] == [
+        "2026-09-04 10:00:00",
+        "2026-09-03 10:00:00",
+    ]
+    assert [item.doctor_full_name for item in items] == ["Доктор Семёнов", "Доктор Семёнов"]
+    assert await linked_medical_record_repo.count_by_client_id(10, 1, doctor_id=7) == 3
+
+
+@pytest.mark.asyncio
+async def test_list_by_client_id_applies_clinic_scope_and_offset_without_doctor_filter(
+    linked_medical_record_repo,
+):
+    page = await linked_medical_record_repo.list_by_client_id(
+        client_id=10, clinic_id=1, doctor_id=None, limit=2, offset=2,
+    )
+
+    assert [item.id for item in page] == [2, 1]
+    assert await linked_medical_record_repo.count_by_client_id(10, 1, doctor_id=None) == 4
+
+
+@pytest.mark.asyncio
+async def test_delete_by_id_returns_bool_and_removes_only_existing_record(linked_medical_record_repo):
+    assert await linked_medical_record_repo.delete_by_id(4) is True
+    assert await linked_medical_record_repo.get_by_id(4) is None
+    assert await linked_medical_record_repo.delete_by_id(4) is False
+    assert await linked_medical_record_repo.get_by_id(3) is not None
 
 
 @pytest.mark.asyncio

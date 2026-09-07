@@ -62,9 +62,9 @@ def _finish_cb(appointment_id, mode, page, status_value, post_appt=True):
     ).pack()
 
 
-def _action_cb(action, appointment_id, mode, page, post_appt=False):
+def _action_cb(action, appointment_id, mode, page, value="", post_appt=False):
     return ApptActionCB(
-        action=action, appointment_id=appointment_id, mode=mode, page=page, post_appt=post_appt,
+        action=action, appointment_id=appointment_id, mode=mode, page=page, value=value, post_appt=post_appt,
     ).pack()
 
 
@@ -120,23 +120,22 @@ def test_completed_shows_service_and_price_and_status_menu_no_status_no_time():
     assert _back_cb("list", 1, "completed") in callback_datas
 
 
-def test_completed_shows_get_and_add_medical_record_buttons():
+def test_completed_shows_single_medical_documents_button():
     markup = appointment_card_kb(1, "list", 1, status=AppointmentStatus.COMPLETED, tab="completed")
     callback_datas = _callback_datas(markup)
 
-    assert _action_cb("get_medical_record", 1, "list", 1) in callback_datas
-    assert _action_cb("add_medical_record", 1, "list", 1) in callback_datas
+    assert _action_cb("documents", 1, "list", 1, value="completed") in callback_datas
+    assert _action_cb("get_medical_record", 1, "list", 1) not in callback_datas
+    assert _action_cb("add_medical_record", 1, "list", 1) not in callback_datas
 
 
-def test_medical_record_buttons_shown_only_for_completed():
+def test_medical_documents_button_shown_only_for_completed():
     for status in AppointmentStatus:
         markup = appointment_card_kb(1, "list", 1, status=status)
         callback_datas = _callback_datas(markup)
-        get_present = _action_cb("get_medical_record", 1, "list", 1) in callback_datas
-        add_present = _action_cb("add_medical_record", 1, "list", 1) in callback_datas
+        documents_present = _action_cb("documents", 1, "list", 1) in callback_datas
         expected = status == AppointmentStatus.COMPLETED
-        assert get_present == expected, f"get_medical_record presence mismatch for status={status}"
-        assert add_present == expected, f"add_medical_record presence mismatch for status={status}"
+        assert documents_present == expected, f"documents presence mismatch for status={status}"
 
 
 def test_cancelled_shows_status_menu_and_back_button_only():
