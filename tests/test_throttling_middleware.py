@@ -102,41 +102,41 @@ def bot() -> Bot:
 
 
 @pytest.mark.asyncio
-async def test_sixth_action_is_stopped_after_five_accepted_actions(bot: Bot) -> None:
+async def test_sixteenth_action_is_stopped_after_fifteen_accepted_actions(bot: Bot) -> None:
     """Catches a missing or off-by-one admission check."""
     clock = Clock()
     middleware = ThrottlingMiddleware(clock=clock)
     accepted: list[object] = []
 
-    for second in range(5):
+    for second in range(15):
         clock.now = second
         assert await _call(middleware, _message(bot), bot, accepted) == "handled"
 
-    clock.now = 4
+    clock.now = 14
     assert await _call(middleware, _message(bot), bot, accepted) is None
 
-    assert len(accepted) == 5
+    assert len(accepted) == 15
     request = bot.session.requests[-1]
-    assert request.text == "Слишком много запросов. Попробуйте через 11 сек."
+    assert request.text == "Слишком много запросов. Попробуйте через 16 сек."
 
 
 @pytest.mark.asyncio
-async def test_window_reopens_at_fifteen_seconds_and_rejected_attempts_do_not_extend_it(bot: Bot) -> None:
+async def test_window_reopens_at_thirty_seconds_and_rejected_attempts_do_not_extend_it(bot: Bot) -> None:
     """Catches a cooldown reset based on rejected attempts instead of accepted actions."""
     clock = Clock()
     middleware = ThrottlingMiddleware(clock=clock)
     accepted: list[object] = []
 
-    for second in range(5):
+    for second in range(15):
         clock.now = second
         await _call(middleware, _message(bot), bot, accepted)
 
-    clock.now = 14
+    clock.now = 29
     await _call(middleware, _message(bot), bot, accepted)
-    clock.now = 15
+    clock.now = 30
     assert await _call(middleware, _message(bot), bot, accepted) == "handled"
 
-    assert len(accepted) == 6
+    assert len(accepted) == 16
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_messages_and_callbacks_share_one_limit_and_callbacks_are_always_a
     middleware = ThrottlingMiddleware(clock=clock)
     accepted: list[object] = []
 
-    for _ in range(4):
+    for _ in range(14):
         await _call(middleware, _message(bot, language_code="uz"), bot, accepted)
     await _call(middleware, _callback(bot, language_code="uz"), bot, accepted)
 
@@ -155,9 +155,9 @@ async def test_messages_and_callbacks_share_one_limit_and_callbacks_are_always_a
     clock.now = 2
     await _call(middleware, _callback(bot, language_code="uz"), bot, accepted)
 
-    assert len(accepted) == 5
+    assert len(accepted) == 15
     first_rejection, second_rejection = bot.session.requests[-2:]
-    assert first_rejection.text == "Juda ko‘p so‘rov. 14 soniyadan keyin urinib ko‘ring."
+    assert first_rejection.text == "Juda ko‘p so‘rov. 29 soniyadan keyin urinib ko‘ring."
     assert second_rejection.text is None
 
 
@@ -169,12 +169,12 @@ async def test_limit_is_independent_for_users_and_bots(bot: Bot) -> None:
     accepted: list[object] = []
     second_bot = Bot(token=SECOND_BOT_TOKEN, session=RecordingSession())
 
-    for _ in range(5):
+    for _ in range(15):
         await _call(middleware, _message(bot, user_id=1), bot, accepted)
 
     assert await _call(middleware, _message(bot, user_id=2), bot, accepted) == "handled"
     assert await _call(middleware, _message(second_bot, user_id=1), second_bot, accepted) == "handled"
-    assert len(accepted) == 7
+    assert len(accepted) == 17
 
 
 @pytest.mark.asyncio
@@ -202,10 +202,10 @@ async def test_concurrent_actions_cannot_bypass_the_limit(bot: Bot) -> None:
         await asyncio.sleep(0)
 
     await asyncio.gather(
-        *(middleware(handler, _message(bot), {"bot": bot}) for _ in range(6)),
+        *(middleware(handler, _message(bot), {"bot": bot}) for _ in range(16)),
     )
 
-    assert len(accepted) == 5
+    assert len(accepted) == 15
 
 
 @pytest.mark.asyncio
@@ -221,11 +221,11 @@ async def test_accepted_action_still_counts_when_downstream_handler_fails(bot: B
     with pytest.raises(ValueError, match="handler failed"):
         await middleware(failing_handler, _message(bot), {"bot": bot})
 
-    for _ in range(4):
+    for _ in range(14):
         await _call(middleware, _message(bot), bot, accepted)
     await _call(middleware, _message(bot), bot, accepted)
 
-    assert len(accepted) == 5
+    assert len(accepted) == 15
 
 
 @pytest.mark.asyncio
@@ -234,12 +234,12 @@ async def test_telegram_error_while_notifying_a_rejected_action_is_swallowed(bot
     middleware = ThrottlingMiddleware(clock=Clock())
     accepted: list[object] = []
 
-    for _ in range(5):
+    for _ in range(15):
         await _call(middleware, _message(bot), bot, accepted)
 
     bot.session.fail_next_request = True
     assert await _call(middleware, _message(bot), bot, accepted) is None
-    assert len(accepted) == 5
+    assert len(accepted) == 15
 
 
 @pytest.mark.asyncio
@@ -256,12 +256,12 @@ async def test_registered_zb_limiter_runs_before_inner_middlewares_and_mm_has_no
     async def handle_message(message: Message) -> None:
         handled.append(message)
 
-    for update_id in range(6):
+    for update_id in range(16):
         update = Update(update_id=update_id, message=_message(zb_bot))
         await zb_dispatcher.feed_update(zb_bot, update)
 
-    assert len(handled) == 5
-    assert inner.calls == 5
+    assert len(handled) == 15
+    assert inner.calls == 15
 
     mm_bot = Bot(token=SECOND_BOT_TOKEN, session=RecordingSession())
     mm_dispatcher = Dispatcher()

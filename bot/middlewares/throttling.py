@@ -10,8 +10,8 @@ from aiogram.types import CallbackQuery, TelegramObject
 
 logger = logging.getLogger(__name__)
 
-_MAX_ACTIONS = 5
-_WINDOW_SECONDS = 15.0
+_MAX_ACTIONS = 15
+_WINDOW_SECONDS = 30.0
 _MESSAGES = {
     "ru": "Слишком много запросов. Попробуйте через {seconds} сек.",
     "uz": "Juda ko‘p so‘rov. {seconds} soniyadan keyin urinib ko‘ring.",
