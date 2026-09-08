@@ -58,6 +58,7 @@ from bot.handlers.common.start import create_start_router
 from bot.handlers.registration import create_reg_router
 from bot.middlewares.error import ErrorMiddleware
 from bot.middlewares.logging import LoggingMiddleware
+from bot.middlewares.throttling import register_throttling
 from bot.middlewares.user import UserContextMiddleware
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.blocked_slot_repository import BlockedSlotRepository
@@ -113,6 +114,8 @@ async def main():
     dp["user_repo"] = user_repo  # makes user_repo injectable into filters/handlers
     dp["auth_service"] = auth_service
     dp["appointment_repo"] = appointment_repo
+
+    register_throttling(dp, config.instance)
 
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
