@@ -183,11 +183,11 @@ async def test_events_without_a_human_sender_are_not_limited(bot: Bot) -> None:
     middleware = ThrottlingMiddleware(clock=Clock())
     accepted: list[object] = []
 
-    for _ in range(6):
+    for _ in range(16):
         assert await _call(middleware, _message(bot, with_user=False), bot, accepted) == "handled"
         assert await _call(middleware, _message(bot, is_bot=True), bot, accepted) == "handled"
 
-    assert len(accepted) == 12
+    assert len(accepted) == 32
     assert bot.session.requests == []
 
 
@@ -272,8 +272,8 @@ async def test_registered_zb_limiter_runs_before_inner_middlewares_and_mm_has_no
     async def handle_mm_message(message: Message) -> None:
         mm_handled.append(message)
 
-    for update_id in range(6):
+    for update_id in range(16):
         update = Update(update_id=update_id, message=_message(mm_bot))
         await mm_dispatcher.feed_update(mm_bot, update)
 
-    assert len(mm_handled) == 6
+    assert len(mm_handled) == 16
