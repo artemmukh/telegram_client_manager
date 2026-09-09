@@ -42,6 +42,11 @@ _INVALID_TIME = {
     "uz": "Vaqt noto'g'ri, qaytadan urinib ko'ring.",
 }
 
+_OCCUPIED_SLOT = {
+    "ru": "Это время уже занято. Пожалуйста, выберите другой свободный слот.",
+    "uz": "Bu vaqt band. Iltimos, boshqa bo'sh vaqtni tanlang.",
+}
+
 _COMPLAINT_PROMPT = {
     "ru": "Опишите жалобу или причину визита (от 2 до 100 символов):",
     "uz": "Shikoyat yoki tashrif sababini yozing (2 dan 100 belgigacha):",
@@ -118,6 +123,10 @@ def day_blocked(reason: str, lang: str = "ru") -> str:
 
 def invalid_time(lang: str = "ru") -> str:
     return _INVALID_TIME.get(lang, _INVALID_TIME["ru"])
+
+
+def occupied_slot(lang: str = "ru") -> str:
+    return _OCCUPIED_SLOT.get(lang, _OCCUPIED_SLOT["ru"])
 
 
 def complaint_prompt(lang: str = "ru") -> str:

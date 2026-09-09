@@ -9,12 +9,18 @@ used in test_appointment_invite_handler.py: build the router with mock
 collaborators, pull the decorated callback out of router.callback_query.handlers,
 and invoke it directly with mock aiogram objects.
 """
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from bot.config.booking_config import BOOKING_SLOTS
 from bot.handlers.client.appointment_booking import create_client_booking_router
-from bot.keyboards.client.booking_cb import ClientBookDayCB, ClientBookSlotCB
+from bot.keyboards.client.booking_cb import (
+    ClientBookDayCB,
+    ClientBookOccupiedSlotCB,
+    ClientBookSlotCB,
+)
 from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
@@ -265,7 +271,7 @@ async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_st
     malformed/forged day_iso must short-circuit before any slot lookup or
     state mutation, and answer with a show_alert toast instead of crashing."""
     appointment_management_service = MagicMock()
-    appointment_management_service.get_available_slots = AsyncMock()
+    appointment_management_service.get_day_slot_occupancy = AsyncMock()
 
     notification_service = MagicMock()
 
@@ -282,7 +288,7 @@ async def test_pick_day_with_malformed_day_iso_shows_alert_and_does_not_touch_st
     callback_query.answer.assert_called_once_with("Некорректная дата, попробуйте ещё раз.", show_alert=True)
     callback_query.message.edit_text.assert_not_called()
     state.update_data.assert_not_called()
-    appointment_management_service.get_available_slots.assert_not_called()
+    appointment_management_service.get_day_slot_occupancy.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -399,7 +405,7 @@ async def test_pick_day_with_no_slots_shows_generic_client_wording():
     import bot.messages.booking as msg
 
     appointment_management_service = MagicMock()
-    appointment_management_service.get_available_slots = AsyncMock(return_value=[])
+    appointment_management_service.get_day_slot_occupancy = AsyncMock(return_value=[])
     appointment_management_service.get_day_block_reason = AsyncMock(return_value=None)
 
     router = _build_router(appointment_management_service, MagicMock())
@@ -421,7 +427,7 @@ async def test_pick_day_with_blocked_day_shows_block_reason_unescaped():
     """callback_query.answer(show_alert=True) has no parse_mode -- a reason
     with '<' must reach it verbatim."""
     appointment_management_service = MagicMock()
-    appointment_management_service.get_available_slots = AsyncMock(return_value=[])
+    appointment_management_service.get_day_slot_occupancy = AsyncMock(return_value=[])
     appointment_management_service.get_day_block_reason = AsyncMock(return_value="Ремонт <кабинет>")
 
     router = _build_router(appointment_management_service, MagicMock())
@@ -440,3 +446,86 @@ async def test_pick_day_with_blocked_day_shows_block_reason_unescaped():
     doctor_id_arg, day_arg, _now_arg = appointment_management_service.get_day_block_reason.await_args.args
     assert doctor_id_arg == 42
     assert day_arg.isoformat() == "2026-08-01"
+
+
+@pytest.mark.asyncio
+async def test_pick_day_renders_full_grid_with_locks_for_pending_and_confirmed_appointments():
+    """Client slot selection must show the complete working grid.
+
+    Active PENDING and CONFIRMED appointments are rendered as locked buttons,
+    while the remaining slots remain selectable. Blocked slots are represented
+    by the occupancy service's already-filtered result and therefore do not
+    appear here.
+    """
+    pending = Appointment(
+        clinic_id=1, client_id=99, doctor_id=42, datetime="2026-08-01 10:00",
+        purpose="Осмотр", created_by=CreatedBy.CLIENT,
+        status=AppointmentStatus.PENDING, id=101,
+    )
+    confirmed = Appointment(
+        clinic_id=1, client_id=100, doctor_id=42, datetime="2026-08-01 10:15",
+        purpose="Осмотр", created_by=CreatedBy.ADMIN,
+        status=AppointmentStatus.CONFIRMED, id=102,
+    )
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.get_day_slot_occupancy = AsyncMock(
+        return_value=[
+            (slot, [pending] if slot == "10:00" else [confirmed] if slot == "10:15" else [])
+            for slot in BOOKING_SLOTS
+        ]
+    )
+    notification_service = MagicMock()
+    router = _build_router(appointment_management_service, notification_service)
+    pick_day = _get_handler_by_name(router, "pick_day")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    await pick_day(
+        callback_query, ClientBookDayCB(week_offset=0, day_iso="2026-08-01"), state, _current_user(),
+    )
+
+    appointment_management_service.get_day_slot_occupancy.assert_awaited_once()
+    state.update_data.assert_awaited_once_with(day_iso="2026-08-01")
+    buttons = callback_query.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
+    slot_buttons = [button for row in buttons[:-1] for button in row]
+    assert [button.text for button in slot_buttons] == [
+        f"🔒 {slot}" if slot in {"10:00", "10:15"} else slot for slot in BOOKING_SLOTS
+    ]
+    assert len(slot_buttons) == len(BOOKING_SLOTS)
+    assert ClientBookOccupiedSlotCB.unpack(slot_buttons[0].callback_data).slot == "10:00"
+    assert ClientBookOccupiedSlotCB.unpack(slot_buttons[1].callback_data).slot == "10:15"
+    assert ClientBookSlotCB.unpack(slot_buttons[2].callback_data).slot == "10:30"
+    from bot.states.client.booking_states import ClientBookingStates
+
+    state.set_state.assert_awaited_once_with(ClientBookingStates.choose_slot)
+    assert callback_query.answer.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_pick_occupied_slot_shows_alert_without_touching_fsm_or_message():
+    """A locked client slot only explains the conflict; it cannot advance FSM."""
+    appointment_management_service = MagicMock()
+    notification_service = MagicMock()
+    router = _build_router(appointment_management_service, notification_service)
+    pick_occupied_slot = _get_handler_by_name(router, "pick_occupied_slot")
+
+    callback_query = _make_callback_query()
+    state = _make_state()
+    state.update_data = AsyncMock()
+    state.set_state = AsyncMock()
+
+    await pick_occupied_slot(
+        callback_query, SimpleNamespace(slot="10:00"), state, _current_user(),
+    )
+
+    callback_query.answer.assert_awaited_once_with(
+        "Это время уже занято. Пожалуйста, выберите другой свободный слот.", show_alert=True,
+    )
+    callback_query.message.edit_text.assert_not_called()
+    state.get_data.assert_not_awaited()
+    state.update_data.assert_not_awaited()
+    state.set_state.assert_not_awaited()

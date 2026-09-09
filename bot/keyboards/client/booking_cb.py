@@ -20,3 +20,8 @@ class ClientBookDayCB(CallbackData, prefix="cl_book_day"):
 class ClientBookSlotCB(CallbackData, prefix="cl_book_slot", sep="|"):
     """Выбор времени записи. Отдельный разделитель, т.к. slot содержит ':' (HH:MM)."""
     slot: str
+
+
+class ClientBookOccupiedSlotCB(CallbackData, prefix="cl_book_occupied", sep="|"):
+    """Клиент выбрал занятое время: показываем только пояснение."""
+    slot: str
