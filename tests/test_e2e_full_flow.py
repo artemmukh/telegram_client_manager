@@ -46,7 +46,7 @@ from bot.services.client.client_management import ClientManagement
 from bot.services.client.client_pagination_service import ClientPaginationService
 from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.services.utils.registration import RegistrationService
-from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
 
 CLINIC_TOKEN = "x7A92JdPkLmQe81"
@@ -485,10 +485,9 @@ async def test_self_booking_pending_limit_is_scoped_per_doctor(e2e):
 
 
 @pytest.mark.asyncio
-async def test_appointment_lifecycle_self_booking_pending_direct_edit_then_confirm(e2e):
-    """A client edits the datetime of their own still-PENDING self-booking request
-    directly (same row, no proposal negotiation), then the clinic confirms it at
-    the new time -- the row's id never changes across the edit."""
+async def test_appointment_lifecycle_self_booking_pending_reschedule_then_confirm(e2e):
+    """A client's own PENDING self-booking opens a proposal on the same row,
+    then staff accepts it at the proposed time."""
     client = await _create_registered_client(e2e, "Носирова Дилноза Акмаловна", "+998977005566", 700000555)
 
     booking = await e2e.appointment_management.create_self_booking(
@@ -503,15 +502,18 @@ async def test_appointment_lifecycle_self_booking_pending_direct_edit_then_confi
     )
 
     assert edited.id == booking.id
-    assert edited.datetime == new_datetime
+    assert edited.datetime == booking.datetime
     assert edited.status is AppointmentStatus.PENDING
-    assert edited.proposed_datetime is None
+    assert edited.proposed_datetime == new_datetime
+    assert edited.proposed_by is CreatedBy.CLIENT
 
     stored = await e2e.appointment_repo.get_appointment_by_id(booking.id)
-    assert stored.datetime == new_datetime
+    assert stored.datetime == booking.datetime
     assert stored.status is AppointmentStatus.PENDING
+    assert stored.proposed_datetime == new_datetime
+    assert stored.proposed_by is CreatedBy.CLIENT
 
-    confirmed = await e2e.appointment_management.confirm_pending_request(booking.id, ADMIN_TELEGRAM_ID)
+    confirmed = await e2e.appointment_management.accept_client_reschedule(booking.id, ADMIN_TELEGRAM_ID)
     assert confirmed.id == booking.id
     assert confirmed.status is AppointmentStatus.CONFIRMED
     assert confirmed.datetime == new_datetime

@@ -713,7 +713,7 @@ class AppointmentScheduler:
             if appointment.created_by == CreatedBy.CLIENT:
                 await self.cancel_auto_confirm(appointment_id)
 
-                if appointment.proposed_datetime is not None and appointment.proposed_by == CreatedBy.ADMIN:
+                if appointment.proposed_datetime is not None:
                     proposal_target = replace(appointment, datetime=appointment.proposed_datetime)
                     await self.cancel_pending_expiry(appointment_id)
                     await self.schedule_pending_expiry(proposal_target)

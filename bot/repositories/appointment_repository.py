@@ -610,6 +610,54 @@ class AppointmentRepository:
 
         return cursor.rowcount > 0
 
+    async def try_create_client_reschedule_proposal(
+        self,
+        appointment_id: int,
+        new_datetime: str,
+        expected_datetime: str,
+    ) -> bool:
+        """Atomically turn an undecided client booking into a reschedule proposal."""
+        sql = """
+            UPDATE appointments
+            SET proposed_datetime = ?, proposed_by = 'client'
+            WHERE id = ?
+                AND datetime = ?
+                AND status = 'pending'
+                AND created_by = 'client'
+                AND proposed_datetime IS NULL
+                AND proposed_by IS NULL
+        """
+        cursor = await self.connection.execute(
+            sql,
+            (new_datetime, appointment_id, expected_datetime),
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
+
+    async def try_withdraw_client_reschedule_proposal(
+        self,
+        appointment_id: int,
+        expected_datetime: str,
+        expected_proposed_datetime: str,
+    ) -> bool:
+        """Clear exactly the client proposal that was just created by this flow."""
+        sql = """
+            UPDATE appointments
+            SET proposed_datetime = NULL, proposed_by = NULL
+            WHERE id = ?
+                AND datetime = ?
+                AND status = 'pending'
+                AND created_by = 'client'
+                AND proposed_datetime = ?
+                AND proposed_by = 'client'
+        """
+        cursor = await self.connection.execute(
+            sql,
+            (appointment_id, expected_datetime, expected_proposed_datetime),
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
+
     async def try_apply_new_datetime_immediately(
         self,
         appointment_id: int,
@@ -768,6 +816,33 @@ class AppointmentRepository:
             SELECT id, appointment_id, chat_id, message_id, kind, created_at, compact_text
             FROM appointment_notifications
             WHERE appointment_id = ? AND kind = ?
+            ORDER BY id ASC
+            """,
+            (appointment_id, kind),
+        )
+        rows = await cursor.fetchall()
+        return [
+            AppointmentNotification(
+                id=row[0],
+                appointment_id=row[1],
+                chat_id=row[2],
+                message_id=row[3],
+                kind=row[4],
+                created_at=row[5],
+                compact_text=row[6],
+            )
+            for row in rows
+        ]
+
+    async def get_active_appointment_notifications(
+        self, appointment_id: int, kind: str
+    ) -> list[AppointmentNotification]:
+        """Return tracked action cards, excluding finalized compact activity logs."""
+        cursor = await self.connection.execute(
+            """
+            SELECT id, appointment_id, chat_id, message_id, kind, created_at, compact_text
+            FROM appointment_notifications
+            WHERE appointment_id = ? AND kind = ? AND compact_text IS NULL
             ORDER BY id ASC
             """,
             (appointment_id, kind),

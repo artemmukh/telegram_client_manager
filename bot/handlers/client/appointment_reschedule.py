@@ -11,7 +11,6 @@ from bot.handlers.utils.appointment_slot_helpers import answer_no_slots_for_day
 from bot.handlers.utils.client_utils.appointment_history_helpers import (
     build_history_card_text,
 )
-from bot.handlers.utils.staff_log_delivery_helpers import record_staff_log_delivery
 from bot.keyboards.client.appointment_history_kb import appointment_history_card_kb
 from bot.keyboards.client.appointment_manage_kb import (
     appointment_manage_card_kb,
@@ -42,7 +41,7 @@ from bot.services.utils.date_parser import (
     is_appointment_upcoming,
 )
 from bot.states.client.reschedule_states import ClientRescheduleStates
-from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
@@ -62,11 +61,6 @@ _RESCHEDULE_CONFIRM_PROMPT_TEMPLATE = {
     "uz": "Yozuvning yangi vaqtini tekshiring:\n\n📅 Yangi vaqt: {display}\n\nKo'chirish arizasini yuborishni xohlaysizmi?",
 }
 
-_DIRECT_EDIT_SUCCESS = {
-    "ru": "✅ Время заявки изменено.",
-    "uz": "✅ Ariza vaqti o'zgartirildi.",
-}
-
 _UNKNOWN_CLIENT_LABEL = {
     "ru": "Неизвестный клиент",
     "uz": "Noma'lum mijoz",
@@ -83,6 +77,21 @@ _RESCHEDULE_REQUEST_SENT_TEMPLATE = {
         "Hozirgi vaqt: {old}\n"
         "Taklif qilingan vaqt: {new}"
     ),
+}
+
+_PENDING_BOOKING_CARD_CLOSED = {
+    "ru": "Клиент изменил время записи. Актуальный запрос на перенос отправлен отдельным сообщением.",
+    "uz": "Mijoz yozuv vaqtini o'zgartirdi. Ko'chirish bo'yicha amaldagi so'rov alohida xabarda yuborildi.",
+}
+
+_RESCHEDULE_REQUEST_DELIVERY_FAILED = {
+    "ru": "Не удалось отправить запрос в клинику. Исходная заявка сохранена.",
+    "uz": "Klinikaga so'rov yuborilmadi. Asl ariza saqlandi.",
+}
+
+_RESCHEDULE_REQUEST_STATUS_UNKNOWN = {
+    "ru": "Не удалось отправить запрос в клинику. Проверьте актуальный статус записи.",
+    "uz": "Klinikaga so'rov yuborilmadi. Yozuvning joriy holatini tekshiring.",
 }
 
 
@@ -268,7 +277,83 @@ def create_client_reschedule_router(
 
         await state.clear()
 
-        is_direct_edit = appointment.proposed_datetime is None
+        is_pending_client_reschedule = (
+            appointment.status == AppointmentStatus.PENDING
+            and appointment.created_by == CreatedBy.CLIENT
+            and appointment.proposed_by == CreatedBy.CLIENT
+        )
+        original_datetime = appointment.datetime
+
+        has_staff_delivery = False
+        if notification_service:
+            try:
+                recipients = await appointment_management_service.resolve_notification_recipients(appointment)
+            except Exception:
+                recipients = []
+            for recipient in recipients:
+                message_id = None
+                try:
+                    message_id = await notification_service.notify_staff_reschedule_requested(
+                        recipient.telegram_user_id,
+                        appointment,
+                        current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                    )
+                    if message_id is not None:
+                        has_staff_delivery = True
+                        await appointment_management_service.record_notification(
+                            appointment.id, recipient.telegram_user_id, message_id, kind="reschedule",
+                        )
+                except Exception:
+                    pass  # Graceful fail если не получилось отправить
+
+        is_restored_pending_booking = False
+        delivery_recovery_lost_race = False
+        if is_pending_client_reschedule and not has_staff_delivery:
+            appointment = await appointment_management_service.withdraw_client_reschedule_proposal(
+                appointment.id,
+                callback_query.from_user.id,
+                original_datetime,
+                appointment.proposed_datetime,
+            )
+            is_restored_pending_booking = (
+                appointment.status == AppointmentStatus.PENDING
+                and appointment.created_by == CreatedBy.CLIENT
+                and appointment.datetime == original_datetime
+                and appointment.proposed_datetime is None
+                and appointment.proposed_by is None
+            )
+            delivery_recovery_lost_race = not is_restored_pending_booking
+
+        if notification_service and is_pending_client_reschedule and has_staff_delivery:
+            try:
+                active_booking_cards = await appointment_management_service.get_active_notification_targets(
+                    appointment.id, "booking",
+                )
+            except Exception:
+                active_booking_cards = []
+
+            for notification in active_booking_cards:
+                try:
+                    await notification_service.invalidate_closed_request_message(
+                        notification.chat_id,
+                        notification.message_id,
+                        _PENDING_BOOKING_CARD_CLOSED,
+                    )
+                except Exception:
+                    pass
+
+        if appointment_scheduler:
+            await appointment_scheduler.resync_appointment_jobs(appointment)
+
+        if delivery_recovery_lost_race:
+            message_text = _RESCHEDULE_REQUEST_STATUS_UNKNOWN.get(lang, _RESCHEDULE_REQUEST_STATUS_UNKNOWN["ru"])
+        elif is_restored_pending_booking:
+            message_text = _RESCHEDULE_REQUEST_DELIVERY_FAILED.get(lang, _RESCHEDULE_REQUEST_DELIVERY_FAILED["ru"])
+        else:
+            old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime), lang)
+            new_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime), lang)
+            template = _RESCHEDULE_REQUEST_SENT_TEMPLATE.get(lang, _RESCHEDULE_REQUEST_SENT_TEMPLATE["ru"])
+            message_text = template.format(old=old_display, new=new_display)
 
         if origin == "history" and tab:
             success_kb = appointment_history_card_kb(
@@ -277,52 +362,14 @@ def create_client_reschedule_router(
         else:
             success_kb = appointment_manage_empty_kb(lang)
 
-        if is_direct_edit:
-            message_text = _DIRECT_EDIT_SUCCESS.get(lang, _DIRECT_EDIT_SUCCESS["ru"])
-        else:
-            old_display = format_datetime_for_display(datetime.fromisoformat(appointment.datetime), lang)
-            new_display = format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime), lang)
-            template = _RESCHEDULE_REQUEST_SENT_TEMPLATE.get(lang, _RESCHEDULE_REQUEST_SENT_TEMPLATE["ru"])
-            message_text = template.format(old=old_display, new=new_display)
-        await callback_query.message.edit_text(message_text, reply_markup=success_kb)
-        await callback_query.answer()
-
-        if notification_service:
-            try:
-                recipients = await appointment_management_service.resolve_notification_recipients(appointment)
-            except Exception:
-                recipients = []
-            for recipient in recipients:
-                try:
-                    if is_direct_edit:
-                        delivery = await notification_service.notify_admin_client_changed_time(
-                            recipient.telegram_user_id,
-                            appointment,
-                            current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
-                        )
-                        await record_staff_log_delivery(
-                            appointment_management_service,
-                            notification_service.notifier,
-                            appointment_id=appointment.id,
-                            chat_id=recipient.telegram_user_id,
-                            kind="booking",
-                            delivery=delivery,
-                        )
-                    else:
-                        message_id = await notification_service.notify_staff_reschedule_requested(
-                            recipient.telegram_user_id,
-                            appointment,
-                            current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
-                        )
-                        if message_id is not None:
-                            await appointment_management_service.record_notification(
-                                appointment.id, recipient.telegram_user_id, message_id, kind="reschedule",
-                            )
-                except Exception:
-                    pass  # Graceful fail если не получилось отправить
-
-        if appointment_scheduler:
-            await appointment_scheduler.resync_appointment_jobs(appointment)
+        try:
+            await callback_query.message.edit_text(message_text, reply_markup=success_kb)
+        except Exception:
+            logger.warning("Could not update client reschedule response", exc_info=True)
+        try:
+            await callback_query.answer()
+        except Exception:
+            logger.warning("Could not answer client reschedule callback", exc_info=True)
 
     @router.callback_query(ClientRescheduleCancelCB.filter())
     async def cancel_reschedule(

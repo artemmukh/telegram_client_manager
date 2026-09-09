@@ -819,13 +819,16 @@ class AppointmentManagement:
         self._validate_min_lead_time(validated)
 
         if is_own_pending_self_booking:
-            # Собственная ещё не решённая клиникой заявка клиента — правим datetime
-            # напрямую, без согласования (клиника и так ещё ничего не подтверждала).
             await self._ensure_slot_available(appointment.doctor_id, validated, appointment_id, appointment.client_id)
-            accepted = await self.appointment_repository.try_update_own_pending_datetime(appointment_id, validated)
+            accepted = await self.appointment_repository.try_create_client_reschedule_proposal(
+                appointment_id,
+                validated,
+                appointment.datetime,
+            )
             if not accepted:
                 await self._raise_already_decided(appointment_id, _RESCHEDULE_ALREADY_DECIDED_MESSAGE, kind="reschedule")
-            appointment.datetime = validated
+            appointment.proposed_datetime = validated
+            appointment.proposed_by = CreatedBy.CLIENT
             return appointment
 
         await self.appointment_repository.update_proposed_datetime(appointment_id, validated)
@@ -834,6 +837,29 @@ class AppointmentManagement:
         appointment.proposed_by = CreatedBy.CLIENT
 
         return appointment
+
+    async def withdraw_client_reschedule_proposal(
+        self,
+        appointment_id: int,
+        telegram_user_id: int,
+        expected_datetime: str,
+        expected_proposed_datetime: str,
+    ) -> Appointment:
+        """Restore an own pending booking when its new staff request was not delivered."""
+        if await self.get_appointment_for_client(appointment_id, telegram_user_id) is None:
+            raise AppointmentNotFoundError()
+
+        await self.appointment_repository.try_withdraw_client_reschedule_proposal(
+            appointment_id,
+            expected_datetime,
+            expected_proposed_datetime,
+        )
+
+        current = await self.get_appointment_for_client(appointment_id, telegram_user_id)
+        if current is None:
+            raise AppointmentNotFoundError()
+
+        return current
 
     async def accept_client_reschedule(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
@@ -955,6 +981,11 @@ class AppointmentManagement:
         notifications = await self.appointment_repository.get_appointment_notifications(appointment_id, kind)
 
         return [n for n in notifications if n.chat_id != actor_chat_id]
+
+    async def get_active_notification_targets(
+        self, appointment_id: int, kind: str
+    ) -> list[AppointmentNotification]:
+        return await self.appointment_repository.get_active_appointment_notifications(appointment_id, kind)
 
     async def delete_appointment(self, appointment: Appointment) -> None:
         if not await self.appointment_repository.appointment_exists(appointment.id):
