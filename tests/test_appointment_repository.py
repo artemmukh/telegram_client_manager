@@ -1860,6 +1860,143 @@ async def test_try_update_own_pending_datetime_raises_slot_unavailable_on_collis
         await connection.close()
 
 
+# --- client reschedule proposal CAS and active booking-card selection ---
+
+
+@pytest.mark.asyncio
+async def test_try_create_client_reschedule_proposal_keeps_original_datetime(appointment_setup):
+    appointment_repo, user = appointment_setup
+    appointment = await appointment_repo.create_appointment(
+        _client_pending_appointment(user.ID, None, "2026-07-01 10:00")
+    )
+    original_datetime = appointment.datetime
+
+    result = await appointment_repo.try_create_client_reschedule_proposal(
+        appointment.id, "2026-07-05 11:00", original_datetime,
+    )
+
+    assert result is True
+    updated = await appointment_repo.get_appointment_by_id(appointment.id)
+    assert updated.datetime == "2026-07-01 10:00"
+    assert updated.status is AppointmentStatus.PENDING
+    assert updated.proposed_datetime == "2026-07-05 11:00"
+    assert updated.proposed_by is CreatedBy.CLIENT
+
+
+@pytest.mark.asyncio
+async def test_try_create_client_reschedule_proposal_is_atomic_when_already_proposed(appointment_setup):
+    appointment_repo, user = appointment_setup
+    appointment = await appointment_repo.create_appointment(
+        _client_pending_appointment(user.ID, None, "2026-07-01 10:00")
+    )
+    original_datetime = appointment.datetime
+    await appointment_repo.try_create_client_reschedule_proposal(
+        appointment.id, "2026-07-04 10:00", original_datetime,
+    )
+
+    result = await appointment_repo.try_create_client_reschedule_proposal(
+        appointment.id, "2026-07-05 11:00", original_datetime,
+    )
+
+    assert result is False
+    updated = await appointment_repo.get_appointment_by_id(appointment.id)
+    assert updated.datetime == "2026-07-01 10:00"
+    assert updated.proposed_datetime == "2026-07-04 10:00"
+    assert updated.proposed_by is CreatedBy.CLIENT
+
+
+@pytest.mark.asyncio
+async def test_try_create_client_reschedule_proposal_rejects_expected_datetime_mismatch(appointment_setup):
+    appointment_repo, user = appointment_setup
+    appointment = await appointment_repo.create_appointment(
+        _client_pending_appointment(user.ID, None, "2026-07-01 10:00")
+    )
+    original_datetime = appointment.datetime
+    appointment.datetime = "2026-07-02 10:00"
+    await appointment_repo.update_appointment(appointment.id, appointment)
+
+    result = await appointment_repo.try_create_client_reschedule_proposal(
+        appointment.id, "2026-07-05 11:00", original_datetime,
+    )
+
+    assert result is False
+    updated = await appointment_repo.get_appointment_by_id(appointment.id)
+    assert updated.datetime == "2026-07-02 10:00"
+    assert updated.proposed_datetime is None
+    assert updated.proposed_by is None
+
+
+@pytest.mark.asyncio
+async def test_get_active_appointment_notifications_excludes_historical_compact_logs(appointment_setup):
+    appointment_repo, user = appointment_setup
+    appointment = await appointment_repo.create_appointment(
+        _client_pending_appointment(user.ID, None, "2026-07-01 10:00")
+    )
+    await appointment_repo.add_appointment_notification(appointment.id, 101, 1, "booking")
+    await appointment_repo.add_appointment_notification(
+        appointment.id, 101, 2, "booking", compact_text="✅ Старый результат",
+    )
+    await appointment_repo.add_appointment_notification(appointment.id, 101, 3, "reschedule")
+
+    active = await appointment_repo.get_active_appointment_notifications(appointment.id, "booking")
+
+    assert [(item.chat_id, item.message_id, item.compact_text) for item in active] == [(101, 1, None)]
+
+
+@pytest.mark.asyncio
+async def test_try_withdraw_client_reschedule_proposal_clears_matching_proposal(appointment_setup):
+    appointment_repo, user = appointment_setup
+    appointment = await appointment_repo.create_appointment(
+        _client_pending_appointment(user.ID, None, "2026-07-01 10:00")
+    )
+    await appointment_repo.try_create_client_reschedule_proposal(
+        appointment.id, "2026-07-05 11:00", appointment.datetime,
+    )
+
+    result = await appointment_repo.try_withdraw_client_reschedule_proposal(
+        appointment.id, appointment.datetime, "2026-07-05 11:00",
+    )
+
+    assert result is True
+    restored = await appointment_repo.get_appointment_by_id(appointment.id)
+    assert restored.datetime == "2026-07-01 10:00"
+    assert restored.status is AppointmentStatus.PENDING
+    assert restored.proposed_datetime is None
+    assert restored.proposed_by is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["datetime", "status", "proposal"])
+async def test_try_withdraw_client_reschedule_proposal_rejects_stale_row(appointment_setup, mutation):
+    appointment_repo, user = appointment_setup
+    appointment = await appointment_repo.create_appointment(
+        _client_pending_appointment(user.ID, None, "2026-07-01 10:00")
+    )
+    original_datetime = appointment.datetime
+    await appointment_repo.try_create_client_reschedule_proposal(
+        appointment.id, "2026-07-05 11:00", original_datetime,
+    )
+    if mutation == "datetime":
+        appointment.datetime = "2026-07-02 10:00"
+    elif mutation == "status":
+        appointment.status = AppointmentStatus.CONFIRMED
+    else:
+        appointment.proposed_datetime = "2026-07-06 11:00"
+        await appointment_repo.update_proposed_datetime(appointment.id, appointment.proposed_datetime)
+        await appointment_repo.update_proposed_by(appointment.id, CreatedBy.CLIENT)
+    if mutation != "proposal":
+        await appointment_repo.update_appointment(appointment.id, appointment)
+
+    result = await appointment_repo.try_withdraw_client_reschedule_proposal(
+        appointment.id, original_datetime, "2026-07-05 11:00",
+    )
+
+    assert result is False
+    unchanged = await appointment_repo.get_appointment_by_id(appointment.id)
+    assert unchanged.proposed_datetime == ("2026-07-06 11:00" if mutation == "proposal" else "2026-07-05 11:00")
+    assert unchanged.proposed_by is CreatedBy.CLIENT
+
+
 @pytest.mark.asyncio
 async def test_init_with_max_bookings_per_slot_one_creates_active_index():
     """max_bookings_per_slot == 1 (the widened gate added alongside None) must

@@ -16,6 +16,7 @@ from bot.keyboards.client.reschedule_cb import (
     ClientRescheduleSubmitCB,
 )
 from bot.models.appointment import Appointment
+from bot.models.appointment_notification import AppointmentNotification
 from bot.models.user import User
 from bot.states.client.reschedule_states import ClientRescheduleStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
@@ -65,21 +66,31 @@ def _make_state():
 
 
 @pytest.mark.asyncio
-async def test_submit_reschedule_direct_edit_branch_notifies_and_reschedules_pending_expiry():
-    """PENDING result (direct edit): admin gets notify_admin_client_changed_time,
-    scheduler resyncs the full job set via resync_appointment_jobs -- and the
-    CONFIRMED-branch call (schedule_reschedule_expiry) must NOT fire."""
+async def test_submit_reschedule_pending_client_booking_closes_old_card_and_sends_reschedule_request():
+    """PENDING self-booking uses the same visible request card as other reschedules.
+
+    The old booking action card is closed without touching historical compact logs;
+    staff receive a fresh actionable reschedule notification and its delivery is
+    persisted as ``reschedule``.
+    """
     resulting_appointment = _appointment(AppointmentStatus.PENDING)
+    resulting_appointment.proposed_datetime = "2026-08-02 10:00"
+    resulting_appointment.proposed_by = CreatedBy.CLIENT
 
     appointment_management_service = MagicMock()
     appointment_management_service.request_reschedule_by_client = AsyncMock(return_value=resulting_appointment)
     appointment_management_service.resolve_notification_recipients = AsyncMock(
         return_value=[User(full_name="Врач", phone="+998900000000", role=Role.ADMIN, telegram_user_id=999, ID=42)]
     )
+    appointment_management_service.get_active_notification_targets = AsyncMock(
+        return_value=[AppointmentNotification(1, 777, 1, "booking", id=11)]
+    )
+    appointment_management_service.record_notification = AsyncMock()
 
     notification_service = MagicMock()
     notification_service.notify_admin_client_changed_time = AsyncMock()
-    notification_service.notify_staff_reschedule_requested = AsyncMock()
+    notification_service.notify_staff_reschedule_requested = AsyncMock(return_value=987)
+    notification_service.invalidate_closed_request_message = AsyncMock()
 
     appointment_scheduler = MagicMock()
     appointment_scheduler.resync_appointment_jobs = AsyncMock()
@@ -94,11 +105,124 @@ async def test_submit_reschedule_direct_edit_branch_notifies_and_reschedules_pen
         _make_callback_query(), ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user(),
     )
 
-    notification_service.notify_admin_client_changed_time.assert_awaited_once()
-    notification_service.notify_staff_reschedule_requested.assert_not_awaited()
+    notification_service.notify_admin_client_changed_time.assert_not_awaited()
+    notification_service.notify_staff_reschedule_requested.assert_awaited_once()
+    appointment_management_service.get_active_notification_targets.assert_awaited_once_with(
+        1, "booking",
+    )
+    notification_service.invalidate_closed_request_message.assert_awaited_once()
+    assert notification_service.invalidate_closed_request_message.await_args.args[:2] == (777, 1)
+    appointment_management_service.record_notification.assert_awaited_once_with(
+        1, 999, 987, kind="reschedule",
+    )
 
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(resulting_appointment)
     appointment_scheduler.schedule_reschedule_expiry.assert_not_awaited()
+
+
+def _pending_reschedule_handler_dependencies(*, message_edit=None, delivery_id=987):
+    resulting_appointment = _appointment(AppointmentStatus.PENDING)
+    resulting_appointment.proposed_datetime = "2026-08-02 10:00"
+    resulting_appointment.proposed_by = CreatedBy.CLIENT
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.request_reschedule_by_client = AsyncMock(return_value=resulting_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(
+        return_value=[User(full_name="Врач", phone="+998900000000", role=Role.ADMIN, telegram_user_id=999, ID=42)]
+    )
+    appointment_management_service.get_active_notification_targets = AsyncMock(
+        return_value=[AppointmentNotification(1, 777, 1, "booking", id=11)]
+    )
+    appointment_management_service.record_notification = AsyncMock()
+    appointment_management_service.withdraw_client_reschedule_proposal = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.notify_staff_reschedule_requested = AsyncMock(return_value=delivery_id)
+    notification_service.invalidate_closed_request_message = AsyncMock()
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+    callback_query = _make_callback_query()
+    if message_edit is not None:
+        callback_query.message.edit_text = message_edit
+    router = create_client_reschedule_router(
+        appointment_management_service, notification_service, appointment_scheduler,
+    )
+    return router, callback_query, resulting_appointment, appointment_management_service, notification_service, appointment_scheduler
+
+
+@pytest.mark.asyncio
+async def test_submit_reschedule_with_no_staff_delivery_withdraws_proposal_and_resyncs_restored_appointment():
+    router, callback_query, proposal, management, notifications, scheduler = _pending_reschedule_handler_dependencies(
+        delivery_id=None,
+    )
+    restored = _appointment(AppointmentStatus.PENDING)
+    restored.datetime = "2026-08-01 10:00"
+    management.withdraw_client_reschedule_proposal.return_value = restored
+    management.record_notification = AsyncMock()
+    notifications.notify_staff_reschedule_requested = AsyncMock(return_value=None)
+    submit = _get_submit_reschedule_handler(router)
+
+    await submit(callback_query, ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user())
+
+    management.withdraw_client_reschedule_proposal.assert_awaited_once()
+    management.get_active_notification_targets.assert_not_awaited()
+    notifications.invalidate_closed_request_message.assert_not_awaited()
+    scheduler.resync_appointment_jobs.assert_awaited_once_with(restored)
+    callback_query.message.edit_text.assert_awaited_once()
+    failure_text = callback_query.message.edit_text.await_args.args[0]
+    assert "не удалось" in failure_text.lower() or "не отправ" in failure_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_submit_reschedule_with_withdrawal_race_shows_status_unknown_for_changed_current_booking():
+    """A withdrawal CAS may lose to a concurrent staff time change. Even if the
+    returned row is pending/client-created with no proposal, a changed datetime
+    is not the original booking and must produce a neutral status message."""
+    router, callback_query, proposal, management, notifications, scheduler = _pending_reschedule_handler_dependencies(
+        delivery_id=None,
+    )
+    current = _appointment(AppointmentStatus.PENDING)
+    current.datetime = "2026-08-03 10:00"
+    management.withdraw_client_reschedule_proposal.return_value = current
+    notifications.notify_staff_reschedule_requested = AsyncMock(return_value=None)
+    submit = _get_submit_reschedule_handler(router)
+
+    await submit(callback_query, ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user())
+
+    scheduler.resync_appointment_jobs.assert_awaited_once_with(current)
+    rendered_text = callback_query.message.edit_text.await_args.args[0]
+    assert "Исходная заявка сохранена" not in rendered_text
+    assert "Проверьте актуальный статус записи" in rendered_text
+
+
+@pytest.mark.asyncio
+async def test_submit_reschedule_delivery_record_failure_keeps_proposal_and_closes_old_cards():
+    router, callback_query, proposal, management, notifications, scheduler = _pending_reschedule_handler_dependencies()
+    management.record_notification.side_effect = RuntimeError("database unavailable")
+    submit = _get_submit_reschedule_handler(router)
+
+    await submit(callback_query, ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user())
+
+    management.withdraw_client_reschedule_proposal.assert_not_awaited()
+    management.get_active_notification_targets.assert_awaited_once_with(1, "booking")
+    notifications.invalidate_closed_request_message.assert_awaited_once()
+    assert notifications.invalidate_closed_request_message.await_args.args[:2] == (777, 1)
+    scheduler.resync_appointment_jobs.assert_awaited_once_with(proposal)
+
+
+@pytest.mark.asyncio
+async def test_submit_reschedule_edit_failure_does_not_abort_staff_delivery_or_resync():
+    failing_edit = AsyncMock(side_effect=RuntimeError("client message unavailable"))
+    router, callback_query, proposal, management, notifications, scheduler = _pending_reschedule_handler_dependencies(
+        message_edit=failing_edit,
+    )
+    submit = _get_submit_reschedule_handler(router)
+
+    await submit(callback_query, ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user())
+
+    notifications.notify_staff_reschedule_requested.assert_awaited_once()
+    scheduler.resync_appointment_jobs.assert_awaited_once_with(proposal)
 
 
 @pytest.mark.asyncio

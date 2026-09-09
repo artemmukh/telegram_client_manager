@@ -4239,6 +4239,42 @@ async def test_resync_appointment_jobs_pending_client_admin_proposal_anchors_to_
 
 
 @pytest.mark.asyncio
+async def test_resync_appointment_jobs_pending_client_client_proposal_anchors_to_proposed_datetime(
+    appointment_scheduler, scheduler, sample_appointment
+):
+    """A client-requested proposal on a pending self-booking must use the
+    proposed slot for expiry and proposal-reminder scheduling."""
+    scheduler.start()
+
+    sample_appointment.status = AppointmentStatus.PENDING
+    sample_appointment.created_by = CreatedBy.CLIENT
+    proposed_dt = _current_tashkent_time() + timedelta(days=5)
+    sample_appointment.proposed_datetime = proposed_dt.isoformat()
+    sample_appointment.proposed_by = CreatedBy.CLIENT
+
+    await appointment_scheduler.resync_appointment_jobs(sample_appointment)
+
+    jobs = {job.id: job.next_run_time for job in scheduler.get_jobs()}
+    assert set(jobs) == {
+        f"appt_{sample_appointment.id}_expire",
+        f"appt_{sample_appointment.id}_propose_reminder",
+    }
+
+    expected_expiry = proposed_dt - timedelta(hours=2)
+    expected_reminder = proposed_dt - timedelta(hours=3)
+    actual_expiry = jobs[f"appt_{sample_appointment.id}_expire"]
+    actual_reminder = jobs[f"appt_{sample_appointment.id}_propose_reminder"]
+    if actual_expiry.tzinfo:
+        expected_expiry = expected_expiry.replace(tzinfo=actual_expiry.tzinfo)
+    if actual_reminder.tzinfo:
+        expected_reminder = expected_reminder.replace(tzinfo=actual_reminder.tzinfo)
+    assert abs((actual_expiry - expected_expiry).total_seconds()) < 1
+    assert abs((actual_reminder - expected_reminder).total_seconds()) < 1
+
+    scheduler.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
 async def test_resync_appointment_jobs_pending_admin_created_no_proposal_schedules_pending_expiry_only(
     appointment_scheduler, scheduler, sample_appointment
 ):
