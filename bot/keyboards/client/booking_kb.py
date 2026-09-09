@@ -8,8 +8,10 @@ from bot.keyboards.client.booking_cb import (
     ClientBookDayCB,
     ClientBookDayPageCB,
     ClientBookDoctorCB,
+    ClientBookOccupiedSlotCB,
     ClientBookSlotCB,
 )
+from bot.models.appointment import Appointment
 from bot.models.user import User
 
 _WEEKDAY_LABELS = {
@@ -92,16 +94,24 @@ def booking_day_kb(
 
 
 def booking_slot_kb(
-    slots: list[str], cancel_callback_data: str = "client_appointment_menu", lang: str = "ru"
+    slot_occupancy: list[tuple[str, list[Appointment]]],
+    cancel_callback_data: str = "client_appointment_menu",
+    lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    for slot in slots:
-        builder.button(text=slot, callback_data=ClientBookSlotCB(slot=slot).pack())
+    for slot, occupants in slot_occupancy:
+        if occupants:
+            builder.button(
+                text=f"🔒 {slot}",
+                callback_data=ClientBookOccupiedSlotCB(slot=slot).pack(),
+            )
+        else:
+            builder.button(text=slot, callback_data=ClientBookSlotCB(slot=slot).pack())
 
-    rows = [4] * (len(slots) // 4)
-    if len(slots) % 4:
-        rows.append(len(slots) % 4)
+    rows = [4] * (len(slot_occupancy) // 4)
+    if len(slot_occupancy) % 4:
+        rows.append(len(slot_occupancy) % 4)
 
     builder.button(text=msg.cancel_label(lang), callback_data=cancel_callback_data)
     rows.append(1)

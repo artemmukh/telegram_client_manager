@@ -13,6 +13,7 @@ from bot.keyboards.client.booking_cb import (
     ClientBookDayCB,
     ClientBookDayPageCB,
     ClientBookDoctorCB,
+    ClientBookOccupiedSlotCB,
     ClientBookSlotCB,
 )
 from bot.keyboards.client.booking_kb import (
@@ -145,9 +146,11 @@ def create_client_booking_router(
 
         now = get_current_tashkent_datetime()
         data = await state.get_data()
-        slots = await appointment_management_service.get_available_slots(data["staff_user_id"], day, now)
+        slot_occupancy = await appointment_management_service.get_day_slot_occupancy(
+            data["staff_user_id"], day, now
+        )
 
-        if not slots:
+        if not slot_occupancy:
             await answer_no_slots_for_day(
                 appointment_management_service, callback_query, data["staff_user_id"], day, now,
                 msg.no_slots_for_day(lang), lang,
@@ -159,7 +162,11 @@ def create_client_booking_router(
 
         await callback_query.message.edit_text(
             msg.choose_time_prompt(day, lang),
-            reply_markup=booking_slot_kb(slots, cancel_callback_data="client_book_back_to_day", lang=lang),
+            reply_markup=booking_slot_kb(
+                slot_occupancy,
+                cancel_callback_data="client_book_back_to_day",
+                lang=lang,
+            ),
         )
         await callback_query.answer()
 
@@ -191,6 +198,15 @@ def create_client_booking_router(
             reply_markup=booking_cancel_kb(cancel_callback_data="client_book_back_to_day", lang=lang),
         )
         await callback_query.answer()
+
+    @router.callback_query(ClientBookOccupiedSlotCB.filter())
+    async def pick_occupied_slot(
+        callback_query: CallbackQuery,
+        callback_data: ClientBookOccupiedSlotCB,
+        state: FSMContext,
+        current_user: User,
+    ) -> None:
+        await callback_query.answer(msg.occupied_slot(current_user.language), show_alert=True)
 
     @router.message(ClientBookingStates.complaint, F.text)
     async def process_complaint(message: Message, state: FSMContext, current_user: User) -> None:
