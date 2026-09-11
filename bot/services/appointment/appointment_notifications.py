@@ -25,6 +25,10 @@ from bot.models.appointment import Appointment
 from bot.models.user import User
 from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.appointment.appointment_decision_reminders import (
+    BOOKING_DECISION_REMINDER_KIND,
+    RESCHEDULE_DECISION_REMINDER_KIND,
+)
 from bot.services.utils.date_parser import (
     build_reschedule_proposal_line,
     format_datetime_for_display,
@@ -163,6 +167,17 @@ _PENDING_REQUEST_EXPIRED_ADMIN_INVITE = {
 _PENDING_REQUEST_EXPIRED_CLIENT_REQUEST = {
     "ru": "⌛ Ваша заявка на запись истекла без ответа клиники.",
     "uz": "⌛ Sizning yozilish arizangiz klinika javobisiz muddati tugadi.",
+}
+
+_STAFF_DECISION_REMINDER_TEXT = {
+    "ru": {
+        BOOKING_DECISION_REMINDER_KIND: "⏰ Заявка №{appointment_id} всё ещё ожидает решения врача.",
+        RESCHEDULE_DECISION_REMINDER_KIND: "⏰ Перенос по заявке №{appointment_id} всё ещё ожидает решения врача.",
+    },
+    "uz": {
+        BOOKING_DECISION_REMINDER_KIND: "⏰ {appointment_id}-raqamli ariza hali ham shifokor qarorini kutmoqda.",
+        RESCHEDULE_DECISION_REMINDER_KIND: "⏰ {appointment_id}-raqamli ko'chirish hali ham shifokor qarorini kutmoqda.",
+    },
 }
 
 _STAFF_PENDING_REQUEST_EXPIRED = {
@@ -607,6 +622,13 @@ def admin_proposal_reminder_text(lang: str = "ru") -> str:
     return _ADMIN_PROPOSAL_REMINDER.get(lang, _ADMIN_PROPOSAL_REMINDER["ru"])
 
 
+def staff_decision_reminder_text(appointment_id: int, kind: str, lang: str = "ru") -> str:
+    resolved_lang = lang if lang in _STAFF_DECISION_REMINDER_TEXT else "ru"
+    templates = _STAFF_DECISION_REMINDER_TEXT[resolved_lang]
+    template = templates.get(kind, templates[BOOKING_DECISION_REMINDER_KIND])
+    return template.format(appointment_id=appointment_id)
+
+
 def staff_booking_confirmed_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
     return _STAFF_BOOKING_CONFIRMED.get(lang, _STAFF_BOOKING_CONFIRMED["ru"]).format(
         client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
@@ -898,12 +920,19 @@ class AppointmentNotificationService:
         lang: str,
         reply_to_message_id: int | None = None,
         with_details: bool = True,
+        allow_sending_without_reply: bool | None = None,
     ) -> StaffLogDelivery:
+        send_kwargs = {
+            "chat_id": staff_telegram_id,
+            "text": compact_text,
+            "reply_markup": None,
+            "reply_to_message_id": reply_to_message_id,
+        }
+        if allow_sending_without_reply is not None:
+            send_kwargs["allow_sending_without_reply"] = allow_sending_without_reply
+
         message_id = await self.notifier.send_message(
-            chat_id=staff_telegram_id,
-            text=compact_text,
-            reply_markup=None,
-            reply_to_message_id=reply_to_message_id,
+            **send_kwargs,
         )
         return StaffLogDelivery(
             message_id=message_id,
@@ -911,6 +940,55 @@ class AppointmentNotificationService:
             lang=lang,
             details_available=with_details,
         )
+
+    async def notify_staff_decision_reminder(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        *,
+        kind: str,
+        reply_to_message_id: int | None,
+    ) -> bool:
+        """Send and persist one strict-reply reminder for a live staff action card."""
+        if not appointment.id or not reply_to_message_id:
+            return False
+
+        if kind not in {BOOKING_DECISION_REMINDER_KIND, RESCHEDULE_DECISION_REMINDER_KIND}:
+            raise ValueError(f"Unsupported staff decision reminder kind: {kind}")
+
+        lang = await self._resolve_lang(staff_telegram_id)
+        compact_text = staff_decision_reminder_text(appointment.id, kind, lang)
+        delivery = await self._send_staff_log(
+            staff_telegram_id,
+            appointment,
+            compact_text,
+            lang=lang,
+            reply_to_message_id=reply_to_message_id,
+            allow_sending_without_reply=False,
+        )
+
+        await self.appointment_repo.add_appointment_notification(
+            appointment.id,
+            staff_telegram_id,
+            delivery.message_id,
+            kind,
+            delivery.compact_text,
+        )
+
+        try:
+            await self.notifier.try_edit_message_text(
+                chat_id=staff_telegram_id,
+                message_id=delivery.message_id,
+                text=delivery.compact_text,
+                reply_markup=appointment_log_details_kb(appointment.id, lang),
+            )
+        except Exception as error:  # noqa: BLE001 - log persistence already succeeded
+            logger.warning(
+                f"Failed to add Details keyboard to staff decision reminder for appointment "
+                f"{appointment.id}: {error}"
+            )
+
+        return True
 
     async def notify_admin_upcoming_appointment(
         self,

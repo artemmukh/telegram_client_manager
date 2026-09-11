@@ -9,6 +9,18 @@ from bot.exceptions.appointment_exceptions import (
     JobSchedulingError,
 )
 from bot.models.appointment import Appointment
+from bot.services.appointment.appointment_decision_reminders import (
+    BOOKING_DECISION_REMINDER_KIND,
+    DECISION_REMINDER_INTERVAL,
+    DECISION_REMINDER_KINDS,
+    RESCHEDULE_DECISION_REMINDER_KIND,
+    decision_reminder_deadline,
+    decision_reminder_job_id,
+    decision_reminder_kind,
+    decision_reminder_origin,
+    decision_reminder_source_kind,
+    next_decision_reminder_run,
+)
 from bot.services.appointment.appointment_jobs import (
     auto_complete_appointment_job,
     auto_confirm_pending_job,
@@ -18,6 +30,7 @@ from bot.services.appointment.appointment_jobs import (
     mark_appointment_completed_job,
     send_proposal_reminder_job,
     send_reminder_job,
+    send_staff_decision_reminder_job,
 )
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
@@ -471,6 +484,123 @@ class AppointmentScheduler:
                 f"Failed to cancel pending expiry for appointment {appointment_id}: {e}"
             )
 
+    async def _active_decision_reminder_targets(self, appointment: Appointment, kind: str):
+        source_kind = decision_reminder_source_kind(kind)
+        get_targets = getattr(self.appointment_management, "get_active_notification_targets", None)
+        if get_targets is None:
+            return []
+        try:
+            targets = await get_targets(appointment.id, source_kind)
+        except Exception as error:  # noqa: BLE001 - missing anchors simply disable the reminder
+            logger.warning(
+                f"Failed to resolve decision reminder anchors for appointment {appointment.id}: {error}"
+            )
+            return []
+        return targets if isinstance(targets, list) else []
+
+    async def _schedule_decision_reminder(self, appointment: Appointment, kind: str) -> None:
+        if not appointment.id:
+            return
+
+        targets = await self._active_decision_reminder_targets(appointment, kind)
+        origin = decision_reminder_origin(appointment, kind, targets)
+        if origin is None:
+            await self._cancel_decision_reminder(appointment.id, kind)
+            return
+
+        now = _current_tashkent_time()
+        deadline = decision_reminder_deadline(appointment, kind)
+        run_window = next_decision_reminder_run(origin, now, deadline)
+        if run_window is None:
+            await self._cancel_decision_reminder(appointment.id, kind)
+            return
+
+        first_run, last_run = run_window
+        job_id = decision_reminder_job_id(appointment.id, kind)
+        try:
+            self.scheduler.add_job(
+                send_staff_decision_reminder_job,
+                "interval",
+                hours=DECISION_REMINDER_INTERVAL.total_seconds() / 3600,
+                start_date=first_run,
+                end_date=last_run,
+                args=(appointment.id,),
+                id=job_id,
+                replace_existing=True,
+                coalesce=True,
+            )
+        except Exception as error:
+            scheduling_error = JobSchedulingError(
+                f"Failed to schedule staff decision reminder job {job_id}: {error}"
+            )
+            logger.error(str(scheduling_error))
+            return
+
+        logger.info(
+            f"Scheduled staff decision reminder {job_id} from {first_run.isoformat()} "
+            f"through {last_run.isoformat()}"
+        )
+
+    async def _cancel_decision_reminder(self, appointment_id: int, kind: str) -> None:
+        from apscheduler.jobstores.base import JobLookupError
+
+        job_id = decision_reminder_job_id(appointment_id, kind)
+        try:
+            self.scheduler.remove_job(job_id)
+        except JobLookupError:
+            logger.debug(f"Decision reminder job {job_id} does not exist")
+        except Exception as error:
+            cancellation_error = JobCancellationError(
+                f"Failed to remove decision reminder job {job_id}: {error}"
+            )
+            logger.error(str(cancellation_error))
+
+    async def cancel_booking_decision_reminder(self, appointment_id: int) -> None:
+        await self._cancel_decision_reminder(appointment_id, BOOKING_DECISION_REMINDER_KIND)
+
+    async def cancel_reschedule_decision_reminder(self, appointment_id: int) -> None:
+        await self._cancel_decision_reminder(appointment_id, RESCHEDULE_DECISION_REMINDER_KIND)
+
+    async def _resync_decision_reminder(self, appointment: Appointment) -> None:
+        kind = decision_reminder_kind(appointment)
+        for reminder_kind in DECISION_REMINDER_KINDS:
+            if reminder_kind != kind:
+                await self._cancel_decision_reminder(appointment.id, reminder_kind)
+
+        if kind is not None:
+            await self._schedule_decision_reminder(appointment, kind)
+
+    async def restore_staff_decision_reminder_jobs(
+        self, clinic_id: int | None = None,
+    ) -> None:
+        """Recover only missing decision-reminder jobs after scheduler startup."""
+        get_candidates = getattr(
+            self.appointment_management,
+            "get_appointments_with_active_staff_decision_cards",
+            None,
+        )
+        if get_candidates is None:
+            return
+
+        try:
+            try:
+                candidates = await get_candidates(clinic_id=clinic_id)
+            except TypeError:
+                candidates = await get_candidates()
+        except Exception as error:  # noqa: BLE001 - recovery must not block bot startup
+            logger.warning(f"Failed to recover staff decision reminder jobs: {error}")
+            return
+        if not isinstance(candidates, list):
+            return
+        for appointment in candidates:
+            try:
+                await self._resync_decision_reminder(appointment)
+            except Exception as error:  # noqa: BLE001 - continue recovering other appointments
+                logger.warning(
+                    f"Failed to recover staff decision reminder for appointment "
+                    f"{getattr(appointment, 'id', None)}: {error}"
+                )
+
     async def schedule_proposal_reminder(self, appointment: Appointment) -> None:
         """Schedule a reminder for the client to accept/reject the clinic's proposed time.
 
@@ -658,6 +788,8 @@ class AppointmentScheduler:
         await self.cancel_appointment_reminders(appointment_id)
         await self.cancel_appointment_completions(appointment_id)
         await self.cancel_appointment_autocomplete(appointment_id)
+        await self.cancel_booking_decision_reminder(appointment_id)
+        await self.cancel_reschedule_decision_reminder(appointment_id)
 
     async def resync_appointment_jobs(self, appointment: Appointment) -> None:
         """Recompute the full set of scheduler jobs for an appointment from its current state.
@@ -679,6 +811,8 @@ class AppointmentScheduler:
         ):
             await self.cancel_all_jobs(appointment_id)
             return
+
+        await self._resync_decision_reminder(appointment)
 
         if appointment.status == AppointmentStatus.CONFIRMED:
             await self.cancel_pending_expiry(appointment_id)
