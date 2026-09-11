@@ -996,6 +996,20 @@ class AppointmentManagement:
     ) -> list[AppointmentNotification]:
         return await self.appointment_repository.get_active_appointment_notifications(appointment_id, kind)
 
+    async def get_active_notification_target_for_chat(
+        self, appointment_id: int, chat_id: int, kind: str
+    ) -> AppointmentNotification | None:
+        return await self.appointment_repository.get_active_appointment_notification_for_chat(
+            appointment_id, chat_id, kind,
+        )
+
+    async def get_appointments_with_active_staff_decision_cards(
+        self, clinic_id: int | None = None,
+    ) -> list[Appointment]:
+        return await self.appointment_repository.get_appointments_with_active_staff_decision_cards(
+            clinic_id=clinic_id,
+        )
+
     async def delete_appointment(self, appointment: Appointment) -> None:
         if not await self.appointment_repository.appointment_exists(appointment.id):
             raise AppointmentNotFoundError()

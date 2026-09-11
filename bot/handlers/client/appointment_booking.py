@@ -345,6 +345,6 @@ def create_client_booking_router(
             )
 
         if appointment_scheduler:
-            await appointment_scheduler.schedule_pending_expiry(appointment)
+            await appointment_scheduler.resync_appointment_jobs(appointment)
 
     return router
