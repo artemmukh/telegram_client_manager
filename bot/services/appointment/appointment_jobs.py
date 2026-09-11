@@ -23,10 +23,18 @@ from bot.repositories.appointment_repository import AppointmentRepository
 from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
+from bot.services.appointment.appointment_decision_reminders import (
+    RESCHEDULE_DECISION_REMINDER_KIND,
+    decision_reminder_deadline,
+    decision_reminder_kind,
+    decision_reminder_source_kind,
+    parse_notification_created_at,
+)
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
     AppointmentNotificationService,
 )
+from bot.services.utils.date_parser import get_current_tashkent_datetime
 from bot.services.utils.telegram_notifier import TelegramNotifier
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 
@@ -517,6 +525,122 @@ async def expire_reschedule_request_job(appointment_id: int) -> None:
             await connection.close()
 
 
+async def _send_staff_decision_reminder_with_services(
+    appointment: Appointment,
+    appointment_management: AppointmentManagement,
+    notification_service: AppointmentNotificationService,
+    now: datetime,
+) -> int:
+    kind = decision_reminder_kind(appointment)
+    if kind is None:
+        return 0
+
+    deadline = decision_reminder_deadline(appointment, kind)
+    if now >= deadline:
+        logger.info(
+            f"Staff decision reminder skipped for appointment {appointment.id}: deadline reached"
+        )
+        return 0
+
+    source_kind = decision_reminder_source_kind(kind)
+    try:
+        targets = await appointment_management.get_active_notification_targets(
+            appointment.id, source_kind,
+        )
+    except Exception as error:  # noqa: BLE001 - one reminder must not abort the job
+        logger.warning(
+            f"Failed to resolve staff decision reminder anchors for appointment {appointment.id}: {error}"
+        )
+        return 0
+
+    sent_count = 0
+    for target in _latest_staff_targets_by_chat(targets):
+        try:
+            current_appointment = appointment
+            get_current = getattr(appointment_management, "get_appointment_by_id", None)
+            if get_current is not None:
+                refreshed = await get_current(appointment.id)
+                if refreshed is None or decision_reminder_kind(refreshed) != kind:
+                    continue
+                if decision_reminder_deadline(refreshed, kind) <= now:
+                    continue
+                current_appointment = refreshed
+
+            reply_to_message_id = target.message_id
+            get_anchor = getattr(appointment_management, "get_active_notification_target_for_chat", None)
+            if get_anchor is not None:
+                current_target = await get_anchor(appointment.id, target.chat_id, source_kind)
+                if current_target is None:
+                    continue
+                reply_to_message_id = current_target.message_id
+
+            if not reply_to_message_id:
+                continue
+
+            delivered = await notification_service.notify_staff_decision_reminder(
+                target.chat_id,
+                current_appointment,
+                kind=kind,
+                reply_to_message_id=reply_to_message_id,
+            )
+            if delivered:
+                sent_count += 1
+        except Exception as error:  # noqa: BLE001 - continue other staff chats
+            logger.warning(
+                f"Failed to send staff decision reminder for appointment {appointment.id} "
+                f"to chat {target.chat_id}: {error}"
+            )
+
+    return sent_count
+
+
+async def send_staff_decision_reminder_job(appointment_id: int) -> None:
+    """Send one recurring strict-reply reminder for a still-open staff decision."""
+    connection = None
+    try:
+        bot = get_bot()
+        notifier = TelegramNotifier(bot)
+        config = load_config()
+
+        db = Database(config.database_path)
+        connection = await db.connect()
+
+        appointment_repo = AppointmentRepository(connection)
+        user_repo = UserRepository(connection)
+        staff_repo = StaffRepository(connection)
+        clinic_repo = ClinicRepository(connection)
+        appointment_management = AppointmentManagement(
+            appointment_repo, user_repo, staff_repo, clinic_repo,
+        )
+        notification_service = AppointmentNotificationService(
+            notifier, user_repo, appointment_repo,
+        )
+
+        appointment = await appointment_management.get_appointment_by_id(appointment_id)
+        if appointment is None:
+            logger.info(f"Staff decision reminder skipped: appointment {appointment_id} not found")
+            return
+
+        sent_count = await _send_staff_decision_reminder_with_services(
+            appointment,
+            appointment_management,
+            notification_service,
+            get_current_tashkent_datetime(),
+        )
+        logger.info(
+            f"Staff decision reminder completed for appointment {appointment_id}: sent={sent_count}"
+        )
+    except AppointmentNotFoundError:
+        logger.info(f"Staff decision reminder skipped: appointment {appointment_id} not found")
+    except Exception as error:
+        logger.exception(
+            f"Error in send_staff_decision_reminder_job({appointment_id}): {error}"
+        )
+    finally:
+        if connection is not None:
+            await connection.close()
+
+
 async def send_proposal_reminder_job(appointment_id: int) -> None:
     """Remind whichever side has not yet answered an outstanding proposed time.
 
@@ -571,6 +695,26 @@ async def send_proposal_reminder_job(appointment_id: int) -> None:
                         appointment
                     )
             else:
+                try:
+                    recent_reminders = await appointment_repo.get_appointment_notifications(
+                        appointment_id, RESCHEDULE_DECISION_REMINDER_KIND,
+                    )
+                    now_tashkent = get_current_tashkent_datetime()
+                    is_duplicate = any(
+                        r.created_at and abs((now_tashkent - parse_notification_created_at(r.created_at)).total_seconds()) < 1800
+                        for r in recent_reminders
+                    )
+                    if is_duplicate:
+                        logger.info(
+                            f"Proposal reminder skipped for appointment {appointment_id}: "
+                            f"staff decision reminder already sent at same effective moment"
+                        )
+                        return
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to check recent decision reminders for appointment {appointment_id}: {e}"
+                    )
+
                 try:
                     recipients = await appointment_management.resolve_notification_recipients(appointment)
                 except Exception as e:

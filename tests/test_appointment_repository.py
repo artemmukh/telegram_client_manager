@@ -208,6 +208,37 @@ async def test_get_appointments_page_paginates_with_correct_offset_and_ordering(
 
 
 @pytest.mark.asyncio
+async def test_active_staff_decision_card_queries_exclude_compacted_logs(appointment_setup):
+    appointment_repo, user = appointment_setup
+    appointment = dataclasses.replace(
+        _appointment(user.ID),
+        created_by=CreatedBy.CLIENT,
+        created_at="2026-09-11 08:00:00",
+    )
+    created = await appointment_repo.create_appointment(appointment)
+
+    await appointment_repo.add_appointment_notification(
+        created.id, 9001, 101, "booking", "закрыто",
+    )
+    await appointment_repo.add_appointment_notification(
+        created.id, 9001, 102, "booking",
+    )
+
+    active = await appointment_repo.get_active_appointment_notification_for_chat(
+        created.id, 9001, "booking",
+    )
+    candidates = await appointment_repo.get_appointments_with_active_staff_decision_cards()
+    candidates_matching_clinic = await appointment_repo.get_appointments_with_active_staff_decision_cards(clinic_id=1)
+    candidates_other_clinic = await appointment_repo.get_appointments_with_active_staff_decision_cards(clinic_id=999)
+
+    assert active is not None
+    assert active.message_id == 102
+    assert [item.id for item in candidates] == [created.id]
+    assert [item.id for item in candidates_matching_clinic] == [created.id]
+    assert candidates_other_clinic == []
+
+
+@pytest.mark.asyncio
 async def test_get_appointments_by_name_and_status_page_matches_multi_token_full_name():
     connection, user_repo, appointment_repo = await _in_memory_repos()
     try:

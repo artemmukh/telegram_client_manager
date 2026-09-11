@@ -140,7 +140,7 @@ async def test_submit_booking_notifies_sole_doctor_recipient_and_persists_messag
     notification_service.notify_staff_new_booking_request = AsyncMock(return_value=4242)
 
     appointment_scheduler = MagicMock()
-    appointment_scheduler.schedule_pending_expiry = AsyncMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
 
     router = _build_router(appointment_management_service, notification_service, appointment_scheduler)
     submit_booking = _get_handler_by_name(router, "submit_booking")
@@ -153,7 +153,7 @@ async def test_submit_booking_notifies_sole_doctor_recipient_and_persists_messag
     appointment_management_service.update_admin_notification_message_id.assert_awaited_once_with(
         created_appointment.id, 4242,
     )
-    appointment_scheduler.schedule_pending_expiry.assert_awaited_once_with(created_appointment)
+    appointment_scheduler.resync_appointment_jobs.assert_awaited_once_with(created_appointment)
 
 
 @pytest.mark.asyncio
