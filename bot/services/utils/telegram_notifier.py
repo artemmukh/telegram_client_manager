@@ -13,13 +13,12 @@ class TelegramNotifier:
         text: str,
         reply_markup=None,
         reply_to_message_id: int | None = None,
-        allow_sending_without_reply: bool = True,
     ) -> int:
         reply_parameters = None
         if reply_to_message_id is not None:
             reply_parameters = ReplyParameters(
                 message_id=reply_to_message_id,
-                allow_sending_without_reply=allow_sending_without_reply,
+                allow_sending_without_reply=True,
             )
 
         sent_message = await self.bot.send_message(
