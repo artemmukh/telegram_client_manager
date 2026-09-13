@@ -18,8 +18,6 @@ STAFF_LOG_NOTIFICATION_KINDS = (
     "completion",
     "booking",
     "reschedule",
-    "booking_decision_reminder",
-    "reschedule_decision_reminder",
     "creation",
     "cancellation",
     "expiry",
@@ -878,33 +876,6 @@ class AppointmentRepository:
             for row in rows
         ]
 
-    async def get_active_appointment_notification_for_chat(
-        self, appointment_id: int, chat_id: int, kind: str
-    ) -> AppointmentNotification | None:
-        """Return the latest active source card for one staff chat."""
-        cursor = await self.connection.execute(
-            """
-            SELECT id, appointment_id, chat_id, message_id, kind, created_at, compact_text
-            FROM appointment_notifications
-            WHERE appointment_id = ? AND chat_id = ? AND kind = ? AND compact_text IS NULL
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (appointment_id, chat_id, kind),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return AppointmentNotification(
-            id=row[0],
-            appointment_id=row[1],
-            chat_id=row[2],
-            message_id=row[3],
-            kind=row[4],
-            created_at=row[5],
-            compact_text=row[6],
-        )
-
     async def get_appointment_notification(
         self, appointment_id: int, chat_id: int, message_id: int, kind: str,
     ) -> AppointmentNotification | None:
@@ -995,49 +966,6 @@ class AppointmentRepository:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
-
-    async def get_appointments_with_active_staff_decision_cards(
-        self, clinic_id: int | None = None,
-    ) -> list[Appointment]:
-        """Return only current appointments eligible for reminder-job recovery."""
-        clinic_condition = "AND a.clinic_id = ?" if clinic_id is not None else ""
-        params = (clinic_id,) if clinic_id is not None else ()
-        cursor = await self.connection.execute(
-            APPOINTMENT_SELECT
-            + f"""
-            WHERE (
-                (
-                    a.status = 'pending'
-                    AND a.created_by = 'client'
-                    AND a.proposed_datetime IS NULL
-                    AND EXISTS (
-                        SELECT 1
-                        FROM appointment_notifications n
-                        WHERE n.appointment_id = a.id
-                          AND n.kind = 'booking'
-                          AND n.compact_text IS NULL
-                    )
-                )
-                OR (
-                    a.status IN ('pending', 'confirmed')
-                    AND a.proposed_by = 'client'
-                    AND a.proposed_datetime IS NOT NULL
-                    AND EXISTS (
-                        SELECT 1
-                        FROM appointment_notifications n
-                        WHERE n.appointment_id = a.id
-                          AND n.kind = 'reschedule'
-                          AND n.compact_text IS NULL
-                    )
-                )
-            )
-            {clinic_condition}
-            ORDER BY a.created_at ASC
-            """,
-            params,
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_appointment(row) for row in rows]
 
     async def delete_appointment(self, appointment_id: int) -> None:
         await self.connection.execute(

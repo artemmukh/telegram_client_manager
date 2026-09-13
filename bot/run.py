@@ -158,7 +158,6 @@ async def main():
         notification_service=notification_service,
         appointment_management=appointment_management_service,
     )
-    await appointment_scheduler.restore_staff_decision_reminder_jobs()
 
     # Routers
 
