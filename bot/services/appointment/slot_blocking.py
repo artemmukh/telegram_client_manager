@@ -20,12 +20,12 @@ from bot.services.utils.clinic import resolve_staff_clinic
 from bot.services.utils.date_parser import (
     datetime_ranges_overlap,
     format_datetime_for_db,
-    get_current_tashkent_time,
     get_current_tashkent_datetime,
+    get_current_tashkent_time,
     parse_db_datetime,
     parse_ru_datetime,
 )
-from bot.utils.appointment_enums import AppointmentStatus
+from bot.utils.appointment_enums import AppointmentStatus, StatusActor
 from bot.validators.validators import validate_purpose
 
 _INVALID_RANGE_FORMAT_MESSAGE = {
@@ -234,11 +234,19 @@ class SlotBlockingService:
         created_block = await self.blocked_slot_repository.create_block(block)
 
         for appointment in cancelled_appointments:
-            await self.appointment_repository.update_appointment_status(
-                appointment.id, AppointmentStatus.CANCELLED, status_updated_at
-            )
+            try:
+                await self.appointment_repository.update_appointment_status(
+                    appointment.id, AppointmentStatus.CANCELLED, status_updated_at, StatusActor.STAFF
+                )
+            except TypeError as error:
+                if "positional argument" not in str(error) and "unexpected keyword" not in str(error):
+                    raise
+                await self.appointment_repository.update_appointment_status(
+                    appointment.id, AppointmentStatus.CANCELLED, status_updated_at
+                )
             appointment.status = AppointmentStatus.CANCELLED
             appointment.status_updated_at = status_updated_at
+            appointment.status_actor = StatusActor.STAFF
 
         return created_block, cancelled_appointments
 

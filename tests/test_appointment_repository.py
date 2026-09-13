@@ -12,7 +12,7 @@ from bot.repositories.clinic_repository import ClinicRepository
 from bot.repositories.staff_repository import StaffRepository
 from bot.repositories.user_repository import UserRepository
 from bot.repositories.user_settings_repository import UserSettingsRepository
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.role import Role
 
 
@@ -84,12 +84,13 @@ async def test_updates_appointment_status(appointment_setup):
     appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
 
     await appointment_repo.update_appointment_status(
-        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00"
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-02 10:00:00", StatusActor.CLIENT
     )
 
     updated = await appointment_repo.get_appointment_by_id(appointment_id)
     assert updated.status is AppointmentStatus.CONFIRMED
     assert updated.status_updated_at == "2026-07-02 10:00:00"
+    assert updated.status_actor is StatusActor.CLIENT
 
 
 @pytest.mark.asyncio
@@ -1532,6 +1533,7 @@ async def test_try_confirm_or_reject_pending_second_call_fails_after_first_succe
     updated = await appointment_repo.get_appointment_by_id(appointment_id)
     assert updated.status is AppointmentStatus.CONFIRMED
     assert updated.decided_by_user_id == user.ID
+    assert updated.status_actor is StatusActor.STAFF
 
 
 @pytest.mark.asyncio
@@ -1558,6 +1560,7 @@ async def test_try_propose_new_datetime_commits_new_datetime_and_demotes_confirm
     assert updated.proposed_datetime is None
     assert updated.proposed_by is None
     assert updated.decided_by_user_id == user.ID
+    assert updated.status_actor is StatusActor.STAFF
 
 
 @pytest.mark.asyncio
@@ -1583,6 +1586,7 @@ async def test_try_propose_new_datetime_second_admin_proposal_also_succeeds_last
     updated = await appointment_repo.get_appointment_by_id(appointment_id)
     assert updated.status is AppointmentStatus.PENDING
     assert updated.datetime == "2026-07-06 11:00"
+    assert updated.status_actor is StatusActor.STAFF
 
 
 @pytest.mark.asyncio
@@ -1634,6 +1638,7 @@ async def test_try_resolve_client_reschedule_second_call_fails_after_first_accep
     assert updated.datetime == "2026-07-11 10:00"
     assert updated.proposed_datetime is None
     assert updated.proposed_by is None
+    assert updated.status_actor is StatusActor.STAFF
 
 
 @pytest.mark.asyncio
@@ -1666,6 +1671,7 @@ async def test_try_resolve_admin_proposal_accept_confirms_new_datetime_and_secon
     assert updated.status_updated_at == "2026-07-02 10:00:00"
     assert updated.proposed_datetime is None
     assert updated.proposed_by is None
+    assert updated.status_actor is StatusActor.CLIENT
 
 
 @pytest.mark.asyncio
@@ -1699,6 +1705,7 @@ async def test_try_resolve_admin_proposal_reject_cancels_and_writes_status_updat
     assert updated.status_updated_at == "2026-07-02 10:00:00"
     assert updated.proposed_datetime is None
     assert updated.proposed_by is None
+    assert updated.status_actor is StatusActor.CLIENT
 
 
 @pytest.mark.asyncio
@@ -2166,7 +2173,7 @@ TARGET_APPOINTMENTS_COLUMN_ORDER = [
     "id", "clinic_id", "client_id", "admin_id", "datetime", "purpose", "price",
     "created_by", "status", "created_at", "status_updated_at",
     "notification_message_id", "proposed_datetime", "proposal_message_id",
-    "proposed_by", "admin_notification_message_id", "decided_by_user_id",
+    "proposed_by", "admin_notification_message_id", "decided_by_user_id", "status_actor",
 ]
 
 

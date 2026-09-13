@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 
 
 @dataclass
@@ -28,3 +28,4 @@ class Appointment:
     doctor_is_doctor: bool | None = None
     price: float | None = None
     decided_by_user_id: int | None = None
+    status_actor: StatusActor | None = None
