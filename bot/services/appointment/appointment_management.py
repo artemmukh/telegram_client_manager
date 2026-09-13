@@ -49,7 +49,7 @@ from bot.services.utils.date_parser import (
     parse_db_datetime,
 )
 from bot.services.utils.slot_helpers import generate_available_slots
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.observability import log_event
 from bot.utils.role import Role
 from bot.utils.tools import normalize_phone
@@ -291,6 +291,7 @@ class AppointmentManagement:
             purpose=purpose,
             created_by=CreatedBy.ADMIN,
             status=status,
+            status_actor=StatusActor.STAFF if status == AppointmentStatus.CONFIRMED else None,
             clinic_name=clinic.name,
             created_at=get_current_tashkent_time(),
         )
@@ -594,7 +595,7 @@ class AppointmentManagement:
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
 
-        return await self.update_status(appointment, AppointmentStatus.CONFIRMED)
+        return await self.update_status(appointment, AppointmentStatus.CONFIRMED, StatusActor.CLIENT)
 
     async def cancel_appointment_by_client(
         self, appointment_id: int, telegram_user_id: int, enforce_cutoff: bool = True
@@ -612,7 +613,7 @@ class AppointmentManagement:
             await self.appointment_repository.update_proposed_datetime(appointment_id, None)
             await self.appointment_repository.update_proposed_by(appointment_id, None)
 
-        return await self.update_status(appointment, AppointmentStatus.CANCELLED)
+        return await self.update_status(appointment, AppointmentStatus.CANCELLED, StatusActor.CLIENT)
 
     async def confirm_pending_request(self, appointment_id: int, staff_telegram_id: int) -> Appointment:
         appointment = await self.get_appointment_for_admin(appointment_id, staff_telegram_id)
@@ -634,6 +635,7 @@ class AppointmentManagement:
             await self._raise_already_decided(appointment_id, _BOOKING_ALREADY_DECIDED_MESSAGE, kind="booking")
 
         appointment.status = AppointmentStatus.CONFIRMED
+        appointment.status_actor = StatusActor.STAFF
         appointment.status_updated_at = status_updated_at
         appointment.decided_by_user_id = acting_user_id
 
@@ -657,6 +659,7 @@ class AppointmentManagement:
             await self._raise_already_decided(appointment_id, _BOOKING_ALREADY_DECIDED_MESSAGE, kind="booking")
 
         appointment.status = AppointmentStatus.CANCELLED
+        appointment.status_actor = StatusActor.STAFF
         appointment.status_updated_at = status_updated_at
         appointment.decided_by_user_id = acting_user_id
 
@@ -691,6 +694,7 @@ class AppointmentManagement:
 
             appointment.datetime = validated
             appointment.status = AppointmentStatus.CONFIRMED
+            appointment.status_actor = StatusActor.STAFF
             appointment.proposed_datetime = None
             appointment.proposed_by = None
             appointment.decided_by_user_id = acting_user_id
@@ -707,6 +711,7 @@ class AppointmentManagement:
 
         appointment.datetime = validated
         appointment.status = AppointmentStatus.PENDING
+        appointment.status_actor = StatusActor.STAFF
         appointment.proposed_datetime = None
         appointment.proposed_by = None
         appointment.decided_by_user_id = acting_user_id
@@ -741,6 +746,7 @@ class AppointmentManagement:
 
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
+        appointment.status_actor = StatusActor.CLIENT
         appointment.proposed_datetime = None
         appointment.proposed_by = None
         appointment.status_updated_at = status_updated_at
@@ -770,6 +776,7 @@ class AppointmentManagement:
             raise NoPendingProposalError(_NO_PENDING_PROPOSAL_MESSAGE)
 
         appointment.status = AppointmentStatus.CANCELLED
+        appointment.status_actor = StatusActor.CLIENT
         appointment.proposed_datetime = None
         appointment.proposed_by = None
         appointment.status_updated_at = status_updated_at
@@ -886,6 +893,7 @@ class AppointmentManagement:
 
         appointment.datetime = appointment.proposed_datetime
         appointment.status = AppointmentStatus.CONFIRMED
+        appointment.status_actor = StatusActor.STAFF
         appointment.proposed_datetime = None
         appointment.proposed_by = None
         appointment.decided_by_user_id = acting_user_id
@@ -914,6 +922,7 @@ class AppointmentManagement:
             await self._raise_already_decided(appointment_id, _RESCHEDULE_ALREADY_DECIDED_MESSAGE, kind="reschedule")
 
         appointment.status = AppointmentStatus.CANCELLED
+        appointment.status_actor = StatusActor.STAFF
         appointment.proposed_datetime = None
         appointment.proposed_by = None
         appointment.decided_by_user_id = acting_user_id
@@ -993,13 +1002,38 @@ class AppointmentManagement:
 
         await self.appointment_repository.delete_appointment(appointment.id)
 
-    async def update_status(self, appointment: Appointment, status: AppointmentStatus) -> Appointment:
+    async def update_status(
+        self,
+        appointment: Appointment,
+        status: AppointmentStatus,
+        status_actor: StatusActor = StatusActor.STAFF,
+    ) -> Appointment:
         status_updated_at = get_current_tashkent_time()
-        await self.appointment_repository.update_appointment_status(appointment.id, status, status_updated_at)
+        await self._update_status_repository(appointment.id, status, status_updated_at, status_actor)
         appointment.status = status
         appointment.status_updated_at = status_updated_at
+        appointment.status_actor = status_actor
 
         return appointment
+
+    async def _update_status_repository(
+        self,
+        appointment_id: int,
+        status: AppointmentStatus,
+        status_updated_at: str,
+        status_actor: StatusActor,
+    ) -> None:
+        """Persist a status actor while keeping lightweight repository fakes compatible."""
+        try:
+            await self.appointment_repository.update_appointment_status(
+                appointment_id, status, status_updated_at, status_actor
+            )
+        except TypeError as error:
+            if "positional argument" not in str(error) and "unexpected keyword" not in str(error):
+                raise
+            await self.appointment_repository.update_appointment_status(
+                appointment_id, status, status_updated_at
+            )
 
     async def complete_appointment_by_admin(self, appointment: Appointment, staff_telegram_id: int) -> Appointment:
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
@@ -1011,6 +1045,7 @@ class AppointmentManagement:
             await self._raise_already_decided(appointment.id, _COMPLETION_ALREADY_DECIDED_MESSAGE, kind="completion")
 
         appointment.status = AppointmentStatus.COMPLETED
+        appointment.status_actor = StatusActor.STAFF
         appointment.status_updated_at = status_updated_at
         appointment.decided_by_user_id = acting_user_id
 
@@ -1024,11 +1059,12 @@ class AppointmentManagement:
             return None
 
         status_updated_at = get_current_tashkent_time()
-        await self.appointment_repository.update_appointment_status(
-            appointment_id, AppointmentStatus.CONFIRMED, status_updated_at
+        await self._update_status_repository(
+            appointment_id, AppointmentStatus.CONFIRMED, status_updated_at, StatusActor.SYSTEM
         )
         appointment.status = AppointmentStatus.CONFIRMED
         appointment.status_updated_at = status_updated_at
+        appointment.status_actor = StatusActor.SYSTEM
 
         return appointment
 
@@ -1069,11 +1105,12 @@ class AppointmentManagement:
             return None
 
         status_updated_at = get_current_tashkent_time()
-        await self.appointment_repository.update_appointment_status(
-            appointment_id, AppointmentStatus.EXPIRED, status_updated_at
+        await self._update_status_repository(
+            appointment_id, AppointmentStatus.EXPIRED, status_updated_at, StatusActor.SYSTEM
         )
         appointment.status = AppointmentStatus.EXPIRED
         appointment.status_updated_at = status_updated_at
+        appointment.status_actor = StatusActor.SYSTEM
 
         return appointment
 

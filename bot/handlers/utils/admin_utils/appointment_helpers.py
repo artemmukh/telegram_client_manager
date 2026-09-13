@@ -16,7 +16,9 @@ from bot.handlers.utils.admin_utils.input_helpers import ask_full_name
 from bot.handlers.utils.appointment_slot_helpers import (
     answer_no_slots_for_day as answer_no_slots_for_day_shared,
 )
-from bot.keyboards.admin.record_management_kb.appointment_browser_kb import appointment_calendar_kb
+from bot.keyboards.admin.record_management_kb.appointment_browser_kb import (
+    appointment_calendar_kb,
+)
 from bot.keyboards.admin.record_management_kb.appointment_kb import back_to_records_kb
 from bot.keyboards.admin.record_management_kb.appointment_slot_kb import (
     appointment_slot_grid_kb,
@@ -33,8 +35,15 @@ from bot.services.utils.date_parser import (
     reschedule_negotiation_note,
 )
 from bot.services.utils.escape_html import escape_html
-from bot.states.admin.record_management.appointment_states import AppointmentCreationStates
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
+from bot.states.admin.record_management.appointment_states import (
+    AppointmentCreationStates,
+)
+from bot.utils.appointment_enums import (
+    AppointmentStatus,
+    CreatedBy,
+    appointment_status_label,
+    status_label_with_decision_party,
+)
 from bot.utils.reply_menu_labels import REPLY_MENU_TEXT_MESSAGE, is_reply_menu_label
 from bot.validators.validators import (
     validate_price,
@@ -207,7 +216,7 @@ def build_appointment_confirmation(data: dict, lang: str = "ru") -> str:
         f"{labels['phone']}: {data.get('phone', '')}",
         f"{labels['datetime']}: {display_datetime}",
         f"{labels['purpose']}: {escape_html(data.get('purpose', ''))}",
-        f"{labels['status']}: {status_label(AppointmentStatus.PENDING, lang)}",
+        f"{labels['status']}: {status_label_with_decision_party(AppointmentStatus.PENDING, CreatedBy.ADMIN, lang=lang)}",
     ])
 
 
@@ -236,7 +245,7 @@ def build_appointment_card(appointment: Appointment, lang: str = "ru") -> str:
     lines += [
         f"{labels['time']}: {format_appointment_card_datetime(appointment.datetime)}",
         f"{labels['purpose']}: {escape_html(appointment.purpose)}",
-        f"{labels['status']}: {status_label(appointment.status, lang)}",
+        f"{labels['status']}: {appointment_status_label(appointment, lang)}",
     ]
 
     proposal_line = build_reschedule_proposal_line(appointment, viewer=CreatedBy.ADMIN, lang=lang)

@@ -5,7 +5,12 @@ from bot.handlers.utils.client_utils.appointment_history_helpers import (
     build_history_card_text,
 )
 from bot.models.appointment import Appointment
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
+from bot.utils.appointment_enums import (
+    AppointmentStatus,
+    CreatedBy,
+    appointment_status_label,
+    status_label,
+)
 
 
 def _appointment(status: AppointmentStatus, purpose: str | None = "Консультация", clinic_name: str | None = "Клиника №1") -> Appointment:
@@ -38,7 +43,7 @@ def test_build_history_card_text_for_all_statuses(status):
 
     text = build_history_card_text(appointment)
 
-    assert status_label(status) in text
+    assert appointment_status_label(appointment) in text
     assert "Консультация" in text
     assert "Клиника №1" in text
 

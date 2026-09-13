@@ -1,9 +1,17 @@
 from datetime import datetime
 
 from bot.models.appointment import Appointment
-from bot.services.utils.date_parser import build_reschedule_proposal_line, format_datetime_for_display
+from bot.services.utils.date_parser import (
+    build_reschedule_proposal_line,
+    format_datetime_for_display,
+)
 from bot.services.utils.escape_html import escape_html
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, status_label
+from bot.utils.appointment_enums import (
+    AppointmentStatus,
+    CreatedBy,
+    appointment_status_label,
+    status_label,
+)
 
 _DATETIME_LABEL = {"ru": "Дата и время: {value}", "uz": "Sana va vaqt: {value}"}
 _PURPOSE_LABEL = {"ru": "Услуга: {value}", "uz": "Xizmat: {value}"}
@@ -45,7 +53,11 @@ def build_history_card_text(appointment: Appointment, lang: str = "ru") -> str:
     if proposal_line is not None:
         lines.append(proposal_line)
 
-    lines.append(_STATUS_LABEL.get(lang, _STATUS_LABEL["ru"]).format(value=status_label(appointment.status, lang)))
+    lines.append(
+        _STATUS_LABEL.get(lang, _STATUS_LABEL["ru"]).format(
+            value=appointment_status_label(appointment, lang)
+        )
+    )
 
     clinic_display = appointment.clinic_name or _NO_CLINIC_INFO.get(lang, _NO_CLINIC_INFO["ru"])
     lines.append(_CLINIC_LABEL.get(lang, _CLINIC_LABEL["ru"]).format(value=clinic_display))

@@ -5,7 +5,7 @@ import aiosqlite
 from bot.exceptions.appointment_exceptions import SlotUnavailableError
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,8 @@ SELECT
     d.phone AS doctor_phone,
     a.price,
     s.is_doctor AS doctor_is_doctor,
-    a.decided_by_user_id
+    a.decided_by_user_id,
+    a.status_actor
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
@@ -95,6 +96,7 @@ class AppointmentRepository:
                 admin_notification_message_id INTEGER DEFAULT NULL,
                 price REAL DEFAULT NULL,
                 decided_by_user_id INTEGER DEFAULT NULL,
+                status_actor TEXT DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -162,6 +164,13 @@ class AppointmentRepository:
         if "decided_by_user_id" not in columns:
             await self.connection.execute(
                 "ALTER TABLE appointments ADD COLUMN decided_by_user_id INTEGER DEFAULT NULL"
+            )
+
+        # Ensure the actor of the latest status transition exists.  NULL is
+        # retained for legacy rows and is rendered through the legacy fallback.
+        if "status_actor" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN status_actor TEXT DEFAULT NULL"
             )
 
         await self._rebuild_appointments_if_column_order_stale()
@@ -257,7 +266,7 @@ class AppointmentRepository:
         "id", "clinic_id", "client_id", "admin_id", "datetime", "purpose", "price",
         "created_by", "status", "created_at", "status_updated_at",
         "notification_message_id", "proposed_datetime", "proposal_message_id",
-        "proposed_by", "admin_notification_message_id", "decided_by_user_id",
+        "proposed_by", "admin_notification_message_id", "decided_by_user_id", "status_actor",
     ]
 
     async def _rebuild_appointments_if_column_order_stale(self) -> None:
@@ -304,6 +313,7 @@ class AppointmentRepository:
                     proposed_by TEXT DEFAULT NULL,
                     admin_notification_message_id INTEGER DEFAULT NULL,
                     decided_by_user_id INTEGER DEFAULT NULL,
+                    status_actor TEXT DEFAULT NULL,
 
                     FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                     FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -316,13 +326,13 @@ class AppointmentRepository:
                     id, clinic_id, client_id, admin_id, datetime, purpose, price,
                     created_by, status, created_at, status_updated_at,
                     notification_message_id, proposed_datetime, proposal_message_id,
-                    proposed_by, admin_notification_message_id, decided_by_user_id
+                    proposed_by, admin_notification_message_id, decided_by_user_id, status_actor
                 )
                 SELECT
                     id, clinic_id, client_id, admin_id, datetime, purpose, price,
                     created_by, status, created_at, status_updated_at,
                     notification_message_id, proposed_datetime, proposal_message_id,
-                    proposed_by, admin_notification_message_id, decided_by_user_id
+                    proposed_by, admin_notification_message_id, decided_by_user_id, status_actor
                 FROM appointments
             """)
 
@@ -393,7 +403,7 @@ class AppointmentRepository:
                 a.proposed_by, a.admin_notification_message_id,
                 d.full_name AS doctor_full_name, d.phone AS doctor_phone,
                 a.price, s.is_doctor AS doctor_is_doctor,
-                a.decided_by_user_id
+                a.decided_by_user_id, a.status_actor
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -414,9 +424,9 @@ class AppointmentRepository:
                 INSERT INTO appointments(
                     clinic_id, client_id, admin_id,
                     datetime, purpose, created_by, status, created_at,
-                    status_updated_at, notification_message_id
+                    status_updated_at, notification_message_id, status_actor
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     appointment.clinic_id,
@@ -429,6 +439,7 @@ class AppointmentRepository:
                     appointment.created_at,
                     appointment.created_at,
                     appointment.notification_message_id,
+                    appointment.status_actor.value if appointment.status_actor else None,
                 ),
             )
             await self.connection.commit()
@@ -468,12 +479,16 @@ class AppointmentRepository:
             raise
 
     async def update_appointment_status(
-        self, appointment_id: int, status: AppointmentStatus, status_updated_at: str
+        self,
+        appointment_id: int,
+        status: AppointmentStatus,
+        status_updated_at: str,
+        status_actor: StatusActor | None = None,
     ) -> None:
         try:
             await self.connection.execute(
-                "UPDATE appointments SET status = ?, status_updated_at = ? WHERE id = ?",
-                (status.value, status_updated_at, appointment_id),
+                "UPDATE appointments SET status = ?, status_updated_at = ?, status_actor = ? WHERE id = ?",
+                (status.value, status_updated_at, status_actor.value if status_actor else None, appointment_id),
             )
             await self.connection.commit()
         except aiosqlite.IntegrityError as error:
@@ -535,7 +550,7 @@ class AppointmentRepository:
         # members racing to confirm/reject the same broadcast can't both succeed.
         sql = """
             UPDATE appointments
-            SET status = ?, decided_by_user_id = ?, status_updated_at = ?
+            SET status = ?, decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff'
             WHERE id = ? AND status = 'pending' AND proposed_datetime IS NULL
         """
         params = (new_status.value, decided_by_user_id, status_updated_at, appointment_id)
@@ -570,7 +585,7 @@ class AppointmentRepository:
         # (last-writer-wins on datetime), which is intended.
         sql = """
             UPDATE appointments
-            SET datetime = ?, status = 'pending', decided_by_user_id = ?, status_updated_at = ?,
+            SET datetime = ?, status = 'pending', decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff',
                 proposed_datetime = NULL, proposed_by = NULL
             WHERE id = ?
                 AND status = ?
@@ -673,7 +688,7 @@ class AppointmentRepository:
         # of an in-progress admin proposal.
         sql = """
             UPDATE appointments
-            SET datetime = ?, status = 'confirmed', decided_by_user_id = ?, status_updated_at = ?,
+            SET datetime = ?, status = 'confirmed', decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff',
                 proposed_datetime = NULL, proposed_by = NULL
             WHERE id = ?
                 AND status = ?
@@ -705,7 +720,7 @@ class AppointmentRepository:
                 UPDATE appointments
                 SET datetime = ?, status = 'confirmed',
                     proposed_datetime = NULL, proposed_by = NULL,
-                    decided_by_user_id = ?, status_updated_at = ?
+                    decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff'
                 WHERE id = ?
                     AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
                     AND proposed_by = 'client' AND proposed_datetime IS NOT NULL
@@ -716,7 +731,7 @@ class AppointmentRepository:
                 UPDATE appointments
                 SET status = 'cancelled',
                     proposed_datetime = NULL, proposed_by = NULL,
-                    decided_by_user_id = ?, status_updated_at = ?
+                    decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff'
                 WHERE id = ?
                     AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
                     AND proposed_by = 'client' AND proposed_datetime IS NOT NULL
@@ -740,7 +755,7 @@ class AppointmentRepository:
         # closes that gap by ensuring a finalized appointment can't be re-completed.
         sql = """
             UPDATE appointments
-            SET status = 'completed', decided_by_user_id = ?, status_updated_at = ?
+            SET status = 'completed', decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff'
             WHERE id = ? AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
         """
         params = (decided_by_user_id, status_updated_at, appointment_id)
@@ -757,11 +772,11 @@ class AppointmentRepository:
         new_datetime: str | None = None,
     ) -> bool:
         # Single-recipient client flow (client accepting/rejecting the admin's
-        # proposed datetime), so no decided_by_user_id write here.
+        # proposed datetime), so the status actor is the client.
         if accept:
             sql = """
                 UPDATE appointments
-                SET datetime = ?, status = 'confirmed', status_updated_at = ?,
+                SET datetime = ?, status = 'confirmed', status_updated_at = ?, status_actor = 'client',
                     proposed_datetime = NULL, proposed_by = NULL
                 WHERE id = ?
                     AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
@@ -771,7 +786,7 @@ class AppointmentRepository:
         else:
             sql = """
                 UPDATE appointments
-                SET status = 'cancelled', status_updated_at = ?,
+                SET status = 'cancelled', status_updated_at = ?, status_actor = 'client',
                     proposed_datetime = NULL, proposed_by = NULL
                 WHERE id = ?
                     AND status NOT IN ('cancelled', 'completed', 'no_show', 'expired')
@@ -1367,4 +1382,5 @@ class AppointmentRepository:
             price=row[20],
             doctor_is_doctor=bool(row[21]) if row[21] is not None else None,
             decided_by_user_id=row[22],
+            status_actor=StatusActor(row[23]) if row[23] else None,
         )

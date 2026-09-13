@@ -3,7 +3,7 @@ from datetime import datetime
 from bot.models.appointment import Appointment
 from bot.services.utils.date_parser import format_datetime_for_display
 from bot.services.utils.escape_html import escape_html
-from bot.utils.appointment_enums import status_label
+from bot.utils.appointment_enums import appointment_status_label
 
 _ID_LABEL = {"ru": "Запись №{value}", "uz": "Yozuv №{value}"}
 _DATETIME_LABEL = {"ru": "Дата и время: {value}", "uz": "Sana va vaqt: {value}"}
@@ -30,7 +30,11 @@ def build_client_appointment_log_details(appointment: Appointment, lang: str = "
     lines.append(_DATETIME_LABEL.get(lang, _DATETIME_LABEL["ru"]).format(value=_format_datetime(appointment.datetime, lang)))
     if appointment.purpose:
         lines.append(_PURPOSE_LABEL.get(lang, _PURPOSE_LABEL["ru"]).format(value=escape_html(appointment.purpose)))
-    lines.append(_STATUS_LABEL.get(lang, _STATUS_LABEL["ru"]).format(value=status_label(appointment.status, lang)))
+    lines.append(
+        _STATUS_LABEL.get(lang, _STATUS_LABEL["ru"]).format(
+            value=appointment_status_label(appointment, lang)
+        )
+    )
     if appointment.doctor_full_name and appointment.doctor_is_doctor:
         lines.append(_DOCTOR_LABEL.get(lang, _DOCTOR_LABEL["ru"]).format(value=escape_html(appointment.doctor_full_name)))
         lines.append(
