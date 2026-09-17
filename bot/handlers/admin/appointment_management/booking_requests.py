@@ -353,14 +353,21 @@ def create_admin_booking_requests_router(
         lang = current_user.language
         await state.update_data(appointment_id=callback_data.appointment_id)
 
-        if DATA_PARSE_MODE.get(instance) == "slots":
-            appointment = await appt_mng.get_appointment_for_admin(
-                callback_data.appointment_id, callback_query.from_user.id
-            )
-            if appointment is None:
-                await callback_query.answer(_REQUEST_NOT_FOUND_DOT.get(lang, _REQUEST_NOT_FOUND_DOT["ru"]), show_alert=True)
-                return
+        appointment = await appt_mng.get_appointment_for_admin(
+            callback_data.appointment_id, callback_query.from_user.id
+        )
+        if appointment is None:
+            await callback_query.answer(_REQUEST_NOT_FOUND_DOT.get(lang, _REQUEST_NOT_FOUND_DOT["ru"]), show_alert=True)
+            return
 
+        if appointment.status != AppointmentStatus.PENDING:
+            await callback_query.answer(_REQUEST_FINALIZED.get(lang, _REQUEST_FINALIZED["ru"]), show_alert=True)
+            await invalidate_own_stale_finalized_message(
+                callback_query, _REQUEST_FINALIZED.get(lang, _REQUEST_FINALIZED["ru"]),
+            )
+            return
+
+        if DATA_PARSE_MODE.get(instance) == "slots":
             await state.update_data(staff_user_id=appointment.doctor_id, old_datetime=appointment.datetime)
             await ah.render_propose_calendar_start(
                 callback_query, state, callback_data.appointment_id,
