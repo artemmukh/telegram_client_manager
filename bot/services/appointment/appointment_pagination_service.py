@@ -187,6 +187,7 @@ class AppointmentPaginationService:
                 raise _unknown_tab_error(tab)
 
             full_name = (search_data or {}).get("full_name", "")
+
             status = self._STATUS_TABS[tab]
 
             total_count = await self.appointment_repo.count_appointments_by_name_and_status(
@@ -400,3 +401,59 @@ class AppointmentPaginationService:
             total_pages=total_pages,
             total_count=total_count,
         )
+
+    async def has_unreviewed_appointments(
+        self,
+        mode: str,
+        clinic_id: int,
+        doctor_id: int | None = None,
+        search_data: dict | None = None,
+        calendar_date: str | None = None,
+    ) -> bool:
+        """
+        Проверить наличие заявок в статусе ожидания с учётом роли (клиника / конкретный врач).
+        """
+        if mode == "calendar":
+            if not calendar_date:
+                return False
+            count = await self.appointment_repo.count_appointments_by_date_and_status(
+                calendar_date,
+                AppointmentStatus.PENDING,
+                clinic_id=clinic_id,
+                doctor_id=doctor_id,
+                tab_bucket=True,
+            )
+            return count > 0
+
+        if mode == "search":
+            full_name = (search_data or {}).get("full_name", "")
+            if not full_name:
+                return False
+            count = await self.appointment_repo.count_appointments_by_name_and_status(
+                full_name,
+                AppointmentStatus.PENDING,
+                clinic_id=clinic_id,
+                doctor_id=doctor_id,
+                tab_bucket=True,
+            )
+            return count > 0
+
+        if mode == "phone":
+            client_id = (search_data or {}).get("client_id")
+            if client_id is None:
+                return False
+            appointments = await self.appointment_repo.get_appointments_by_client_id(
+                client_id, clinic_id, doctor_id
+            )
+            return any(self._matches_tab(a, AppointmentStatus.PENDING) for a in appointments)
+
+        if mode == "list":
+            count = await self.appointment_repo.count_appointments_by_status(
+                AppointmentStatus.PENDING,
+                clinic_id=clinic_id,
+                doctor_id=doctor_id,
+                tab_bucket=True,
+            )
+            return count > 0
+
+        return False

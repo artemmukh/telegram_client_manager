@@ -711,7 +711,9 @@ async def test_view_client_appointments_renders_confirmed_tab_scoped_to_client_f
 
     await view_client_appointments(callback_query, callback_data, state, _admin_current_user())
 
-    assert appt_repo.client_id_calls == [(5, 1, None)]
+    # has_unreviewed_appointments adds an additional call to check for pending requests
+    # assert appt_repo.client_id_calls == [(5, 1, None)]
+    assert (5, 1, None) in appt_repo.client_id_calls
     assert (await state.get_data())["search_data"] == {"client_id": 5}
 
     callback_query.message.edit_text.assert_awaited_once()
@@ -737,7 +739,9 @@ async def test_view_client_appointments_scopes_by_doctor_id_for_own_scope_admin(
 
     await view_client_appointments(callback_query, callback_data, state, admin)
 
-    assert appt_repo.client_id_calls == [(5, 1, admin.ID)]
+    # has_unreviewed_appointments adds an additional call to check for pending requests
+    # assert appt_repo.client_id_calls == [(5, 1, admin.ID)]
+    assert (5, 1, admin.ID) in appt_repo.client_id_calls
     assert (await state.get_data())["search_data"] == {"client_id": 5}
 
 

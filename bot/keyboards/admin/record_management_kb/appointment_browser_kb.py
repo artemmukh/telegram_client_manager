@@ -1,4 +1,4 @@
-﻿from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.handlers.utils.admin_utils.appointment_browser_helpers import build_appointment_button_text
@@ -186,6 +186,7 @@ def appointment_list_kb(
     back_callback_data: str = "browse_appointments",
     back_label: str = "⬅️ К меню поиска",
     lang: str = "ru",
+    pending_has_unreviewed: bool = False,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
@@ -201,7 +202,12 @@ def appointment_list_kb(
 
     for tab_value in _TAB_ORDER:
         label = tab_label(AppointmentStatus(tab_value), lang)
-        text = f"• {label}" if tab_value == tab else label
+        if tab_value == tab:
+            text = f"• {label}"
+        elif tab_value == "pending" and pending_has_unreviewed:
+            text = f"{label} ‼️"
+        else:
+            text = label
         builder.button(text=text, callback_data=ApptPageCB(mode=mode, page=1, tab=tab_value).pack())
     rows += [3, 3]
 
