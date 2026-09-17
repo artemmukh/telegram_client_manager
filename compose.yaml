@@ -10,6 +10,7 @@ services:
       DATA_BASE: /app/data/zb.db
     volumes:
       - /srv/medical-bot/data:/app/data
+      - /srv/medical-bot/logs:/app/logs
     user: "10001:10001"
     cap_drop:
       - ALL
