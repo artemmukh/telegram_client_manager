@@ -9,7 +9,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from bot.config.config import load_config
 from bot.models.database import Database
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', handlers=[logging.StreamHandler(), logging.FileHandler('/app/logs/bot.log', encoding='utf-8')])
 
 config = load_config()
 
