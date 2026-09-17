@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 from datetime import date, datetime
 
 from aiogram import F, Router
@@ -266,11 +266,22 @@ async def render_appointment_list(
             count=result.total_count,
         )
 
+        pending_has_unreviewed = False
+        if tab != "pending":
+            pending_has_unreviewed = await pagination_service.has_unreviewed_appointments(
+                mode=mode,
+                clinic_id=clinic_id,
+                doctor_id=doctor_id,
+                search_data=data.get("search_data") if mode in ("search", "phone") else None,
+                calendar_date=data.get("calendar_date") if mode == "calendar" else None,
+            )
+
         await callback_query.message.edit_text(
             text,
             reply_markup=appointment_list_kb(
                 result.items, mode, result.current_page, result.total_pages, tab,
                 back_callback_data=back_callback_data, back_label=back_label, lang=lang,
+                pending_has_unreviewed=pending_has_unreviewed,
             ),
         )
         await callback_query.answer()

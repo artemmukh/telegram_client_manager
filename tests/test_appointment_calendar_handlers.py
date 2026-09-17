@@ -427,7 +427,9 @@ async def test_pick_calendar_day_sets_calendar_day_state_and_renders_tab_menu():
     assert state.states[0] == AppointmentBrowserStates.calendar_day
 
     # own-scope admin -> query is scoped to clinic_id=1, doctor_id=1 (their own ID)
-    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, True)]
+    # has_unreviewed_appointments adds an additional check for AppointmentStatus.PENDING
+    # assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, True)]
+    assert ("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, True) in appt_repo.count_calls
     assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, 1, True)]
 
     callback_query.message.edit_text.assert_awaited_once()
@@ -455,7 +457,9 @@ async def test_pick_calendar_day_scopes_to_clinic_only_for_clinic_scope_admin():
     await pick_calendar_day(callback_query, callback_data, state, _clinic_admin())
 
     # clinic-scope admin -> doctor_id is not restricted (None)
-    assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, None, True)]
+    # has_unreviewed_appointments adds an additional check for AppointmentStatus.PENDING
+    # assert appt_repo.count_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, None, True)]
+    assert ("2026-07-17", AppointmentStatus.CONFIRMED, 1, None, True) in appt_repo.count_calls
     assert appt_repo.page_calls == [("2026-07-17", AppointmentStatus.CONFIRMED, 1, 1, None, True)]
 
 
