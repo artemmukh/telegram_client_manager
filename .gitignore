@@ -49,6 +49,7 @@ CLAUDE.md
 .agents/!/data/data_base.db
 .claude
 .codex
+.kimi-code
 vvaharness.config.yaml
 
 # scripts

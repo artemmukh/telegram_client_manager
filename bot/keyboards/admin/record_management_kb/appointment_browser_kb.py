@@ -205,7 +205,7 @@ def appointment_list_kb(
         if tab_value == tab:
             text = f"• {label}"
         elif tab_value == "pending" and pending_has_unreviewed:
-            text = f"{label} ‼️"
+            text = label.replace("🕐 ", "🕐‼️")
         else:
             text = label
         builder.button(text=text, callback_data=ApptPageCB(mode=mode, page=1, tab=tab_value).pack())
