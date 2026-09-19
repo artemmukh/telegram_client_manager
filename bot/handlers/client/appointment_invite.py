@@ -15,7 +15,7 @@ from bot.keyboards.client.appointment_response_kb import (
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
-    CLIENT_ACTOR_LABEL,
+    DEFAULT_UNKNOWN_CLIENT_LABEL,
     AppointmentNotificationService,
 )
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
@@ -108,7 +108,7 @@ def create_client_appointment_invite_router(
                             delivery = await notification_service.notify_staff_reschedule_decision_accepted(
                                 recipient.telegram_user_id,
                                 appointment,
-                                CLIENT_ACTOR_LABEL,
+                                DEFAULT_UNKNOWN_CLIENT_LABEL,
                                 client_name,
                             )
                             kind = appointment_management_service.origin_log_kind(pre_appointment, "reschedule")

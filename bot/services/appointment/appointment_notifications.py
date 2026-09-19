@@ -114,10 +114,6 @@ DEFAULT_UNKNOWN_CLIENT_LABEL = {
     "uz": "Mijoz",
 }
 
-CLIENT_ACTOR_LABEL = {
-    "ru": "Клиент",
-    "uz": "Mijoz",
-}
 
 _STAFF_APPOINTMENT_CANCELLED = {
     "ru": "❌ Запись клиента {client_name} отменена ({actor}).",

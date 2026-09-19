@@ -20,7 +20,9 @@ from bot.handlers.client.appointment_response import create_client_appointment_r
 from bot.keyboards.client.appointment_invite_cb import AppointmentInviteActionCB
 from bot.models.appointment import Appointment
 from bot.models.user import User
-from bot.services.appointment.appointment_notifications import CLIENT_ACTOR_LABEL
+from bot.services.appointment.appointment_notifications import (
+    DEFAULT_UNKNOWN_CLIENT_LABEL,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.role import Role
 
@@ -182,7 +184,7 @@ async def test_confirm_invite_staff_retimed_self_booking_logs_reschedule_to_all_
     }
     assert set(accepted_by_telegram_id) == {DOCTOR_TELEGRAM_ID, ADMIN_TELEGRAM_ID}
     assert all(
-        call[1] == 2 and call[2] is CLIENT_ACTOR_LABEL and call[3] == CLIENT_NAME
+        call[1] == 2 and call[2] is DEFAULT_UNKNOWN_CLIENT_LABEL and call[3] == CLIENT_NAME
         for call in accepted_by_telegram_id.values()
     )
     assert notification_service.admin_confirmation_calls == []
