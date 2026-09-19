@@ -688,6 +688,7 @@ class AppointmentManagement:
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
 
         client = await self.user_repository.get_client_by_id(appointment.client_id)
+        origin_kind = "reschedule" if appointment.status == AppointmentStatus.CONFIRMED else "booking"
         if client is not None and client.telegram_user_id is None:
             status_updated_at = get_current_tashkent_time()
             applied = await self.appointment_repository.try_apply_new_datetime_immediately(
@@ -703,6 +704,7 @@ class AppointmentManagement:
             appointment.proposed_by = None
             appointment.decided_by_user_id = acting_user_id
             appointment.status_updated_at = status_updated_at
+            appointment.origin_kind = origin_kind
 
             return appointment
 
@@ -720,6 +722,7 @@ class AppointmentManagement:
         appointment.proposed_by = None
         appointment.decided_by_user_id = acting_user_id
         appointment.status_updated_at = status_updated_at
+        appointment.origin_kind = origin_kind
 
         return appointment
 
@@ -801,6 +804,13 @@ class AppointmentManagement:
         if appointment.status_actor == StatusActor.CLIENT:
             return "clinic"
         return None  # system / unknown — no human turn recorded yet
+
+    @staticmethod
+    def origin_log_kind(appointment: Appointment, fallback: str) -> str:
+        """Journal kind from the persisted record origin; legacy rows use the fallback."""
+        if appointment.origin_kind in ("booking", "reschedule"):
+            return appointment.origin_kind
+        return fallback
 
     def resolve_admin_proposal_log_kind(self, appointment: Appointment) -> str | None:
         if (

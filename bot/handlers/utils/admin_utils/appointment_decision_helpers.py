@@ -230,6 +230,7 @@ async def notify_staff_reschedule_decision(
     appointment,
     accepted: bool,
     lang: str,
+    kind: str = "reschedule",
 ) -> None:
     """Уведомить остальных сотрудников о решении по заявке на перенос.
 
@@ -267,7 +268,7 @@ async def notify_staff_reschedule_decision(
                 notification_service.notifier,
                 appointment_id=appointment.id,
                 chat_id=recipient.telegram_user_id,
-                kind="reschedule",
+                kind=kind,
                 delivery=delivery,
             )
         except Exception as e:

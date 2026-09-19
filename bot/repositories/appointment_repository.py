@@ -48,7 +48,8 @@ SELECT
     a.price,
     s.is_doctor AS doctor_is_doctor,
     a.decided_by_user_id,
-    a.status_actor
+    a.status_actor,
+    a.origin_kind
 FROM appointments a
 LEFT JOIN clinics c ON c.id = a.clinic_id
 LEFT JOIN users u ON u.id = a.client_id
@@ -97,6 +98,7 @@ class AppointmentRepository:
                 price REAL DEFAULT NULL,
                 decided_by_user_id INTEGER DEFAULT NULL,
                 status_actor TEXT DEFAULT NULL,
+                origin_kind TEXT DEFAULT NULL,
 
                 FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                 FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -171,6 +173,13 @@ class AppointmentRepository:
         if "status_actor" not in columns:
             await self.connection.execute(
                 "ALTER TABLE appointments ADD COLUMN status_actor TEXT DEFAULT NULL"
+            )
+
+        # Ensure the record origin for journal kinds exists. NULL marks legacy
+        # rows, which render through the per-call fallback kind.
+        if "origin_kind" not in columns:
+            await self.connection.execute(
+                "ALTER TABLE appointments ADD COLUMN origin_kind TEXT DEFAULT NULL"
             )
 
         await self._rebuild_appointments_if_column_order_stale()
@@ -267,6 +276,7 @@ class AppointmentRepository:
         "created_by", "status", "created_at", "status_updated_at",
         "notification_message_id", "proposed_datetime", "proposal_message_id",
         "proposed_by", "admin_notification_message_id", "decided_by_user_id", "status_actor",
+        "origin_kind",
     ]
 
     async def _rebuild_appointments_if_column_order_stale(self) -> None:
@@ -314,6 +324,7 @@ class AppointmentRepository:
                     admin_notification_message_id INTEGER DEFAULT NULL,
                     decided_by_user_id INTEGER DEFAULT NULL,
                     status_actor TEXT DEFAULT NULL,
+                    origin_kind TEXT DEFAULT NULL,
 
                     FOREIGN KEY(clinic_id) REFERENCES clinics(id) ON DELETE CASCADE,
                     FOREIGN KEY(client_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -326,13 +337,15 @@ class AppointmentRepository:
                     id, clinic_id, client_id, admin_id, datetime, purpose, price,
                     created_by, status, created_at, status_updated_at,
                     notification_message_id, proposed_datetime, proposal_message_id,
-                    proposed_by, admin_notification_message_id, decided_by_user_id, status_actor
+                    proposed_by, admin_notification_message_id, decided_by_user_id, status_actor,
+                    origin_kind
                 )
                 SELECT
                     id, clinic_id, client_id, admin_id, datetime, purpose, price,
                     created_by, status, created_at, status_updated_at,
                     notification_message_id, proposed_datetime, proposal_message_id,
-                    proposed_by, admin_notification_message_id, decided_by_user_id, status_actor
+                    proposed_by, admin_notification_message_id, decided_by_user_id, status_actor,
+                    origin_kind
                 FROM appointments
             """)
 
@@ -403,7 +416,7 @@ class AppointmentRepository:
                 a.proposed_by, a.admin_notification_message_id,
                 d.full_name AS doctor_full_name, d.phone AS doctor_phone,
                 a.price, s.is_doctor AS doctor_is_doctor,
-                a.decided_by_user_id, a.status_actor
+                a.decided_by_user_id, a.status_actor, a.origin_kind
             FROM appointments a
             JOIN users u ON u.id = a.client_id
             LEFT JOIN clinics c ON c.id = a.clinic_id
@@ -586,11 +599,19 @@ class AppointmentRepository:
         sql = """
             UPDATE appointments
             SET datetime = ?, status = 'pending', decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff',
-                proposed_datetime = NULL, proposed_by = NULL
+                proposed_datetime = NULL, proposed_by = NULL,
+                origin_kind = ?
             WHERE id = ?
                 AND status = ?
         """
-        params = (new_datetime, decided_by_user_id, status_updated_at, appointment_id, expected_status)
+        params = (
+            new_datetime,
+            decided_by_user_id,
+            status_updated_at,
+            self._origin_kind_for_status(expected_status),
+            appointment_id,
+            expected_status,
+        )
         try:
             cursor = await self.connection.execute(sql, params)
             await self.connection.commit()
@@ -600,6 +621,10 @@ class AppointmentRepository:
             raise
 
         return cursor.rowcount > 0
+
+    @staticmethod
+    def _origin_kind_for_status(expected_status: str) -> str:
+        return "reschedule" if expected_status == "confirmed" else "booking"
 
     async def try_update_own_pending_datetime(self, appointment_id: int, new_datetime: str) -> bool:
         # CAS for a client editing their own still-undecided self-booking request:
@@ -689,12 +714,20 @@ class AppointmentRepository:
         sql = """
             UPDATE appointments
             SET datetime = ?, status = 'confirmed', decided_by_user_id = ?, status_updated_at = ?, status_actor = 'staff',
-                proposed_datetime = NULL, proposed_by = NULL
+                proposed_datetime = NULL, proposed_by = NULL,
+                origin_kind = ?
             WHERE id = ?
                 AND status = ?
                 AND NOT (proposed_datetime IS NOT NULL AND proposed_by = 'admin')
         """
-        params = (new_datetime, decided_by_user_id, status_updated_at, appointment_id, expected_status)
+        params = (
+            new_datetime,
+            decided_by_user_id,
+            status_updated_at,
+            self._origin_kind_for_status(expected_status),
+            appointment_id,
+            expected_status,
+        )
         try:
             cursor = await self.connection.execute(sql, params)
             await self.connection.commit()
@@ -1383,4 +1416,5 @@ class AppointmentRepository:
             doctor_is_doctor=bool(row[21]) if row[21] is not None else None,
             decided_by_user_id=row[22],
             status_actor=StatusActor(row[23]) if row[23] else None,
+            origin_kind=row[24],
         )

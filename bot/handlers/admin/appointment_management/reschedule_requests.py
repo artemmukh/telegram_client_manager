@@ -535,6 +535,7 @@ def create_admin_reschedule_requests_router(
             await invalidate_reschedule_siblings(callback_query, appointment, lang)
             await notify_staff_reschedule_decision(
                 notification_service, appt_mng, callback_query.from_user.id, appointment, accepted=True, lang=lang,
+                kind=appt_mng.origin_log_kind(appointment, "reschedule"),
             )
             await state.clear()
             return
@@ -556,7 +557,8 @@ def create_admin_reschedule_requests_router(
         await render_reschedule_decision(callback_query, appointment, lang)
         await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await notify_staff_turn_transferred_to_others(
-            notification_service, appt_mng, callback_query.from_user.id, appointment, kind="reschedule", lang=lang,
+            notification_service, appt_mng, callback_query.from_user.id, appointment,
+            kind=appt_mng.origin_log_kind(appointment, "reschedule"), lang=lang,
         )
         await state.clear()
 

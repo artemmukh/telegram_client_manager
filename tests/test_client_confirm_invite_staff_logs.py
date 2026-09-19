@@ -80,6 +80,12 @@ class FakeAppointmentManagement:
     async def get_appointment_for_client(self, appointment_id, telegram_user_id):
         return self.pre_mutation
 
+    @staticmethod
+    def origin_log_kind(appointment, fallback):
+        if appointment is not None and appointment.origin_kind in ("booking", "reschedule"):
+            return appointment.origin_kind
+        return fallback
+
     async def confirm_appointment_by_client(self, appointment_id, telegram_user_id):
         self.confirm_calls.append((appointment_id, telegram_user_id))
         if self.confirm_error is not None:
@@ -185,6 +191,37 @@ async def test_confirm_invite_staff_retimed_self_booking_logs_reschedule_to_all_
     } == {
         (2, DOCTOR_TELEGRAM_ID, "reschedule"),
         (2, ADMIN_TELEGRAM_ID, "reschedule"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_confirm_invite_staff_retimed_self_booking_uses_persisted_origin_kind():
+    # Same flow as the reschedule-kind baseline, but the persisted origin is
+    # "booking" (staff re-timed a fresh self-booking): the journal kind must
+    # follow the origin, not the confirm semantics.
+    pre_mutation = _pending_appointment(CreatedBy.CLIENT, StatusActor.STAFF)
+    pre_mutation.origin_kind = "booking"
+    post_mutation = _pending_appointment(CreatedBy.CLIENT, StatusActor.CLIENT)
+    post_mutation.status = AppointmentStatus.CONFIRMED
+    appt_mng = FakeAppointmentManagement(pre_mutation, post_mutation)
+    notification_service = FakeNotificationService()
+    scheduler = FakeAppointmentScheduler()
+    confirm_invite = _find_handler(
+        _build_invite_router(appt_mng, notification_service, scheduler), "confirm_invite"
+    )
+    callback_query = _callback_query()
+
+    await confirm_invite(
+        callback_query,
+        AppointmentInviteActionCB(action="confirm", appointment_id=2),
+        _client(),
+    )
+
+    assert {
+        (row[0], row[1], row[3]) for row in appt_mng.recorded_notifications
+    } == {
+        (2, DOCTOR_TELEGRAM_ID, "booking"),
+        (2, ADMIN_TELEGRAM_ID, "booking"),
     }
 
 

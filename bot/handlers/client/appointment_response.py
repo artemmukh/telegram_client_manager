@@ -539,7 +539,7 @@ def create_client_appointment_router(
                             and pre_mutation_appointment.proposed_by is None
                         )
                         kind = (
-                            "reschedule"
+                            appointment_management_service.origin_log_kind(pre_mutation_appointment, "reschedule")
                             if staff_origin_proposal
                             else (
                                 appointment_management_service.resolve_admin_proposal_log_kind(

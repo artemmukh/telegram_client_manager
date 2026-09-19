@@ -2049,6 +2049,23 @@ async def test_confirm_appointment_by_client_allows_staff_retimed_self_booking()
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
 
 
+def test_origin_log_kind_uses_persisted_origin_and_falls_back_for_legacy_rows():
+    service = AppointmentManagement(
+        FakeAppointmentRepository([]), FakeUserRepo(None), FakeStaffRepo(None), _clinic_repo()
+    )
+    legacy = _appointment_at(1, get_current_tashkent_datetime() + timedelta(days=1))
+
+    assert legacy.origin_kind is None
+    assert service.origin_log_kind(legacy, "reschedule") == "reschedule"
+    assert service.origin_log_kind(legacy, "booking") == "booking"
+
+    legacy.origin_kind = "booking"
+    assert service.origin_log_kind(legacy, "reschedule") == "booking"
+
+    legacy.origin_kind = "reschedule"
+    assert service.origin_log_kind(legacy, "booking") == "reschedule"
+
+
 @pytest.mark.asyncio
 async def test_confirm_appointment_by_client_reconfirm_is_noop_success():
     now = get_current_tashkent_datetime()
@@ -2334,6 +2351,7 @@ async def test_propose_new_datetime_commits_datetime_and_stays_pending_when_clie
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.datetime == proposed_datetime
     assert appointment.decided_by_user_id == admin.ID
+    assert appointment.origin_kind == "booking"
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
     assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
@@ -2414,6 +2432,7 @@ async def test_propose_new_datetime_demotes_confirmed_appointment_with_no_outsta
     assert appointment.proposed_datetime is None
     assert appointment.proposed_by is None
     assert appointment.status is AppointmentStatus.PENDING
+    assert appointment.origin_kind == "reschedule"
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
     assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
@@ -2460,6 +2479,7 @@ async def test_propose_new_datetime_immediately_confirms_when_client_has_no_tele
     assert appointment.proposed_datetime is None
     assert appointment.proposed_by is None
     assert appointment.decided_by_user_id == admin.ID
+    assert appointment.origin_kind == "booking"
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]

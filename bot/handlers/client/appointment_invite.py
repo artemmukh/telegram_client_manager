@@ -111,7 +111,7 @@ def create_client_appointment_invite_router(
                                 CLIENT_ACTOR_LABEL,
                                 client_name,
                             )
-                            kind = "reschedule"
+                            kind = appointment_management_service.origin_log_kind(pre_appointment, "reschedule")
                         else:
                             delivery = await notification_service.notify_admin_confirmation(
                                 recipient.telegram_user_id,

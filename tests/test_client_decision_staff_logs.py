@@ -69,6 +69,12 @@ class FakeAppointmentManagement:
     async def get_appointment_for_client(self, appointment_id, telegram_user_id):
         return self.pre_mutation
 
+    @staticmethod
+    def origin_log_kind(appointment, fallback):
+        if appointment is not None and appointment.origin_kind in ("booking", "reschedule"):
+            return appointment.origin_kind
+        return fallback
+
     async def accept_proposed_datetime(self, appointment_id, telegram_user_id):
         return self.appointment
 
@@ -171,6 +177,35 @@ async def test_client_accept_staff_proposal_logs_reschedule_to_all_staff():
     } == {
         (2, DOCTOR_TELEGRAM_ID, "reschedule"),
         (2, ADMIN_TELEGRAM_ID, "reschedule"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_client_accept_staff_proposal_uses_persisted_origin_kind():
+    # A staff re-time of a fresh self-booking keeps origin "booking"; the
+    # journal kind must follow the persisted origin, not the accept semantics.
+    pre_mutation = _staff_origin_pending_appointment()
+    pre_mutation.origin_kind = "booking"
+    post_mutation = _staff_origin_pending_appointment()
+    post_mutation.status = AppointmentStatus.CONFIRMED
+    post_mutation.status_actor = StatusActor.CLIENT
+    appt_mng = FakeAppointmentManagement(pre_mutation, post_mutation)
+    notification_service = FakeNotificationService()
+    manage_action = _find_handler(_build_router(appt_mng, notification_service), "manage_action")
+    callback_query = _callback_query()
+
+    await manage_action(
+        callback_query,
+        ClientManageActionCB(action="accept_proposal", appointment_id=2, page=1),
+        MagicMock(),
+        _client(),
+    )
+
+    assert {
+        (row[0], row[1], row[3]) for row in appt_mng.recorded_notifications
+    } == {
+        (2, DOCTOR_TELEGRAM_ID, "booking"),
+        (2, ADMIN_TELEGRAM_ID, "booking"),
     }
 
 

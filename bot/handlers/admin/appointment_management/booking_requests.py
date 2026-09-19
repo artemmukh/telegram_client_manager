@@ -216,7 +216,7 @@ def create_admin_booking_requests_router(
         )
 
     async def notify_staff_booking_decision(
-        callback_query: CallbackQuery, appointment, confirmed: bool, lang: str,
+        callback_query: CallbackQuery, appointment, confirmed: bool, lang: str, kind: str = "booking",
     ) -> None:
         if not notification_service:
             return
@@ -249,7 +249,7 @@ def create_admin_booking_requests_router(
                     notification_service.notifier,
                     appointment_id=appointment.id,
                     chat_id=recipient.telegram_user_id,
-                    kind="booking",
+                    kind=kind,
                     delivery=delivery,
                 )
             except Exception as e:
@@ -575,7 +575,10 @@ def create_admin_booking_requests_router(
             await callback_query.answer(_TIME_CHANGED.get(lang, _TIME_CHANGED["ru"]))
             await render_booking_decision(callback_query, appointment, lang)
             await invalidate_booking_siblings(callback_query, appointment, lang)
-            await notify_staff_booking_decision(callback_query, appointment, confirmed=True, lang=lang)
+            await notify_staff_booking_decision(
+                callback_query, appointment, confirmed=True, lang=lang,
+                kind=appt_mng.origin_log_kind(appointment, "booking"),
+            )
             await state.clear()
             return
 

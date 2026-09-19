@@ -1561,6 +1561,7 @@ async def test_try_propose_new_datetime_commits_new_datetime_and_demotes_confirm
     assert updated.proposed_by is None
     assert updated.decided_by_user_id == user.ID
     assert updated.status_actor is StatusActor.STAFF
+    assert updated.origin_kind == "reschedule"
 
 
 @pytest.mark.asyncio
@@ -1587,6 +1588,7 @@ async def test_try_propose_new_datetime_second_admin_proposal_also_succeeds_last
     assert updated.status is AppointmentStatus.PENDING
     assert updated.datetime == "2026-07-06 11:00"
     assert updated.status_actor is StatusActor.STAFF
+    assert updated.origin_kind == "booking"
 
 
 @pytest.mark.asyncio
@@ -1768,8 +1770,76 @@ async def test_try_propose_new_datetime_succeeds_with_expected_status_confirmed_
     assert updated.proposed_by is None
 
 
+@pytest.mark.asyncio
+async def test_try_apply_new_datetime_immediately_records_origin_kind(appointment_setup):
+    """The immediate-apply CAS (client without Telegram) stamps origin_kind the
+    same way try_propose_new_datetime does: pending source -> "booking",
+    confirmed source -> "reschedule", so journal kinds stay origin-true."""
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    pending_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    await appointment_repo.try_apply_new_datetime_immediately(
+        pending_id, "2026-07-05 10:00", user.ID, "2026-07-02 10:00:00", AppointmentStatus.PENDING.value
+    )
+    updated_pending = await appointment_repo.get_appointment_by_id(pending_id)
+    assert updated_pending.status is AppointmentStatus.CONFIRMED
+    assert updated_pending.origin_kind == "booking"
+
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    confirmed_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[1].id
+    await appointment_repo.try_confirm_or_reject_pending(
+        confirmed_id, AppointmentStatus.CONFIRMED, user.ID, "2026-07-02 10:04:00"
+    )
+    await appointment_repo.try_apply_new_datetime_immediately(
+        confirmed_id, "2026-07-06 10:00", user.ID, "2026-07-02 10:05:00", AppointmentStatus.CONFIRMED.value
+    )
+    updated_confirmed = await appointment_repo.get_appointment_by_id(confirmed_id)
+    assert updated_confirmed.status is AppointmentStatus.CONFIRMED
+    assert updated_confirmed.origin_kind == "reschedule"
+
+
 # --- try_update_own_pending_datetime: CAS for a client editing their own
 # still-undecided self-booking request (Phase A) ---
+
+
+@pytest.mark.asyncio
+async def test_init_adds_origin_kind_column_to_legacy_database(tmp_path):
+    """Databases created before origin_kind existed get the column appended by
+    init()'s ALTER guard, so the rebuild's target column order is satisfied
+    without a data migration."""
+    connection = await aiosqlite.connect(tmp_path / "legacy.db")
+    await connection.execute("PRAGMA foreign_keys = ON")
+    await connection.execute("""
+        CREATE TABLE appointments(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            clinic_id INTEGER NOT NULL,
+            client_id INTEGER NOT NULL,
+            admin_id INTEGER DEFAULT NULL,
+            datetime TIMESTAMP NOT NULL,
+            purpose TEXT,
+            price REAL DEFAULT NULL,
+            created_by TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status_updated_at TIMESTAMP DEFAULT NULL,
+            notification_message_id INTEGER DEFAULT NULL,
+            proposed_datetime TIMESTAMP DEFAULT NULL,
+            proposal_message_id INTEGER DEFAULT NULL,
+            proposed_by TEXT DEFAULT NULL,
+            admin_notification_message_id INTEGER DEFAULT NULL,
+            decided_by_user_id INTEGER DEFAULT NULL,
+            status_actor TEXT DEFAULT NULL
+        )
+    """)
+    repo = AppointmentRepository(connection)
+
+    await repo.init()
+
+    cursor = await connection.execute("PRAGMA table_info(appointments)")
+    columns = [row[1] for row in await cursor.fetchall()]
+    assert "origin_kind" in columns
+    await connection.close()
 
 
 def _client_pending_appointment(client_id: int, doctor_id: int | None, dt: str) -> Appointment:
@@ -2174,6 +2244,7 @@ TARGET_APPOINTMENTS_COLUMN_ORDER = [
     "created_by", "status", "created_at", "status_updated_at",
     "notification_message_id", "proposed_datetime", "proposal_message_id",
     "proposed_by", "admin_notification_message_id", "decided_by_user_id", "status_actor",
+    "origin_kind",
 ]
 
 
