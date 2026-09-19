@@ -45,7 +45,7 @@ from bot.services.utils.date_parser import (
     format_datetime_for_db,
     get_current_tashkent_datetime,
 )
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.role import Role
 from tests.conftest import FakeBlockedSlotRepository
 
@@ -2030,6 +2030,23 @@ async def test_confirm_appointment_by_client_raises_when_self_booked_and_pending
         await service.confirm_appointment_by_client(1, client.telegram_user_id)
 
     assert appt_repo.status_updates == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_appointment_by_client_allows_staff_retimed_self_booking():
+    now = get_current_tashkent_datetime()
+    appointment = _appointment_at(
+        1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT,
+    )
+    appointment.status_actor = StatusActor.STAFF
+    appt_repo = FakeAppointmentRepository([appointment])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
 
 
 @pytest.mark.asyncio

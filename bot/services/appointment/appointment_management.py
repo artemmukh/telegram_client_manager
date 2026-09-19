@@ -590,7 +590,11 @@ class AppointmentManagement:
 
         self._ensure_not_finalized(appointment, _CONFIRM_NOT_AVAILABLE_MESSAGE)
 
-        if appointment.created_by == CreatedBy.CLIENT and appointment.status == AppointmentStatus.PENDING:
+        if (
+            appointment.created_by == CreatedBy.CLIENT
+            and appointment.status == AppointmentStatus.PENDING
+            and appointment.status_actor != StatusActor.STAFF
+        ):
             raise AwaitingClinicDecisionError(_AWAIT_CLINIC_DECISION_MESSAGE)
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
