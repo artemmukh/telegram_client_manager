@@ -38,6 +38,7 @@ from bot.services.appointment.appointment_notifications import (
     staff_appointment_cancelled_text,
     staff_appointment_created_text,
     staff_new_booking_request_text,
+    staff_turn_transferred_text,
 )
 from bot.utils.appointment_enums import (
     AppointmentStatus,
@@ -626,6 +627,15 @@ def test_staff_appointment_created_text_without_doctor_shows_dash():
 
     assert "Создана новая запись" in text
     assert "Врач" not in text
+
+
+def test_staff_turn_transferred_text_includes_new_time():
+    text = staff_turn_transferred_text(
+        "Иванов Иван", "+998901234567", "администратором", "10 июля 2026, 14:30",
+    )
+
+    assert "Иванов Иван" in text
+    assert "10 июля 2026, 14:30" in text
 
 
 def test_admin_confirmation_text_includes_doctor_name():

@@ -200,11 +200,11 @@ _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY = {
 
 _STAFF_TURN_TRANSFERRED = {
     "ru": (
-        "🕐 {actor} изменил(а) время записи клиента {client_name}; "
+        "🕐 {actor} изменил(а) время записи клиента {client_name} на {new_time}; "
         "ожидается подтверждение клиента."
     ),
     "uz": (
-        "🕐 {actor} mijoz {client_name} yozuvi vaqtini o'zgartirdi; "
+        "🕐 {actor} mijoz {client_name} yozuvi vaqtini {new_time} ga o'zgartirdi; "
         "mijoz tasdiqlashi kutilmoqda."
     ),
 }
@@ -569,9 +569,9 @@ def staff_pending_request_expired_text(
     )
 
 
-def staff_turn_transferred_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
+def staff_turn_transferred_text(client_name: str, client_phone: str | None, actor: str, new_time: str, lang: str = "ru") -> str:
     return _STAFF_TURN_TRANSFERRED.get(lang, _STAFF_TURN_TRANSFERRED["ru"]).format(
-        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor, new_time=new_time,
     )
 
 
@@ -1432,7 +1432,9 @@ class AppointmentNotificationService:
         """Notify other staff that a colleague changed the time and the client must confirm."""
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
-        compact_text = staff_turn_transferred_text(client_name, appointment.client_phone, actor, lang)
+        compact_text = staff_turn_transferred_text(
+            client_name, appointment.client_phone, actor, _format_datetime_value(appointment.datetime, lang), lang,
+        )
         return await self._send_staff_log(
             staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
