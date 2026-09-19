@@ -191,12 +191,10 @@ _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY = {
     "ru": {
         "clinic": "Ожидали ответ от: клиники.",
         "client": "Ожидали ответ от: клиента.",
-        "proposed_time": "Ожидали ответ по предложенному времени.",
     },
     "uz": {
         "clinic": "Javob kutilgan tomon: klinika.",
         "client": "Javob kutilgan tomon: mijoz.",
-        "proposed_time": "Taklif qilingan vaqt bo'yicha javob kutilgan.",
     },
 }
 
@@ -562,7 +560,7 @@ def staff_pending_request_expired_text(
     resolved_lang = lang if lang in {"ru", "uz"} else "ru"
     awaiting_line = _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang].get(
         awaiting_party,
-        _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang]["proposed_time"],
+        _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang]["clinic"],
     )
     return _STAFF_PENDING_REQUEST_EXPIRED[resolved_lang].format(
         appointment_id=appointment_id,
