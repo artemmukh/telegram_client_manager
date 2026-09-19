@@ -277,6 +277,57 @@ async def notify_staff_reschedule_decision(
             )
 
 
+async def notify_staff_turn_transferred_to_others(
+    notification_service: AppointmentNotificationService,
+    appt_mng: AppointmentManagement,
+    actor_telegram_id: int,
+    appointment,
+    kind: str,
+    lang: str,
+) -> None:
+    """Уведомить остальных сотрудников о том, что коллега изменил время и теперь
+    ответ ожидается от клиента.
+
+    Действующий сотрудник (actor_telegram_id) не получает уведомление о
+    собственном действии. kind передаётся явно вызывающей стороной, так как
+    запись делается в момент изменения, а не по итогам решения.
+    """
+    if not notification_service:
+        return
+    try:
+        actor = await appt_mng.get_user_by_telegram_id(actor_telegram_id)
+        actor_label = await appt_mng.resolve_decision_label(actor.ID if actor else None)
+        client = await appt_mng.get_client_by_id(appointment.client_id)
+        client_name = client.full_name if client else DEFAULT_UNKNOWN_CLIENT_LABEL.get(lang, DEFAULT_UNKNOWN_CLIENT_LABEL["ru"])
+        recipients = await appt_mng.resolve_notification_recipients(appointment)
+    except Exception as e:
+        logger.warning(
+            f"Failed to resolve staff recipients for turn transfer on appointment {appointment.id}: {e}"
+        )
+        return
+
+    for recipient in recipients:
+        if recipient.telegram_user_id == actor_telegram_id:
+            continue
+        try:
+            delivery = await notification_service.notify_staff_turn_transferred(
+                recipient.telegram_user_id, appointment, actor_label, client_name,
+            )
+            await record_staff_log_delivery(
+                appt_mng,
+                notification_service.notifier,
+                appointment_id=appointment.id,
+                chat_id=recipient.telegram_user_id,
+                kind=kind,
+                delivery=delivery,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to notify staff {recipient.telegram_user_id} about turn transfer "
+                f"for appointment {appointment.id}: {e}"
+            )
+
+
 async def notify_staff_appointment_cancellation(
     notification_service: AppointmentNotificationService,
     appt_mng: AppointmentManagement,

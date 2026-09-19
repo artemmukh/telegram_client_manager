@@ -114,6 +114,11 @@ DEFAULT_UNKNOWN_CLIENT_LABEL = {
     "uz": "Mijoz",
 }
 
+CLIENT_ACTOR_LABEL = {
+    "ru": "Клиент",
+    "uz": "Mijoz",
+}
+
 _STAFF_APPOINTMENT_CANCELLED = {
     "ru": "❌ Запись клиента {client_name} отменена ({actor}).",
     "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).",
@@ -193,6 +198,17 @@ _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY = {
         "client": "Javob kutilgan tomon: mijoz.",
         "proposed_time": "Taklif qilingan vaqt bo'yicha javob kutilgan.",
     },
+}
+
+_STAFF_TURN_TRANSFERRED = {
+    "ru": (
+        "🕐 {actor} изменил(а) время записи клиента {client_name}; "
+        "ожидается подтверждение клиента."
+    ),
+    "uz": (
+        "🕐 {actor} mijoz {client_name} yozuvi vaqtini o'zgartirdi; "
+        "mijoz tasdiqlashi kutilmoqda."
+    ),
 }
 
 _RESCHEDULE_PROPOSED = {
@@ -552,6 +568,12 @@ def staff_pending_request_expired_text(
         appointment_id=appointment_id,
         awaiting_line=awaiting_line,
         deadline=format_datetime_for_display(deadline, resolved_lang),
+    )
+
+
+def staff_turn_transferred_text(client_name: str, client_phone: str | None, actor: str, lang: str = "ru") -> str:
+    return _STAFF_TURN_TRANSFERRED.get(lang, _STAFF_TURN_TRANSFERRED["ru"]).format(
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor,
     )
 
 
@@ -1397,6 +1419,22 @@ class AppointmentNotificationService:
         lang = await self._resolve_lang(staff_telegram_id)
         actor = actor_label.get(lang, actor_label.get("ru", ""))
         compact_text = staff_booking_rejected_text(client_name, appointment.client_phone, actor, lang)
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
+        )
+
+    async def notify_staff_turn_transferred(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str,
+    ) -> StaffLogDelivery:
+        """Notify other staff that a colleague changed the time and the client must confirm."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        compact_text = staff_turn_transferred_text(client_name, appointment.client_phone, actor, lang)
         return await self._send_staff_log(
             staff_telegram_id, appointment, compact_text, lang=lang,
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
