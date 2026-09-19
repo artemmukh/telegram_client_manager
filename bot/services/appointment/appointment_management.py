@@ -783,6 +783,21 @@ class AppointmentManagement:
 
         return appointment
 
+    @staticmethod
+    def awaiting_party(appointment: Appointment) -> str | None:
+        """Return whom the appointment currently waits on, or None if nothing is owed.
+
+        Derived from the last transition actor (status_actor), not from proposed_by,
+        because staff proposals apply immediately and clear proposed_by.
+        """
+        if appointment.status != AppointmentStatus.PENDING:
+            return None
+        if appointment.status_actor == StatusActor.STAFF:
+            return "client"
+        if appointment.status_actor == StatusActor.CLIENT:
+            return "clinic"
+        return None  # system / unknown — no human turn recorded yet
+
     def resolve_admin_proposal_log_kind(self, appointment: Appointment) -> str | None:
         if (
             appointment.status == AppointmentStatus.PENDING
