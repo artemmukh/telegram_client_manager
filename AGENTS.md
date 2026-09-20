@@ -173,8 +173,15 @@ Mandatory mapping (task → skill):
 - Any PostgreSQL migration work → sqlite-to-postgres-step
 - Any backend refactor or async I/O work → python-backend-guidelines
 - Non-trivial feature start-to-finish → pythonproject3-superpowers (plan → spec → TDD → implement → review)
+- Security review of a diff (auth, input, secrets, SQL, PII, clinic scoping) → security-review
+- Stress-testing a plan before implementation → grill-me (manual invocation), which runs grilling
+- Opening a pull request → create-pr
+- Watching an open PR's CI checks and review comments → babysit-pr
 - Kimi workflow/tooling setup → kimi-project-workflow or kimi-project-tooling
 - Codex workflow/tooling setup → codex-project-workflow or codex-project-tooling
+
+The behavioral skill `karpathy-guidelines` lives in user scope
+(`~/.kimi-code/skills/`) and applies to all projects.
 
 When dispatching implementer or test-expert, include the relevant SKILL.md
 path in the subagent prompt.
