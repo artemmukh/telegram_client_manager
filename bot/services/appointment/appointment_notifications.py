@@ -909,6 +909,10 @@ class AppointmentNotificationService:
         """
         return await self.appointment_repo.get_latest_notification_message_id(appointment.id, chat_id)
 
+    async def resolve_staff_reply_anchor(self, appointment: Appointment, staff_telegram_id: int) -> int | None:
+        """Public per-chat anchor for threading a replacement card onto the staff's prior one."""
+        return await self._admin_reply_to_message_id(appointment, staff_telegram_id)
+
     async def _send_staff_log(
         self,
         staff_telegram_id: int,
@@ -1552,12 +1556,15 @@ class AppointmentNotificationService:
         appointment: Appointment,
         client_name: str,
         doctor_full_name: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> int | None:
         """Notify staff that a client wants to reschedule a confirmed appointment.
 
         Sends Accept / Reject action buttons.
         Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
+        When reply_to_message_id is given (client counter-offer replacing an
+        earlier staff card), the request is sent as a reply to that message.
         """
         lang = await self._resolve_lang(staff_telegram_id)
         doc_name = doctor_full_name or appointment.doctor_full_name
@@ -1576,6 +1583,7 @@ class AppointmentNotificationService:
                 chat_id=staff_telegram_id,
                 text=message_text,
                 reply_markup=reschedule_request_kb(appointment.id),
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception as e:
             raise NotificationDeliveryError(
