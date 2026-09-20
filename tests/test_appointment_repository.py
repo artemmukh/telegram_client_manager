@@ -74,6 +74,7 @@ async def test_creates_and_reads_appointment(appointment_setup):
     assert by_client[0].created_by is CreatedBy.ADMIN
     assert by_telegram == by_client
     assert by_id == by_client[0]
+    assert by_id.origin_kind == "booking"
     assert await appointment_repo.appointment_exists(by_client[0].id) is True
 
 

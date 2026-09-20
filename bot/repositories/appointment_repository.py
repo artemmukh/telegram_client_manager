@@ -437,9 +437,9 @@ class AppointmentRepository:
                 INSERT INTO appointments(
                     clinic_id, client_id, admin_id,
                     datetime, purpose, created_by, status, created_at,
-                    status_updated_at, notification_message_id, status_actor
+                    status_updated_at, notification_message_id, status_actor, origin_kind
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     appointment.clinic_id,
@@ -453,6 +453,7 @@ class AppointmentRepository:
                     appointment.created_at,
                     appointment.notification_message_id,
                     appointment.status_actor.value if appointment.status_actor else None,
+                    "booking",
                 ),
             )
             await self.connection.commit()
