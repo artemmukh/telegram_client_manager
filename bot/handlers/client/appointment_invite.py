@@ -77,9 +77,12 @@ def create_client_appointment_invite_router(
             )
             staff_origin_retimed = (
                 pre_appointment is not None
-                and pre_appointment.created_by == CreatedBy.CLIENT
                 and pre_appointment.status == AppointmentStatus.PENDING
                 and pre_appointment.status_actor == StatusActor.STAFF
+                and (
+                    pre_appointment.created_by == CreatedBy.CLIENT
+                    or pre_appointment.origin_kind is not None
+                )
             )
 
             await appointment_management_service.confirm_appointment_by_client(

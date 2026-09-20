@@ -94,6 +94,38 @@ async def test_updates_appointment_status(appointment_setup):
 
 
 @pytest.mark.asyncio
+async def test_try_expire_pending_request_expires_pending_appointment(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+
+    result = await appointment_repo.try_expire_pending_request(appointment_id, "2026-07-02 10:00:00")
+
+    assert result is True
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.EXPIRED
+    assert updated.status_actor is StatusActor.SYSTEM
+    assert updated.status_updated_at == "2026-07-02 10:00:00"
+
+
+@pytest.mark.asyncio
+async def test_try_expire_pending_request_is_noop_once_status_changed(appointment_setup):
+    appointment_repo, user = appointment_setup
+    await appointment_repo.create_appointment(_appointment(user.ID))
+    appointment_id = (await appointment_repo.get_appointments_by_client_id(user.ID, clinic_id=1))[0].id
+    await appointment_repo.update_appointment_status(
+        appointment_id, AppointmentStatus.CONFIRMED, "2026-07-02 09:00:00", StatusActor.CLIENT
+    )
+
+    result = await appointment_repo.try_expire_pending_request(appointment_id, "2026-07-02 10:00:00")
+
+    assert result is False
+    updated = await appointment_repo.get_appointment_by_id(appointment_id)
+    assert updated.status is AppointmentStatus.CONFIRMED
+    assert updated.status_updated_at == "2026-07-02 09:00:00"
+
+
+@pytest.mark.asyncio
 async def test_deletes_appointment(appointment_setup):
     appointment_repo, user = appointment_setup
     await appointment_repo.create_appointment(_appointment(user.ID))

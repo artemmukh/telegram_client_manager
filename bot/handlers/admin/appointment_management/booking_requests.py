@@ -27,6 +27,7 @@ from bot.handlers.utils.admin_utils.appointment_decision_helpers import (
     invalidate_actor_stale_message,
     invalidate_own_stale_finalized_message,
     invalidate_sibling_notifications,
+    notify_staff_turn_transferred_to_others,
 )
 from bot.handlers.utils.admin_utils.appointment_helpers import (
     build_appointment_card,
@@ -597,6 +598,10 @@ def create_admin_booking_requests_router(
         await callback_query.answer(_TIME_CHANGED_AND_NOTIFIED.get(lang, _TIME_CHANGED_AND_NOTIFIED["ru"]))
         await render_booking_decision(callback_query, appointment, lang)
         await invalidate_booking_siblings(callback_query, appointment, lang)
+        await notify_staff_turn_transferred_to_others(
+            notification_service, appt_mng, callback_query.from_user.id, appointment,
+            kind="reschedule", lang=lang,
+        )
         await state.clear()
 
     async def notify_client_confirmed(appointment) -> None:

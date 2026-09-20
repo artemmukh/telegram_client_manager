@@ -551,6 +551,24 @@ class AppointmentRepository:
         )
         await self.connection.commit()
 
+    async def try_expire_pending_request(
+        self,
+        appointment_id: int,
+        status_updated_at: str,
+    ) -> bool:
+        # Compare-and-set: the expiry job must not clobber a confirm/reject or
+        # client decision that landed between the job's read and this write.
+        sql = """
+            UPDATE appointments
+            SET status = ?, status_updated_at = ?, status_actor = 'system'
+            WHERE id = ? AND status = 'pending'
+        """
+        cursor = await self.connection.execute(
+            sql, (AppointmentStatus.EXPIRED.value, status_updated_at, appointment_id)
+        )
+        await self.connection.commit()
+        return cursor.rowcount > 0
+
     async def try_confirm_or_reject_pending(
         self,
         appointment_id: int,

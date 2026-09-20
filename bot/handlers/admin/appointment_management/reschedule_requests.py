@@ -558,7 +558,7 @@ def create_admin_reschedule_requests_router(
         await invalidate_reschedule_siblings(callback_query, appointment, lang)
         await notify_staff_turn_transferred_to_others(
             notification_service, appt_mng, callback_query.from_user.id, appointment,
-            kind=appt_mng.origin_log_kind(appointment, "reschedule"), lang=lang,
+            kind="reschedule", lang=lang,
         )
         await state.clear()
 

@@ -228,6 +228,42 @@ async def test_confirm_invite_staff_retimed_self_booking_uses_persisted_origin_k
 
 
 @pytest.mark.asyncio
+async def test_confirm_invite_staff_retimed_admin_appointment_logs_reschedule_accept():
+    # Row 6 -> row 8: staff re-timed a CONFIRMED admin-created appointment, so the
+    # client's invite answer is a reschedule decision, not a generic booking
+    # confirmation.
+    pre_mutation = _pending_appointment(CreatedBy.ADMIN, StatusActor.STAFF)
+    pre_mutation.origin_kind = "reschedule"
+    post_mutation = _pending_appointment(CreatedBy.ADMIN, StatusActor.CLIENT)
+    post_mutation.status = AppointmentStatus.CONFIRMED
+    appt_mng = FakeAppointmentManagement(pre_mutation, post_mutation)
+    notification_service = FakeNotificationService()
+    scheduler = FakeAppointmentScheduler()
+    confirm_invite = _find_handler(
+        _build_invite_router(appt_mng, notification_service, scheduler), "confirm_invite"
+    )
+    callback_query = _callback_query()
+
+    await confirm_invite(
+        callback_query,
+        AppointmentInviteActionCB(action="confirm", appointment_id=2),
+        _client(),
+    )
+
+    assert notification_service.admin_confirmation_calls == []
+    assert {call[0] for call in notification_service.staff_reschedule_accepted_calls} == {
+        DOCTOR_TELEGRAM_ID, ADMIN_TELEGRAM_ID,
+    }
+    assert all(call[1] == 2 for call in notification_service.staff_reschedule_accepted_calls)
+    assert {
+        (row[0], row[1], row[3]) for row in appt_mng.recorded_notifications
+    } == {
+        (2, DOCTOR_TELEGRAM_ID, "reschedule"),
+        (2, ADMIN_TELEGRAM_ID, "reschedule"),
+    }
+
+
+@pytest.mark.asyncio
 async def test_confirm_invite_fresh_self_booking_still_blocked():
     pre_mutation = _pending_appointment(CreatedBy.CLIENT, StatusActor.CLIENT)
     appt_mng = FakeAppointmentManagement(

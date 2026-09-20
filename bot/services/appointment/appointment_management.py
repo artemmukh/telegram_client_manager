@@ -1134,9 +1134,9 @@ class AppointmentManagement:
             return None
 
         status_updated_at = get_current_tashkent_time()
-        await self._update_status_repository(
-            appointment_id, AppointmentStatus.EXPIRED, status_updated_at, StatusActor.SYSTEM
-        )
+        expired = await self.appointment_repository.try_expire_pending_request(appointment_id, status_updated_at)
+        if not expired:
+            return None
         appointment.status = AppointmentStatus.EXPIRED
         appointment.status_updated_at = status_updated_at
         appointment.status_actor = StatusActor.SYSTEM

@@ -73,6 +73,20 @@ class FakeAppointmentRepository:
         self.own_pending_datetime_lost_races = set()
         self.client_reschedule_proposal_calls = []
         self.client_reschedule_proposal_lost_races = set()
+        self.expire_calls = []
+        self.expire_lost_races = set()
+
+    async def try_expire_pending_request(self, appointment_id, status_updated_at):
+        self.expire_calls.append((appointment_id, status_updated_at))
+        if appointment_id in self.expire_lost_races:
+            return False
+        appointment = await self.get_appointment_by_id(appointment_id)
+        if appointment is None or appointment.status != AppointmentStatus.PENDING:
+            return False
+        appointment.status = AppointmentStatus.EXPIRED
+        appointment.status_updated_at = status_updated_at
+        appointment.status_actor = StatusActor.SYSTEM
+        return True
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -423,6 +437,40 @@ def _appointment(appointment_id=1, client_id=7):
         status=AppointmentStatus.PENDING,
         id=appointment_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_expires_and_returns_appointment():
+    appointment = _appointment()
+    repository = FakeAppointmentRepository([appointment])
+    service = AppointmentManagement(repository, None, None, None)
+
+    result = await service.expire_pending_request(appointment.id)
+
+    assert result is appointment
+    assert result.status is AppointmentStatus.EXPIRED
+    assert result.status_actor is StatusActor.SYSTEM
+    assert len(repository.expire_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_returns_none_when_racing_decision_wins():
+    appointment = _appointment()
+    repository = FakeAppointmentRepository([appointment])
+    repository.expire_lost_races.add(appointment.id)
+    service = AppointmentManagement(repository, None, None, None)
+
+    result = await service.expire_pending_request(appointment.id)
+
+    assert result is None
+    assert appointment.status is AppointmentStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_returns_none_when_appointment_missing():
+    service = AppointmentManagement(FakeAppointmentRepository(), None, None, None)
+
+    assert await service.expire_pending_request(999) is None
 
 
 @pytest.mark.parametrize(
