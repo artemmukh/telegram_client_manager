@@ -463,7 +463,7 @@ async def test_pick_day_renders_full_grid_with_locks_for_pending_and_confirmed_a
         status=AppointmentStatus.PENDING, id=101,
     )
     confirmed = Appointment(
-        clinic_id=1, client_id=100, doctor_id=42, datetime="2026-08-01 10:15",
+        clinic_id=1, client_id=100, doctor_id=42, datetime="2026-08-01 10:30",
         purpose="Осмотр", created_by=CreatedBy.ADMIN,
         status=AppointmentStatus.CONFIRMED, id=102,
     )
@@ -471,7 +471,7 @@ async def test_pick_day_renders_full_grid_with_locks_for_pending_and_confirmed_a
     appointment_management_service = MagicMock()
     appointment_management_service.get_day_slot_occupancy = AsyncMock(
         return_value=[
-            (slot, [pending] if slot == "10:00" else [confirmed] if slot == "10:15" else [])
+            (slot, [pending] if slot == "10:00" else [confirmed] if slot == "10:30" else [])
             for slot in BOOKING_SLOTS
         ]
     )
@@ -493,12 +493,12 @@ async def test_pick_day_renders_full_grid_with_locks_for_pending_and_confirmed_a
     buttons = callback_query.message.edit_text.await_args.kwargs["reply_markup"].inline_keyboard
     slot_buttons = [button for row in buttons[:-1] for button in row]
     assert [button.text for button in slot_buttons] == [
-        f"🔒 {slot}" if slot in {"10:00", "10:15"} else slot for slot in BOOKING_SLOTS
+        f"🔒 {slot}" if slot in {"10:00", "10:30"} else slot for slot in BOOKING_SLOTS
     ]
     assert len(slot_buttons) == len(BOOKING_SLOTS)
     assert ClientBookOccupiedSlotCB.unpack(slot_buttons[0].callback_data).slot == "10:00"
-    assert ClientBookOccupiedSlotCB.unpack(slot_buttons[1].callback_data).slot == "10:15"
-    assert ClientBookSlotCB.unpack(slot_buttons[2].callback_data).slot == "10:30"
+    assert ClientBookOccupiedSlotCB.unpack(slot_buttons[1].callback_data).slot == "10:30"
+    assert ClientBookSlotCB.unpack(slot_buttons[2].callback_data).slot == "11:00"
     from bot.states.client.booking_states import ClientBookingStates
 
     state.set_state.assert_awaited_once_with(ClientBookingStates.choose_slot)

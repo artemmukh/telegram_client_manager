@@ -4662,9 +4662,9 @@ def _blocking_service(blocks, doctor_id=42, appt_repo=None):
 
 @pytest.mark.asyncio
 async def test_get_available_slots_excludes_slot_whose_duration_runs_into_an_off_grid_block():
-    """zb step is 15 minutes, so the 10:00 slot occupies [10:00, 10:15) and
+    """zb step is 30 minutes, so the 10:00 slot occupies [10:00, 10:30) and
     collides with a 10:05-10:10 block even though 10:05 is not a grid time.
-    The next slot, [10:15, 10:30), stays available."""
+    The next slot, [10:30, 11:00), stays available."""
     doctor_id = 42
     day = date(2026, 7, 20)
     now = datetime(2026, 7, 1, 9, 0)
@@ -4675,7 +4675,7 @@ async def test_get_available_slots_excludes_slot_whose_duration_runs_into_an_off
 
     assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
     assert "10:00" not in slots
-    assert "10:15" in slots
+    assert "10:30" in slots
 
 
 @pytest.mark.asyncio
@@ -4691,7 +4691,7 @@ async def test_get_day_slot_occupancy_excludes_slot_whose_duration_runs_into_an_
     assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
     offered_slots = [slot for slot, _ in occupancy]
     assert "10:00" not in offered_slots
-    assert "10:15" in offered_slots
+    assert "10:30" in offered_slots
 
 
 @pytest.mark.asyncio
