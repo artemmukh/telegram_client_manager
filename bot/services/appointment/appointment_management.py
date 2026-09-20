@@ -590,7 +590,11 @@ class AppointmentManagement:
 
         self._ensure_not_finalized(appointment, _CONFIRM_NOT_AVAILABLE_MESSAGE)
 
-        if appointment.created_by == CreatedBy.CLIENT and appointment.status == AppointmentStatus.PENDING:
+        if (
+            appointment.created_by == CreatedBy.CLIENT
+            and appointment.status == AppointmentStatus.PENDING
+            and appointment.status_actor != StatusActor.STAFF
+        ):
             raise AwaitingClinicDecisionError(_AWAIT_CLINIC_DECISION_MESSAGE)
 
         await self._ensure_slot_available(appointment.doctor_id, appointment.datetime, appointment_id, appointment.client_id)
@@ -684,6 +688,7 @@ class AppointmentManagement:
         acting_user_id = await self._resolve_acting_user_id(staff_telegram_id)
 
         client = await self.user_repository.get_client_by_id(appointment.client_id)
+        origin_kind = "reschedule" if appointment.status == AppointmentStatus.CONFIRMED else "booking"
         if client is not None and client.telegram_user_id is None:
             status_updated_at = get_current_tashkent_time()
             applied = await self.appointment_repository.try_apply_new_datetime_immediately(
@@ -699,6 +704,7 @@ class AppointmentManagement:
             appointment.proposed_by = None
             appointment.decided_by_user_id = acting_user_id
             appointment.status_updated_at = status_updated_at
+            appointment.origin_kind = origin_kind
 
             return appointment
 
@@ -716,6 +722,7 @@ class AppointmentManagement:
         appointment.proposed_by = None
         appointment.decided_by_user_id = acting_user_id
         appointment.status_updated_at = status_updated_at
+        appointment.origin_kind = origin_kind
 
         return appointment
 
@@ -782,6 +789,28 @@ class AppointmentManagement:
         appointment.status_updated_at = status_updated_at
 
         return appointment
+
+    @staticmethod
+    def awaiting_party(appointment: Appointment) -> str | None:
+        """Return whom the appointment currently waits on, or None if nothing is owed.
+
+        Derived from the last transition actor (status_actor), not from proposed_by,
+        because staff proposals apply immediately and clear proposed_by.
+        """
+        if appointment.status != AppointmentStatus.PENDING:
+            return None
+        if appointment.status_actor == StatusActor.STAFF:
+            return "client"
+        if appointment.status_actor == StatusActor.CLIENT:
+            return "clinic"
+        return None  # system / unknown — no human turn recorded yet
+
+    @staticmethod
+    def origin_log_kind(appointment: Appointment, fallback: str) -> str:
+        """Journal kind from the persisted record origin; legacy rows use the fallback."""
+        if appointment.origin_kind in ("booking", "reschedule"):
+            return appointment.origin_kind
+        return fallback
 
     def resolve_admin_proposal_log_kind(self, appointment: Appointment) -> str | None:
         if (
@@ -1105,9 +1134,9 @@ class AppointmentManagement:
             return None
 
         status_updated_at = get_current_tashkent_time()
-        await self._update_status_repository(
-            appointment_id, AppointmentStatus.EXPIRED, status_updated_at, StatusActor.SYSTEM
-        )
+        expired = await self.appointment_repository.try_expire_pending_request(appointment_id, status_updated_at)
+        if not expired:
+            return None
         appointment.status = AppointmentStatus.EXPIRED
         appointment.status_updated_at = status_updated_at
         appointment.status_actor = StatusActor.SYSTEM

@@ -87,6 +87,10 @@ class FakeAppointmentRepository:
     ):
         if self.appointment.status.value != expected_status:
             return False
+        self.appointment.datetime = new_datetime
+        self.appointment.status = AppointmentStatus.PENDING
+        self.appointment.proposed_datetime = None
+        self.appointment.proposed_by = None
         self.proposed_datetime_updates.append((appointment_id, None))
         self.proposed_by_updates.append((appointment_id, None))
         return True
@@ -98,6 +102,10 @@ class FakeAppointmentRepository:
             return False
         if self.appointment.proposed_datetime is not None and self.appointment.proposed_by == CreatedBy.ADMIN:
             return False
+        self.appointment.datetime = new_datetime
+        self.appointment.status = AppointmentStatus.CONFIRMED
+        self.appointment.proposed_datetime = None
+        self.appointment.proposed_by = None
         self.proposed_datetime_updates.append((appointment_id, None))
         self.proposed_by_updates.append((appointment_id, None))
         return True
@@ -390,7 +398,7 @@ async def test_pick_propose_slot_with_malformed_slot_shows_alert_and_does_not_to
 
 @pytest.mark.asyncio
 async def test_pick_propose_slot_then_approve_propose_datetime_commits_the_picked_slot():
-    day_iso = "2026-08-15"
+    day_iso = "2026-10-15"
     appointment = _confirmed_appointment(day_iso=day_iso, slot="09:00", appointment_id=1)
     appt_repo = FakeAppointmentRepository(appointment)
 
@@ -420,6 +428,6 @@ async def test_pick_propose_slot_then_approve_propose_datetime_commits_the_picke
     )
 
     assert appointment.status is AppointmentStatus.PENDING
-    assert appointment.datetime == "2026-08-15 11:00"
+    assert appointment.datetime == f"{day_iso} 11:00"
     appointment_scheduler.resync_appointment_jobs.assert_awaited_once()
     notification_service.notify_client_appointment_with_buttons.assert_awaited_once()

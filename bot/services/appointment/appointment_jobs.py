@@ -117,24 +117,44 @@ def _latest_staff_targets_by_chat(
 
 
 def _pending_expiry_context(appointment: Appointment) -> tuple[str, datetime]:
-    """Return the side that owed a response and the corresponding T-2 deadline."""
+    """Return the side that owed a response and the corresponding T-2 deadline.
+
+    Must be called while the appointment is still PENDING: `awaiting_party`
+    derives the turn from status_actor, which the expiry itself resets to SYSTEM.
+    """
+    if appointment.status != AppointmentStatus.PENDING:
+        raise ValueError(
+            "_pending_expiry_context must be called before the status mutation, "
+            f"while the appointment is still PENDING (got {appointment.status.value})"
+        )
     target_datetime = appointment.proposed_datetime or appointment.datetime
     deadline = datetime.fromisoformat(target_datetime) - timedelta(hours=2)
 
-    if appointment.proposed_datetime is not None:
-        if appointment.proposed_by == CreatedBy.ADMIN:
-            return "client", deadline
-        if appointment.proposed_by == CreatedBy.CLIENT:
-            return "clinic", deadline
-
-        logger.warning(
-            f"Appointment {appointment.id} has proposed_datetime without proposed_by during expiry"
-        )
-        return "proposed_time", deadline
+    party = AppointmentManagement.awaiting_party(appointment)
+    if party is not None:
+        return party, deadline
 
     if appointment.created_by == CreatedBy.ADMIN:
         return "client", deadline
     return "clinic", deadline
+
+
+async def resolve_pending_expiry(
+    appointment_management: AppointmentManagement, appointment_id: int,
+) -> tuple[str, datetime] | None:
+    """Pre-mutation prelude for the pending-expiry job.
+
+    Returns (awaiting_party, T-2 deadline) while the record is still PENDING,
+    or None when the appointment is gone or a racing decision already moved it
+    out of PENDING (in that case the job must no-op, not log a wrong party).
+    """
+    appointment = await appointment_management.get_appointment_by_id(appointment_id)
+    if appointment is None:
+        return None
+    try:
+        return _pending_expiry_context(appointment)
+    except ValueError:
+        return None
 
 
 async def send_reminder_job(
@@ -391,6 +411,12 @@ async def expire_pending_request_job(appointment_id: int) -> None:
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
+        context = await resolve_pending_expiry(appointment_management, appointment_id)
+        if context is None:
+            logger.warning(f"Expire pending job: appointment {appointment_id} not found or not eligible")
+            return
+        awaiting_party, deadline = context
+
         appointment = await appointment_management.expire_pending_request(appointment_id)
 
         if appointment is None:
@@ -398,8 +424,6 @@ async def expire_pending_request_job(appointment_id: int) -> None:
             return
 
         logger.info(f"Appointment {appointment_id} pending request expired (unanswered)")
-
-        awaiting_party, deadline = _pending_expiry_context(appointment)
 
         try:
             await notification_service.notify_client_pending_request_expired(appointment)

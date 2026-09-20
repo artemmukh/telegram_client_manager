@@ -55,6 +55,7 @@ from bot.keyboards.client.appointment_response_kb import (
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
+    DEFAULT_UNKNOWN_CLIENT_LABEL,
     AppointmentNotificationService,
 )
 from bot.services.appointment.appointment_pagination_service import (
@@ -68,6 +69,7 @@ from bot.states.client.appointment_states import AppointmentResponseStates
 from bot.utils.appointment_enums import (
     APPOINTMENT_TAB_ORDER,
     AppointmentStatus,
+    StatusActor,
     tab_label,
 )
 from bot.utils.role import RoleFilter
@@ -531,20 +533,37 @@ def create_client_appointment_router(
                             )
                         except Exception:
                             recipients = []
+                        staff_origin_proposal = (
+                            pre_mutation_appointment is not None
+                            and pre_mutation_appointment.status_actor == StatusActor.STAFF
+                            and pre_mutation_appointment.proposed_by is None
+                        )
                         kind = (
-                            appointment_management_service.resolve_admin_proposal_log_kind(
-                                pre_mutation_appointment,
+                            appointment_management_service.origin_log_kind(pre_mutation_appointment, "reschedule")
+                            if staff_origin_proposal
+                            else (
+                                appointment_management_service.resolve_admin_proposal_log_kind(
+                                    pre_mutation_appointment,
+                                )
+                                if pre_mutation_appointment
+                                else None
                             )
-                            if pre_mutation_appointment
-                            else None
                         )
                         for recipient in recipients:
                             try:
-                                delivery = await notification_service.notify_staff_proposal_accepted(
-                                    recipient.telegram_user_id,
-                                    appointment,
-                                    client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
-                                )
+                                if staff_origin_proposal:
+                                    delivery = await notification_service.notify_staff_reschedule_decision_accepted(
+                                        recipient.telegram_user_id,
+                                        appointment,
+                                        DEFAULT_UNKNOWN_CLIENT_LABEL,
+                                        client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                                    )
+                                else:
+                                    delivery = await notification_service.notify_staff_proposal_accepted(
+                                        recipient.telegram_user_id,
+                                        appointment,
+                                        client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                                    )
                                 if kind:
                                     await record_staff_log_delivery(
                                         appointment_management_service,
@@ -598,20 +617,36 @@ def create_client_appointment_router(
                             )
                         except Exception:
                             recipients = []
+                        staff_origin_proposal = (
+                            pre_mutation_appointment is not None
+                            and pre_mutation_appointment.status_actor == StatusActor.STAFF
+                            and pre_mutation_appointment.proposed_by is None
+                        )
                         kind = (
-                            appointment_management_service.resolve_admin_proposal_log_kind(
-                                pre_mutation_appointment,
+                            "cancellation"
+                            if staff_origin_proposal
+                            else (
+                                appointment_management_service.resolve_admin_proposal_log_kind(
+                                    pre_mutation_appointment,
+                                )
+                                if pre_mutation_appointment
+                                else None
                             )
-                            if pre_mutation_appointment
-                            else None
                         )
                         for recipient in recipients:
                             try:
-                                delivery = await notification_service.notify_staff_proposal_rejected(
-                                    recipient.telegram_user_id,
-                                    appointment,
-                                    client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
-                                )
+                                if staff_origin_proposal:
+                                    delivery = await notification_service.notify_admin_cancellation(
+                                        recipient.telegram_user_id,
+                                        appointment,
+                                        client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                                    )
+                                else:
+                                    delivery = await notification_service.notify_staff_proposal_rejected(
+                                        recipient.telegram_user_id,
+                                        appointment,
+                                        client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                                    )
                                 if kind:
                                     await record_staff_log_delivery(
                                         appointment_management_service,

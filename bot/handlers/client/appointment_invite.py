@@ -15,10 +15,12 @@ from bot.keyboards.client.appointment_response_kb import (
 from bot.models.user import User
 from bot.services.appointment.appointment_management import AppointmentManagement
 from bot.services.appointment.appointment_notifications import (
+    DEFAULT_UNKNOWN_CLIENT_LABEL,
     AppointmentNotificationService,
 )
 from bot.services.appointment.appointment_scheduler import AppointmentScheduler
 from bot.states.client.appointment_states import AppointmentResponseStates
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.role import RoleFilter
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,19 @@ def create_client_appointment_invite_router(
         appointment_id = callback_data.appointment_id
 
         try:
+            pre_appointment = await appointment_management_service.get_appointment_for_client(
+                appointment_id, callback_query.from_user.id
+            )
+            staff_origin_retimed = (
+                pre_appointment is not None
+                and pre_appointment.status == AppointmentStatus.PENDING
+                and pre_appointment.status_actor == StatusActor.STAFF
+                and (
+                    pre_appointment.created_by == CreatedBy.CLIENT
+                    or pre_appointment.origin_kind is not None
+                )
+            )
+
             await appointment_management_service.confirm_appointment_by_client(
                 appointment_id, callback_query.from_user.id
             )
@@ -89,19 +104,30 @@ def create_client_appointment_invite_router(
                     recipients = await appointment_management_service.resolve_notification_recipients(appointment)
                 except Exception:
                     recipients = []
+                client_name = client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"])
                 for recipient in recipients:
                     try:
-                        delivery = await notification_service.notify_admin_confirmation(
-                            recipient.telegram_user_id,
-                            appointment,
-                            client.full_name if client else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
-                        )
+                        if staff_origin_retimed:
+                            delivery = await notification_service.notify_staff_reschedule_decision_accepted(
+                                recipient.telegram_user_id,
+                                appointment,
+                                DEFAULT_UNKNOWN_CLIENT_LABEL,
+                                client_name,
+                            )
+                            kind = appointment_management_service.origin_log_kind(pre_appointment, "reschedule")
+                        else:
+                            delivery = await notification_service.notify_admin_confirmation(
+                                recipient.telegram_user_id,
+                                appointment,
+                                client_name,
+                            )
+                            kind = "booking"
                         await record_staff_log_delivery(
                             appointment_management_service,
                             notification_service.notifier,
                             appointment_id=appointment.id,
                             chat_id=recipient.telegram_user_id,
-                            kind="booking",
+                            kind=kind,
                             delivery=delivery,
                         )
                     except Exception:

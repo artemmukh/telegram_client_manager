@@ -38,6 +38,7 @@ from bot.services.appointment.appointment_notifications import (
     staff_appointment_cancelled_text,
     staff_appointment_created_text,
     staff_new_booking_request_text,
+    staff_turn_transferred_text,
 )
 from bot.utils.appointment_enums import (
     AppointmentStatus,
@@ -626,6 +627,15 @@ def test_staff_appointment_created_text_without_doctor_shows_dash():
 
     assert "Создана новая запись" in text
     assert "Врач" not in text
+
+
+def test_staff_turn_transferred_text_includes_new_time():
+    text = staff_turn_transferred_text(
+        "Иванов Иван", "+998901234567", "администратором", "10 июля 2026, 14:30",
+    )
+
+    assert "Иванов Иван" in text
+    assert "10 июля 2026, 14:30" in text
 
 
 def test_admin_confirmation_text_includes_doctor_name():
@@ -2542,3 +2552,31 @@ async def test_replace_completion_sibling_prompt_clears_keyboard_when_compact_te
         {"chat_id": 67890, "message_id": 778, "text": emitted_text, "reply_markup": None},
     ]
     assert appt_mng.set_notification_compact_text.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_notify_staff_reschedule_requested_forwards_reply_anchor():
+    notifier = FakeTelegramNotifier()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo()
+
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+    appointment = _appointment()
+    appointment.proposed_datetime = "2026-08-15 15:00"
+
+    await service.notify_staff_reschedule_requested(
+        67890, appointment, "Иванов Иван", reply_to_message_id=42,
+    )
+
+    assert notifier.sent_messages[0]["reply_to_message_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_resolve_staff_reply_anchor_returns_latest_notification_message_id():
+    notifier = FakeTelegramNotifier()
+    user_repo = FakeUserRepo(_client())
+    appointment_repo = FakeAppointmentRepo(latest_notification_message_id=4242)
+
+    service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
+
+    assert await service.resolve_staff_reply_anchor(_appointment(), 67890) == 4242

@@ -1,6 +1,5 @@
 import aiosqlite
 
-
 from bot.config.clinic_instances import (
     CLINIC_SEED_BY_INSTANCE,
     STAFF_SEED_BY_INSTANCE,
@@ -53,6 +52,14 @@ class StaffRepository:
             await self.connection.execute(
                 "ALTER TABLE staff ADD COLUMN is_doctor INTEGER NOT NULL DEFAULT 1"
             )
+            # Backfill note for future agents: this seeding makes is_doctor and
+            # visibility_scope coincide by default ("clinic" -> not a doctor).
+            # They are semantically independent: visibility_scope is an access
+            # dimension (whose data a staff member may see/manage), is_doctor is
+            # a role dimension (whether they can perform appointments). They may
+            # diverge afterwards: a doctor can hold "clinic" scope, and a
+            # reception admin stays is_doctor=0. Do not merge or derive one from
+            # the other in application code.
             await self.connection.execute(
                 "UPDATE staff SET is_doctor = CASE WHEN visibility_scope = 'clinic' THEN 0 ELSE 1 END"
             )

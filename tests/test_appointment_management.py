@@ -45,7 +45,7 @@ from bot.services.utils.date_parser import (
     format_datetime_for_db,
     get_current_tashkent_datetime,
 )
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.role import Role
 from tests.conftest import FakeBlockedSlotRepository
 
@@ -73,6 +73,20 @@ class FakeAppointmentRepository:
         self.own_pending_datetime_lost_races = set()
         self.client_reschedule_proposal_calls = []
         self.client_reschedule_proposal_lost_races = set()
+        self.expire_calls = []
+        self.expire_lost_races = set()
+
+    async def try_expire_pending_request(self, appointment_id, status_updated_at):
+        self.expire_calls.append((appointment_id, status_updated_at))
+        if appointment_id in self.expire_lost_races:
+            return False
+        appointment = await self.get_appointment_by_id(appointment_id)
+        if appointment is None or appointment.status != AppointmentStatus.PENDING:
+            return False
+        appointment.status = AppointmentStatus.EXPIRED
+        appointment.status_updated_at = status_updated_at
+        appointment.status_actor = StatusActor.SYSTEM
+        return True
 
     async def create_appointment(self, appointment):
         self.created.append(appointment)
@@ -423,6 +437,40 @@ def _appointment(appointment_id=1, client_id=7):
         status=AppointmentStatus.PENDING,
         id=appointment_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_expires_and_returns_appointment():
+    appointment = _appointment()
+    repository = FakeAppointmentRepository([appointment])
+    service = AppointmentManagement(repository, None, None, None)
+
+    result = await service.expire_pending_request(appointment.id)
+
+    assert result is appointment
+    assert result.status is AppointmentStatus.EXPIRED
+    assert result.status_actor is StatusActor.SYSTEM
+    assert len(repository.expire_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_returns_none_when_racing_decision_wins():
+    appointment = _appointment()
+    repository = FakeAppointmentRepository([appointment])
+    repository.expire_lost_races.add(appointment.id)
+    service = AppointmentManagement(repository, None, None, None)
+
+    result = await service.expire_pending_request(appointment.id)
+
+    assert result is None
+    assert appointment.status is AppointmentStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_expire_pending_request_returns_none_when_appointment_missing():
+    service = AppointmentManagement(FakeAppointmentRepository(), None, None, None)
+
+    assert await service.expire_pending_request(999) is None
 
 
 @pytest.mark.parametrize(
@@ -2033,6 +2081,40 @@ async def test_confirm_appointment_by_client_raises_when_self_booked_and_pending
 
 
 @pytest.mark.asyncio
+async def test_confirm_appointment_by_client_allows_staff_retimed_self_booking():
+    now = get_current_tashkent_datetime()
+    appointment = _appointment_at(
+        1, now + timedelta(days=1), status=AppointmentStatus.PENDING, created_by=CreatedBy.CLIENT,
+    )
+    appointment.status_actor = StatusActor.STAFF
+    appt_repo = FakeAppointmentRepository([appointment])
+    client = _owning_client()
+    service = AppointmentManagement(appt_repo, FakeUserRepo(client), FakeStaffRepo(None), _clinic_repo())
+
+    appointment = await service.confirm_appointment_by_client(1, client.telegram_user_id)
+
+    assert appointment.status is AppointmentStatus.CONFIRMED
+    assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
+
+
+def test_origin_log_kind_uses_persisted_origin_and_falls_back_for_legacy_rows():
+    service = AppointmentManagement(
+        FakeAppointmentRepository([]), FakeUserRepo(None), FakeStaffRepo(None), _clinic_repo()
+    )
+    legacy = _appointment_at(1, get_current_tashkent_datetime() + timedelta(days=1))
+
+    assert legacy.origin_kind is None
+    assert service.origin_log_kind(legacy, "reschedule") == "reschedule"
+    assert service.origin_log_kind(legacy, "booking") == "booking"
+
+    legacy.origin_kind = "booking"
+    assert service.origin_log_kind(legacy, "reschedule") == "booking"
+
+    legacy.origin_kind = "reschedule"
+    assert service.origin_log_kind(legacy, "booking") == "reschedule"
+
+
+@pytest.mark.asyncio
 async def test_confirm_appointment_by_client_reconfirm_is_noop_success():
     now = get_current_tashkent_datetime()
     appt_repo = FakeAppointmentRepository(
@@ -2317,6 +2399,7 @@ async def test_propose_new_datetime_commits_datetime_and_stays_pending_when_clie
     assert appointment.status is AppointmentStatus.PENDING
     assert appointment.datetime == proposed_datetime
     assert appointment.decided_by_user_id == admin.ID
+    assert appointment.origin_kind == "booking"
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
     assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
@@ -2397,6 +2480,7 @@ async def test_propose_new_datetime_demotes_confirmed_appointment_with_no_outsta
     assert appointment.proposed_datetime is None
     assert appointment.proposed_by is None
     assert appointment.status is AppointmentStatus.PENDING
+    assert appointment.origin_kind == "reschedule"
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
     assert appt_repo.status_updates == [(1, AppointmentStatus.PENDING)]
@@ -2443,6 +2527,7 @@ async def test_propose_new_datetime_immediately_confirms_when_client_has_no_tele
     assert appointment.proposed_datetime is None
     assert appointment.proposed_by is None
     assert appointment.decided_by_user_id == admin.ID
+    assert appointment.origin_kind == "booking"
     assert appt_repo.status_updates == [(1, AppointmentStatus.CONFIRMED)]
     assert appt_repo.proposed_datetime_updates == [(1, None)]
     assert appt_repo.proposed_by_updates == [(1, None)]
@@ -4577,9 +4662,9 @@ def _blocking_service(blocks, doctor_id=42, appt_repo=None):
 
 @pytest.mark.asyncio
 async def test_get_available_slots_excludes_slot_whose_duration_runs_into_an_off_grid_block():
-    """zb step is 15 minutes, so the 10:00 slot occupies [10:00, 10:15) and
+    """zb step is 30 minutes, so the 10:00 slot occupies [10:00, 10:30) and
     collides with a 10:05-10:10 block even though 10:05 is not a grid time.
-    The next slot, [10:15, 10:30), stays available."""
+    The next slot, [10:30, 11:00), stays available."""
     doctor_id = 42
     day = date(2026, 7, 20)
     now = datetime(2026, 7, 1, 9, 0)
@@ -4590,7 +4675,7 @@ async def test_get_available_slots_excludes_slot_whose_duration_runs_into_an_off
 
     assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
     assert "10:00" not in slots
-    assert "10:15" in slots
+    assert "10:30" in slots
 
 
 @pytest.mark.asyncio
@@ -4606,7 +4691,7 @@ async def test_get_day_slot_occupancy_excludes_slot_whose_duration_runs_into_an_
     assert await service._get_day_blocks(doctor_id, day) == [block]  # guards against a vacuous pass
     offered_slots = [slot for slot, _ in occupancy]
     assert "10:00" not in offered_slots
-    assert "10:15" in offered_slots
+    assert "10:30" in offered_slots
 
 
 @pytest.mark.asyncio

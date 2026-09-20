@@ -29,3 +29,4 @@ class Appointment:
     price: float | None = None
     decided_by_user_id: int | None = None
     status_actor: StatusActor | None = None
+    origin_kind: str | None = None

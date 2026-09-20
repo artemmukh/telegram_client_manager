@@ -114,6 +114,7 @@ DEFAULT_UNKNOWN_CLIENT_LABEL = {
     "uz": "Mijoz",
 }
 
+
 _STAFF_APPOINTMENT_CANCELLED = {
     "ru": "❌ Запись клиента {client_name} отменена ({actor}).",
     "uz": "❌ Mijoz {client_name} yozuvi bekor qilindi ({actor}).",
@@ -186,13 +187,22 @@ _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY = {
     "ru": {
         "clinic": "Ожидали ответ от: клиники.",
         "client": "Ожидали ответ от: клиента.",
-        "proposed_time": "Ожидали ответ по предложенному времени.",
     },
     "uz": {
         "clinic": "Javob kutilgan tomon: klinika.",
         "client": "Javob kutilgan tomon: mijoz.",
-        "proposed_time": "Taklif qilingan vaqt bo'yicha javob kutilgan.",
     },
+}
+
+_STAFF_TURN_TRANSFERRED = {
+    "ru": (
+        "🕐 {actor} изменил(а) время записи клиента {client_name} на {new_time}; "
+        "ожидается подтверждение клиента."
+    ),
+    "uz": (
+        "🕐 {actor} mijoz {client_name} yozuvi vaqtini {new_time} ga o'zgartirdi; "
+        "mijoz tasdiqlashi kutilmoqda."
+    ),
 }
 
 _RESCHEDULE_PROPOSED = {
@@ -546,12 +556,18 @@ def staff_pending_request_expired_text(
     resolved_lang = lang if lang in {"ru", "uz"} else "ru"
     awaiting_line = _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang].get(
         awaiting_party,
-        _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang]["proposed_time"],
+        _STAFF_PENDING_REQUEST_EXPIRED_AWAITING_PARTY[resolved_lang]["clinic"],
     )
     return _STAFF_PENDING_REQUEST_EXPIRED[resolved_lang].format(
         appointment_id=appointment_id,
         awaiting_line=awaiting_line,
         deadline=format_datetime_for_display(deadline, resolved_lang),
+    )
+
+
+def staff_turn_transferred_text(client_name: str, client_phone: str | None, actor: str, new_time: str, lang: str = "ru") -> str:
+    return _STAFF_TURN_TRANSFERRED.get(lang, _STAFF_TURN_TRANSFERRED["ru"]).format(
+        client_name=escape_html(client_name), client_phone=client_phone or '—', actor=actor, new_time=new_time,
     )
 
 
@@ -892,6 +908,10 @@ class AppointmentNotificationService:
         admin_notification_message_id column cannot be a correct anchor for both.
         """
         return await self.appointment_repo.get_latest_notification_message_id(appointment.id, chat_id)
+
+    async def resolve_staff_reply_anchor(self, appointment: Appointment, staff_telegram_id: int) -> int | None:
+        """Public per-chat anchor for threading a replacement card onto the staff's prior one."""
+        return await self._admin_reply_to_message_id(appointment, staff_telegram_id)
 
     async def _send_staff_log(
         self,
@@ -1402,6 +1422,24 @@ class AppointmentNotificationService:
             reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
         )
 
+    async def notify_staff_turn_transferred(
+        self,
+        staff_telegram_id: int,
+        appointment: Appointment,
+        actor_label: dict[str, str],
+        client_name: str,
+    ) -> StaffLogDelivery:
+        """Notify other staff that a colleague changed the time and the client must confirm."""
+        lang = await self._resolve_lang(staff_telegram_id)
+        actor = actor_label.get(lang, actor_label.get("ru", ""))
+        compact_text = staff_turn_transferred_text(
+            client_name, appointment.client_phone, actor, _format_datetime_value(appointment.datetime, lang), lang,
+        )
+        return await self._send_staff_log(
+            staff_telegram_id, appointment, compact_text, lang=lang,
+            reply_to_message_id=await self._admin_reply_to_message_id(appointment, staff_telegram_id),
+        )
+
     async def notify_staff_reschedule_decision_accepted(
         self,
         staff_telegram_id: int,
@@ -1518,12 +1556,15 @@ class AppointmentNotificationService:
         appointment: Appointment,
         client_name: str,
         doctor_full_name: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> int | None:
         """Notify staff that a client wants to reschedule a confirmed appointment.
 
         Sends Accept / Reject action buttons.
         Returns the sent message's message_id on success.
         Raises NotificationDeliveryError if the message could not be sent.
+        When reply_to_message_id is given (client counter-offer replacing an
+        earlier staff card), the request is sent as a reply to that message.
         """
         lang = await self._resolve_lang(staff_telegram_id)
         doc_name = doctor_full_name or appointment.doctor_full_name
@@ -1542,6 +1583,7 @@ class AppointmentNotificationService:
                 chat_id=staff_telegram_id,
                 text=message_text,
                 reply_markup=reschedule_request_kb(appointment.id),
+                reply_to_message_id=reply_to_message_id,
             )
         except Exception as e:
             raise NotificationDeliveryError(

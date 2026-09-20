@@ -6,8 +6,10 @@ collaborators, the decorated `submit_reschedule` callback is pulled out of
 the callback unchanged, see TelegramEventObserver.__call__), and invoked
 directly with mock aiogram objects. No dispatcher/polling infrastructure.
 """
-import pytest
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from bot.handlers.client.appointment_reschedule import create_client_reschedule_router
 from bot.keyboards.client.reschedule_cb import (
@@ -18,6 +20,7 @@ from bot.keyboards.client.reschedule_cb import (
 from bot.models.appointment import Appointment
 from bot.models.appointment_notification import AppointmentNotification
 from bot.models.user import User
+from bot.services.utils.date_parser import format_datetime_for_display
 from bot.states.client.reschedule_states import ClientRescheduleStates
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
 from bot.utils.role import Role
@@ -434,3 +437,55 @@ async def test_pick_day_with_blocked_day_shows_block_reason_unescaped():
     doctor_id_arg, day_arg, _now_arg = appointment_management_service.get_day_block_reason.await_args.args
     assert doctor_id_arg == 42
     assert day_arg.isoformat() == "2026-08-01"
+
+
+@pytest.mark.asyncio
+async def test_submit_reschedule_pending_admin_invite_replies_to_old_card_and_marks_it():
+    """Row-13 regression: a client counter-offer on a pending admin invite must
+    reach staff as a request card REPLYING to each staff member's previous card,
+    and that old card is edited into a pointer (old -> new time) so no stale
+    invite card keeps offering the superseded time."""
+    resulting_appointment = _appointment(AppointmentStatus.PENDING)
+    resulting_appointment.created_by = CreatedBy.ADMIN
+    resulting_appointment.proposed_datetime = "2026-08-02 10:00"
+    resulting_appointment.proposed_by = CreatedBy.CLIENT
+
+    staff = User(full_name="Врач", phone="+998900000000", role=Role.ADMIN, telegram_user_id=999, ID=42)
+
+    appointment_management_service = MagicMock()
+    appointment_management_service.request_reschedule_by_client = AsyncMock(return_value=resulting_appointment)
+    appointment_management_service.resolve_notification_recipients = AsyncMock(return_value=[staff])
+    appointment_management_service.record_notification = AsyncMock()
+
+    notification_service = MagicMock()
+    notification_service.resolve_staff_reply_anchor = AsyncMock(return_value=42)
+    notification_service.notify_staff_reschedule_requested = AsyncMock(return_value=987)
+    notification_service.invalidate_closed_request_message = AsyncMock()
+
+    appointment_scheduler = MagicMock()
+    appointment_scheduler.resync_appointment_jobs = AsyncMock()
+
+    router = create_client_reschedule_router(
+        appointment_management_service, notification_service, appointment_scheduler,
+    )
+    submit_reschedule = _get_submit_reschedule_handler(router)
+
+    await submit_reschedule(
+        _make_callback_query(), ClientRescheduleSubmitCB(appointment_id=1), _make_state(), _client_user(),
+    )
+
+    notification_service.resolve_staff_reply_anchor.assert_awaited_once_with(resulting_appointment, 999)
+    notification_service.notify_staff_reschedule_requested.assert_awaited_once_with(
+        999, resulting_appointment, "Иванов Иван", reply_to_message_id=42,
+    )
+    appointment_management_service.record_notification.assert_awaited_once_with(1, 999, 987, kind="reschedule")
+
+    notification_service.invalidate_closed_request_message.assert_awaited_once()
+    invalidated = notification_service.invalidate_closed_request_message.await_args
+    assert invalidated.args[0] == 999
+    assert invalidated.args[1] == 42
+    pointer = invalidated.args[2]
+    expected_old = format_datetime_for_display(datetime.fromisoformat("2026-08-01 10:00"), "ru")
+    expected_new = format_datetime_for_display(datetime.fromisoformat("2026-08-02 10:00"), "ru")
+    assert expected_old in pointer["ru"]
+    assert expected_new in pointer["ru"]

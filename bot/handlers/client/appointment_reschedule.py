@@ -84,6 +84,30 @@ _PENDING_BOOKING_CARD_CLOSED = {
     "uz": "Mijoz yozuv vaqtini o'zgartirdi. Ko'chirish bo'yicha amaldagi so'rov alohida xabarda yuborildi.",
 }
 
+_PENDING_INVITE_CARD_REPLACED = {
+    "ru": "Клиент запросил перенос с {old} на {new}. Актуальный запрос на перенос отправлен отдельным сообщением.",
+    "uz": "Mijoz yozuvni {old} dan {new} ga ko'chirishni so'ragandi. Amaldagi so'rov alohida xabarda yuborildi.",
+}
+
+
+def _pending_invite_replaced_text(appointment) -> dict[str, str]:
+    return {
+        lang: _PENDING_INVITE_CARD_REPLACED[lang].format(
+            old=format_datetime_for_display(datetime.fromisoformat(appointment.datetime), lang),
+            new=format_datetime_for_display(datetime.fromisoformat(appointment.proposed_datetime), lang),
+        )
+        for lang in ("ru", "uz")
+    }
+
+
+async def _mark_pending_invite_card_replaced(notification_service, chat_id, message_id, appointment) -> None:
+    try:
+        await notification_service.invalidate_closed_request_message(
+            chat_id, message_id, _pending_invite_replaced_text(appointment),
+        )
+    except Exception:
+        logger.warning("Could not mark replaced pending invite card", exc_info=True)
+
 _RESCHEDULE_REQUEST_DELIVERY_FAILED = {
     "ru": "Не удалось отправить запрос в клинику. Исходная заявка сохранена.",
     "uz": "Klinikaga so'rov yuborilmadi. Asl ariza saqlandi.",
@@ -284,6 +308,11 @@ def create_client_reschedule_router(
         )
         original_datetime = appointment.datetime
 
+        is_pending_admin_invite_counteroffer = (
+            appointment.status == AppointmentStatus.PENDING
+            and appointment.created_by == CreatedBy.ADMIN
+        )
+
         has_staff_delivery = False
         if notification_service:
             try:
@@ -293,16 +322,29 @@ def create_client_reschedule_router(
             for recipient in recipients:
                 message_id = None
                 try:
+                    reply_anchor = None
+                    if is_pending_admin_invite_counteroffer:
+                        try:
+                            reply_anchor = await notification_service.resolve_staff_reply_anchor(
+                                appointment, recipient.telegram_user_id,
+                            )
+                        except Exception:
+                            reply_anchor = None
                     message_id = await notification_service.notify_staff_reschedule_requested(
                         recipient.telegram_user_id,
                         appointment,
                         current_user.full_name if current_user else _UNKNOWN_CLIENT_LABEL.get(lang, _UNKNOWN_CLIENT_LABEL["ru"]),
+                        reply_to_message_id=reply_anchor,
                     )
                     if message_id is not None:
                         has_staff_delivery = True
                         await appointment_management_service.record_notification(
                             appointment.id, recipient.telegram_user_id, message_id, kind="reschedule",
                         )
+                        if reply_anchor is not None:
+                            await _mark_pending_invite_card_replaced(
+                                notification_service, recipient.telegram_user_id, reply_anchor, appointment,
+                            )
                 except Exception:
                     pass  # Graceful fail если не получилось отправить
 

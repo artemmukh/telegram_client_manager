@@ -49,9 +49,12 @@ The project currently manages:
 - Client self-booking requests with confirm / reject / propose-new-time negotiation
 - Reschedule negotiation (proposed_datetime / proposed_by)
 - Slot blocking (BlockedSlot model, BlockedSlotRepository, SlotBlockingService) — per-doctor or clinic-wide date-time ranges with a reason; blocked slots are hidden from every booking flow. A slot conflicts with a block when `[slot, slot + SLOT_STEP_MINUTES)` overlaps `[block.start, block.end)` — appointments have a duration, so never compare the slot's start instant alone
-- Telegram notifications to client and staff (AppointmentNotificationService)
-- Scheduled jobs: reminders, pending expiry, auto-completion
-- Medical record generation (bot/services/llm/agent.py `ChatLLM`, backed by Mistral via the `mistralai` SDK) — extracts complaints/diseases/examination/treatment/tooth_map from input and renders a docx via bot/services/document_generator/pydocx.py (docxtpl)
+- Telegram notifications to client and staff (AppointmentNotificationService), with per-chat AppointmentNotification bookkeeping so old staff keyboards are closed or edited on state changes
+- Admin broadcast to clients (ClientNotificationService in bot/services/client/client_notifications.py)
+- User settings (UserSettings model, UserSettingsRepository)
+- Middlewares: ErrorMiddleware (maps domain exceptions to user-safe replies), LoggingMiddleware (contextvar request-id observability), ThrottlingMiddleware, UserContextMiddleware (injects user/auth context)
+- Scheduled jobs: persistent APScheduler with SQLAlchemyJobStore (data/reminders.db); 24h/2h reminders, completion, silent auto-complete, pending expiry, proposal reminders, reschedule expiry, medical record generation, plus legacy auto-confirm (disused — appointments now expire instead)
+- Medical record generation (MedicalRecordService + scheduled generate_medical_record_job; bot/services/llm/agent.py `ChatLLM`, backed by Mistral via the `mistralai` SDK) — extracts complaints/diseases/examination/treatment/tooth_map from input and renders a docx via bot/services/document_generator/pydocx.py (docxtpl); template is per clinic instance (bot/config/clinic_instances.py)
 
 Future / not yet implemented (env vars `OLLAMA_BASE_URL` / `OLLAMA_MODEL` are read in bot/config/config.py but nothing in bot/ calls Ollama yet):
 
@@ -68,7 +71,7 @@ Environment: Python venv at `.venv/`; dependencies pinned in `requirements.txt` 
 ```
 pip install -r requirements.txt          # setup
 
-pytest                                   # run full test suite (72 files in tests/)
+pytest                                   # run full test suite (102 files, ~1900 tests)
 pytest tests/test_appointment_management.py            # single file
 pytest tests/test_appointment_management.py::test_name -v   # single test
 pytest -k "reschedule"                   # by keyword across the suite
@@ -84,15 +87,18 @@ vvaharness scan --repo . --stop-after s9  # VVAH detection-only security scan
 Notes:
 - `pytest.ini` + `conftest.py` redirect pytest's cache/tmp dirs into `.pytest_tmp/` — don't hand-edit that directory.
 - Required runtime env vars (see `.env`, not committed): `BOT_TOKEN_MM`, `BOT_TOKEN_ZB` (two bot tokens — this repo runs more than one Telegram bot instance, one per clinic deployment), `DATA_BASE`, `DATA_BASE_MM` (per-instance SQLite paths), `MISTRAL_API_KEY`.
-- Tests use fakes/an in-memory or temp SQLite DB rather than the real `data/` database — see the `sqlite-to-postgres-step` and `repo-test-fakes` skills in `.codex/skills/` before touching repository or migration code. Legacy Claude copies may also exist in `.claude/skills/`, but Codex should prefer `.codex/skills/`.
+- Deployment: Docker via `compose.yaml` (currently the zb instance; `BOT_INSTANCE` env picks the clinic), GitHub Actions `.github/workflows/deploy-zb.yml` on a self-hosted runner locked to branch `codex/vps-migration`, backup/restore assets under `deploy/`.
+- Tests use fakes/an in-memory or temp SQLite DB rather than the real `data/` database — see the `sqlite-to-postgres-step` and `repo-test-fakes` skills before touching repository or migration code (in `.kimi-code/skills/` for Kimi sessions, `.codex/skills/` for Codex sessions). Legacy Claude copies may also exist in `.claude/skills/`.
 
 ---
 
 # Project Instructions
 
-Follow the workflow described in this file and in the Codex project skill:
+Follow the workflow described in this file and in the project workflow skill
+for the current tool:
 
-`.codex/skills/codex-project-workflow/SKILL.md`
+- Kimi Code sessions: `.kimi-code/skills/kimi-project-workflow/SKILL.md`
+- Codex sessions: `.codex/skills/codex-project-workflow/SKILL.md`
 
 Legacy Claude workflow notes may also exist in `.claude/agents/workflow.md`;
 use them only when maintaining Claude compatibility.
@@ -124,6 +130,13 @@ appropriate `.codex/agents/` subagent rather than doing it inline:
 - `.codex/agents/routine.toml` — mechanical work: formatting, renames, docs
 - `.codex/agents/reviewer.toml` — final check against this file's rules
 
+Kimi Code subagents are defined in `.kimi-code/agents/*.md` (planner, researcher,
+implementer, aiogram-expert, database-expert, test-expert, routine, reviewer);
+the detailed handoff and verdict protocol is `.kimi-code/workflow.md`. For Kimi
+work, always dispatch to the appropriate `.kimi-code/agents/` subagent rather
+than doing it inline. Kimi agent files cannot pin models; read-only roles are
+enforced via tool allowlists.
+
 Never skip researcher before implementer. The researcher subagent is
 responsible for finding the closest existing reference implementation
 (e.g. a sibling *_creation.py, *_requests.py file) before any code is written.
@@ -147,9 +160,11 @@ limitation to the primary session.
 
 # Skills
 
-Codex project skills live in `.codex/skills/`. Legacy Claude copies live in
-`.claude/skills/`. Subagents may not have the Skill tool — in that case read
-the matching `.codex/skills/<skill-name>/SKILL.md` directly before writing code.
+Kimi project skills live in `.kimi-code/skills/`. Codex project skills live in
+`.codex/skills/`. Legacy Claude copies live in `.claude/skills/`. Subagents may
+not have the Skill tool — in that case read the matching `SKILL.md` directly
+before writing code (`.kimi-code/skills/` for Kimi sessions, `.codex/skills/`
+for Codex sessions).
 Mandatory mapping (task → skill):
 
 - New admin/client CRUD or multi-step FSM flow → crud-flow-scaffold
@@ -158,6 +173,7 @@ Mandatory mapping (task → skill):
 - Any PostgreSQL migration work → sqlite-to-postgres-step
 - Any backend refactor or async I/O work → python-backend-guidelines
 - Non-trivial feature start-to-finish → pythonproject3-superpowers (plan → spec → TDD → implement → review)
+- Kimi workflow/tooling setup → kimi-project-workflow or kimi-project-tooling
 - Codex workflow/tooling setup → codex-project-workflow or codex-project-tooling
 
 When dispatching implementer or test-expert, include the relevant SKILL.md

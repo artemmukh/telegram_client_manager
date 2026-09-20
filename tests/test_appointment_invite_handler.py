@@ -79,6 +79,9 @@ async def test_confirm_invite_confirms_appointment_resyncs_jobs_and_notifies_adm
     confirmed_appointment = _appointment(AppointmentStatus.CONFIRMED)
 
     appointment_management_service = MagicMock()
+    appointment_management_service.get_appointment_for_client = AsyncMock(
+        return_value=_appointment(AppointmentStatus.PENDING)
+    )
     appointment_management_service.confirm_appointment_by_client = AsyncMock(return_value=confirmed_appointment)
     appointment_management_service.get_appointment_with_client_info = AsyncMock(
         return_value=(confirmed_appointment, _client_user())

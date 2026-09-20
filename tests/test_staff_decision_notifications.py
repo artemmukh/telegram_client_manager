@@ -40,7 +40,9 @@ from bot.handlers.admin.appointment_management.reschedule_requests import (
     create_admin_reschedule_requests_router,
 )
 from bot.keyboards.admin.record_management_kb.appointment_browser_cb import ApptActionCB
-from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import appointment_log_details_kb
+from bot.keyboards.admin.record_management_kb.appointment_log_details_kb import (
+    appointment_log_details_kb,
+)
 from bot.keyboards.admin.record_management_kb.booking_request_cb import (
     BookingRequestActionCB,
 )
@@ -52,9 +54,8 @@ from bot.models.appointment_notification import AppointmentNotification
 from bot.models.clinic import Clinic
 from bot.models.staff import Staff
 from bot.models.user import User
-from bot.utils.appointment_enums import AppointmentStatus, CreatedBy
+from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 from bot.utils.role import Role
-
 
 CLINIC_ID = 1
 CLIENT_ID = 7
@@ -258,6 +259,7 @@ class FakeNotificationService:
         self.staff_booking_rejected_calls = []
         self.staff_reschedule_accepted_calls = []
         self.staff_reschedule_rejected_calls = []
+        self.staff_turn_transferred_calls = []
         self.client_cancelled_by_admin_calls = []
         self.staff_appointment_cancelled_calls = []
         self.staff_appointment_created_calls = []
@@ -308,6 +310,10 @@ class FakeNotificationService:
     async def notify_staff_reschedule_decision_rejected(self, staff_telegram_id, appointment, actor_label, client_name):
         self.staff_reschedule_rejected_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
         return self._staff_delivery(staff_telegram_id, "reschedule-rejected")
+
+    async def notify_staff_turn_transferred(self, staff_telegram_id, appointment, actor_label, client_name):
+        self.staff_turn_transferred_calls.append((staff_telegram_id, appointment.id, actor_label, client_name))
+        return self._staff_delivery(staff_telegram_id, "turn-transferred")
 
     async def notify_client_appointment_cancelled_by_admin(self, appointment):
         self.call_order.append("notify_client")
@@ -517,8 +523,8 @@ async def test_approve_propose_datetime_confirmed_branch_notifies_other_staff_in
     approve_propose_datetime = _find_handler(router, "approve_propose_datetime")
     callback_query = _callback_query()
     state = _state(
-        appointment_datetime_parsed=datetime(2026, 8, 15, 12, 0),
-        appointment_datetime_display="15.08.2026 12:00",
+        appointment_datetime_parsed=datetime(2027, 8, 15, 12, 0),
+        appointment_datetime_display="15.08.2027 12:00",
     )
 
     await approve_propose_datetime(
@@ -531,6 +537,79 @@ async def test_approve_propose_datetime_confirmed_branch_notifies_other_staff_in
         (DOCTOR_TELEGRAM_ID, 1, ACTOR_LABEL, CLIENT_NAME),
         (OTHER_ADMIN_TELEGRAM_ID, 1, ACTOR_LABEL, CLIENT_NAME),
     ]
+    state.clear.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_approve_propose_datetime_on_confirmed_via_booking_menu_logs_reschedule_kind():
+    # Row-7 asymmetry guard: the journal kind follows the record origin
+    # (confirmed source -> "reschedule"), not the menu the admin clicked.
+    appointment = Appointment(
+        clinic_id=CLINIC_ID, client_id=CLIENT_ID, doctor_id=DOCTOR_ID, datetime="2026-08-10 10:00",
+        purpose="Konsultatsiya", created_by=CreatedBy.CLIENT, status=AppointmentStatus.CONFIRMED, id=1,
+    )
+    appt_repo = FakeAppointmentRepository(appointment)
+    notification_service = FakeNotificationService()
+    router = create_admin_booking_requests_router(
+        "zb", appt_repo, FakeUserRepo(_client(telegram_user_id=None)), FakeStaffRepo(), FakeClinicRepo(),
+        notification_service=notification_service,
+    )
+    approve_propose_datetime = _find_handler(router, "approve_propose_datetime")
+    callback_query = _callback_query()
+    state = _state(
+        appointment_datetime_parsed=datetime(2027, 8, 15, 12, 0),
+        appointment_datetime_display="15.08.2027 12:00",
+    )
+
+    await approve_propose_datetime(
+        callback_query, BookingRequestActionCB(action="approve_propose_datetime", appointment_id=1), state,
+        _actor_admin(),
+    )
+
+    assert appointment.status == AppointmentStatus.CONFIRMED
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "reschedule", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    state.clear.assert_awaited_once()
+
+
+# --- booking_requests.py: approve_propose_datetime (PENDING branch, row 5) ---
+
+@pytest.mark.asyncio
+async def test_pending_propose_in_booking_requests_logs_turn_transfer_to_other_staff():
+    appointment = Appointment(
+        clinic_id=CLINIC_ID, client_id=CLIENT_ID, doctor_id=DOCTOR_ID, datetime="2026-08-10 10:00",
+        purpose="Konsultatsiya", created_by=CreatedBy.CLIENT, status=AppointmentStatus.PENDING, id=1,
+        status_actor=StatusActor.CLIENT,
+    )
+    appointment.origin_kind = "booking"
+    appt_repo = FakeAppointmentRepository(appointment)
+    notification_service = FakeNotificationService()
+    router = create_admin_booking_requests_router(
+        "zb", appt_repo, FakeUserRepo(_client(telegram_user_id=5000)), FakeStaffRepo(), FakeClinicRepo(),
+        notification_service=notification_service,
+    )
+    approve_propose_datetime = _find_handler(router, "approve_propose_datetime")
+    callback_query = _callback_query()
+    state = _state(
+        appointment_datetime_parsed=datetime(2027, 8, 15, 12, 0),
+        appointment_datetime_display="15.08.2027 12:00",
+    )
+
+    await approve_propose_datetime(
+        callback_query, BookingRequestActionCB(action="approve_propose_datetime", appointment_id=1), state,
+        _actor_admin(),
+    )
+
+    assert appointment.status == AppointmentStatus.PENDING
+    assert notification_service.client_with_buttons_calls == [(1, True, True)]
+    assert {call[0] for call in notification_service.staff_turn_transferred_calls} == {
+        DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID,
+    }
+    assert ACTOR_ADMIN_TELEGRAM_ID not in {call[0] for call in notification_service.staff_turn_transferred_calls}
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "reschedule", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
     state.clear.assert_awaited_once()
 
 
@@ -614,8 +693,8 @@ async def test_approve_propose_datetime_confirmed_branch_notifies_other_staff_in
     approve_propose_datetime = _find_handler(router, "approve_propose_datetime")
     callback_query = _callback_query()
     state = _state(
-        appointment_datetime_parsed=datetime(2026, 8, 20, 9, 0),
-        appointment_datetime_display="20.08.2026 09:00",
+        appointment_datetime_parsed=datetime(2027, 8, 20, 9, 0),
+        appointment_datetime_display="20.08.2027 09:00",
     )
 
     await approve_propose_datetime(
@@ -628,6 +707,47 @@ async def test_approve_propose_datetime_confirmed_branch_notifies_other_staff_in
         (DOCTOR_TELEGRAM_ID, 2, ACTOR_LABEL, CLIENT_NAME),
         (OTHER_ADMIN_TELEGRAM_ID, 2, ACTOR_LABEL, CLIENT_NAME),
     ]
+    _assert_exact_staff_compact_text(
+        appt_repo, notification_service, "reschedule", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
+    )
+    state.clear.assert_awaited_once()
+
+
+# --- reschedule_requests.py: approve_propose_datetime (PENDING branch, rows 5/6) ---
+
+@pytest.mark.asyncio
+async def test_pending_propose_logs_turn_transfer_to_other_staff():
+    appointment = _reschedule_appointment()
+    appointment.status = AppointmentStatus.PENDING
+    appointment.proposed_by = None
+    appointment.origin_kind = "booking"
+    appt_repo = FakeAppointmentRepository(appointment)
+    notification_service = FakeNotificationService()
+    router = create_admin_reschedule_requests_router(
+        "zb", appt_repo, FakeUserRepo(_client(telegram_user_id=5000)), FakeStaffRepo(), FakeClinicRepo(),
+        notification_service=notification_service,
+    )
+    approve_propose_datetime = _find_handler(router, "approve_propose_datetime")
+    callback_query = _callback_query()
+    state = _state(
+        appointment_datetime_parsed=datetime(2027, 8, 20, 9, 0),
+        appointment_datetime_display="20.08.2027 09:00",
+    )
+
+    await approve_propose_datetime(
+        callback_query, RescheduleRequestActionCB(action="approve_propose_datetime", appointment_id=2), state,
+        _actor_admin(),
+    )
+
+    # Staff proposal with a reachable client stays PENDING; the client gets the
+    # Accept/Reject card and the rest of the staff get the turn-transferred log.
+    assert appointment.status == AppointmentStatus.PENDING
+    assert notification_service.client_with_buttons_calls == [(2, True, True)]
+    assert {call[0] for call in notification_service.staff_turn_transferred_calls} == {
+        DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID,
+    }
+    assert ACTOR_ADMIN_TELEGRAM_ID not in {call[0] for call in notification_service.staff_turn_transferred_calls}
+    # Rows 5/6 use the unified "reschedule" kind even for a pending-origin record.
     _assert_exact_staff_compact_text(
         appt_repo, notification_service, "reschedule", {DOCTOR_TELEGRAM_ID, OTHER_ADMIN_TELEGRAM_ID},
     )
