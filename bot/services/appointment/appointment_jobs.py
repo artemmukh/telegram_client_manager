@@ -139,6 +139,24 @@ def _pending_expiry_context(appointment: Appointment) -> tuple[str, datetime]:
     return "clinic", deadline
 
 
+async def resolve_pending_expiry(
+    appointment_management: AppointmentManagement, appointment_id: int,
+) -> tuple[str, datetime] | None:
+    """Pre-mutation prelude for the pending-expiry job.
+
+    Returns (awaiting_party, T-2 deadline) while the record is still PENDING,
+    or None when the appointment is gone or a racing decision already moved it
+    out of PENDING (in that case the job must no-op, not log a wrong party).
+    """
+    appointment = await appointment_management.get_appointment_by_id(appointment_id)
+    if appointment is None:
+        return None
+    try:
+        return _pending_expiry_context(appointment)
+    except ValueError:
+        return None
+
+
 async def send_reminder_job(
     appointment_id: int,
     hours_before: int = 24,
@@ -393,12 +411,11 @@ async def expire_pending_request_job(appointment_id: int) -> None:
         appointment_management = AppointmentManagement(appointment_repo, user_repo, staff_repo, clinic_repo)
         notification_service = AppointmentNotificationService(notifier, user_repo, appointment_repo)
 
-        pre_expiry = await appointment_management.get_appointment_by_id(appointment_id)
-        if pre_expiry is None:
-            logger.warning(f"Expire pending job: appointment {appointment_id} not found")
+        context = await resolve_pending_expiry(appointment_management, appointment_id)
+        if context is None:
+            logger.warning(f"Expire pending job: appointment {appointment_id} not found or not eligible")
             return
-
-        awaiting_party, deadline = _pending_expiry_context(pre_expiry)
+        awaiting_party, deadline = context
 
         appointment = await appointment_management.expire_pending_request(appointment_id)
 

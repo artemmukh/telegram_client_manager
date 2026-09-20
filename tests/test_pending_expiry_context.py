@@ -7,7 +7,10 @@ change the derived awaiting party). The guard rejects any non-PENDING record.
 import pytest
 
 from bot.models.appointment import Appointment
-from bot.services.appointment.appointment_jobs import _pending_expiry_context
+from bot.services.appointment.appointment_jobs import (
+    _pending_expiry_context,
+    resolve_pending_expiry,
+)
 from bot.utils.appointment_enums import AppointmentStatus, CreatedBy, StatusActor
 
 
@@ -33,3 +36,37 @@ def test_pending_expiry_context_accepts_pending_appointment():
 def test_pending_expiry_context_rejects_mutated_appointment(status):
     with pytest.raises(ValueError, match="PENDING"):
         _pending_expiry_context(_appointment(status))
+
+
+class _FakeAppointmentManagement:
+    def __init__(self, appointment):
+        self.appointment = appointment
+
+    async def get_appointment_by_id(self, appointment_id):
+        return self.appointment
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_expiry_returns_none_when_appointment_missing():
+    assert await resolve_pending_expiry(_FakeAppointmentManagement(None), 2) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_expiry_returns_context_for_pending_appointment():
+    context = await resolve_pending_expiry(
+        _FakeAppointmentManagement(_appointment(AppointmentStatus.PENDING)), 2,
+    )
+
+    assert context is not None
+    party, deadline = context
+    assert party == "clinic"
+    assert deadline.isoformat() == "2027-08-20T07:00:00"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pending_expiry_returns_none_when_already_mutated():
+    # A racing confirm/reject won before the job fired: the guard turns the
+    # post-mutation record into a plain no-op instead of a wrong-party log.
+    assert await resolve_pending_expiry(
+        _FakeAppointmentManagement(_appointment(AppointmentStatus.CONFIRMED)), 2,
+    ) is None
