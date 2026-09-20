@@ -122,6 +122,11 @@ def _pending_expiry_context(appointment: Appointment) -> tuple[str, datetime]:
     Must be called while the appointment is still PENDING: `awaiting_party`
     derives the turn from status_actor, which the expiry itself resets to SYSTEM.
     """
+    if appointment.status != AppointmentStatus.PENDING:
+        raise ValueError(
+            "_pending_expiry_context must be called before the status mutation, "
+            f"while the appointment is still PENDING (got {appointment.status.value})"
+        )
     target_datetime = appointment.proposed_datetime or appointment.datetime
     deadline = datetime.fromisoformat(target_datetime) - timedelta(hours=2)
 
