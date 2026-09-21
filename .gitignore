@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.*
+!.env.example
 
 # Virtual environments
 .venv/
@@ -25,6 +26,10 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+
+# Webapp frontend
+webapp/node_modules/
+webapp/dist/
 
 # Database
 *.db

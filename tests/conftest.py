@@ -66,6 +66,12 @@ class FakeUserRepository:
     async def get_user_by_id(self, user_id):
         return self.users_by_id.get(user_id)
 
+    async def get_user_by_telegram_id(self, telegram_user_id):
+        for user in self.users_by_id.values():
+            if user.telegram_user_id == telegram_user_id:
+                return user
+        return None
+
     async def update_user_telegram_id(
         self, user_id, telegram_user_id, gender: str | None = None, birth_date: str | None = None,
     ):

@@ -1,5 +1,8 @@
 import asyncio
 import logging
+from pathlib import Path
+
+import uvicorn
 
 from bot.config.booking_config import MAX_BOOKINGS_PER_SLOT
 from bot.create_bot import config, db, dp
@@ -82,6 +85,7 @@ from bot.services.llm.agent import ChatLLM
 from bot.services.medical_record.medical_record_management import MedicalRecordService
 from bot.services.utils.auth import AuthService
 from bot.utils.polling import prepare_polling
+from bot.webapp.server import create_webapp_app
 
 logger = logging.getLogger(__name__)
 
@@ -245,11 +249,35 @@ async def main():
     dp.include_router(create_price_list_router(config.instance))
     dp.include_router(create_price_geo_router(config.instance))
 
+    webapp_app = create_webapp_app(
+        bot_token=config.bot_token,
+        user_repo=user_repo,
+        auth_service=auth_service,
+        static_dir=Path("webapp/dist"),
+    )
+    webapp_server = uvicorn.Server(uvicorn.Config(
+        webapp_app, host=config.webapp_host, port=config.webapp_port,
+        log_level="info",
+    ))
+    webapp_task = asyncio.create_task(webapp_server.serve())
+
     try:
         logger.info("Starting bot with appointment reminders enabled")
         await prepare_polling(bot)
+
+        logger.info(
+            "Webapp server starting on %s:%s", config.webapp_host, config.webapp_port,
+        )
+
         await dp.start_polling(bot)
     finally:
+        webapp_server.should_exit = True
+        try:
+            await asyncio.wait_for(webapp_task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            webapp_task.cancel()
+        except Exception:
+            logger.exception("Webapp server failed to start or crashed")
         # Graceful shutdown of scheduler
         scheduler.shutdown()
         await db.close()
