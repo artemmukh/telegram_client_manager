@@ -276,6 +276,7 @@ async def main():
             await asyncio.wait_for(webapp_task, timeout=5)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             webapp_task.cancel()
+            await asyncio.gather(webapp_task, return_exceptions=True)
         except Exception:
             logger.exception("Webapp server failed to start or crashed")
         # Graceful shutdown of scheduler
