@@ -58,7 +58,7 @@ class RegistrationService:
         self, phone: str, telegram_user_id: int, contact_user_id: int | None = None,
     ) -> PhoneLookupResult:
         phone = normalize_phone(phone.strip())
-        validate_phone(phone)
+
 
         if await self.user_repository.user_exists(telegram_user_id):
             raise UserAlreadyExistsError()
